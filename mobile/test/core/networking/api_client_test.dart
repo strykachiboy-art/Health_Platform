@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -32,6 +33,40 @@ void main() {
 
       expect(result, {'success': true, 'status': 'ok'});
     });
+
+    test(
+      'PATCH sends authenticated JSON and decodes an object response',
+      () async {
+        final mock = MockClient((request) async {
+          expect(request.method, 'PATCH');
+          expect(
+            request.url,
+            Uri.parse('http://127.0.0.1:5000/api/v1/patients/7/status'),
+          );
+          expect(request.headers['accept'], 'application/json');
+          expect(request.headers['content-type'], 'application/json');
+          expect(request.headers['authorization'], 'Bearer test-access-token');
+          expect(jsonDecode(request.body), {'is_active': false});
+          return http.Response(
+            '{"success":true,"data":{"is_active":false}}',
+            200,
+          );
+        });
+        addTearDown(mock.close);
+
+        final api = ApiClient(config: testConfig(), client: mock);
+        final result = await api.patchJson(
+          'api/v1/patients/7/status',
+          body: const <String, dynamic>{'is_active': false},
+          bearerToken: 'test-access-token',
+        );
+
+        expect(result, {
+          'success': true,
+          'data': {'is_active': false},
+        });
+      },
+    );
 
     test('non-success status becomes a typed failure', () async {
       final mock = MockClient((request) async {

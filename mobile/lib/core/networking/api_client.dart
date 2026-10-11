@@ -43,6 +43,20 @@ class ApiClient {
     );
   }
 
+  /// Performs an authenticated JSON PATCH request and expects an object response.
+  Future<Map<String, dynamic>> patchJson(
+    String path, {
+    required Map<String, dynamic> body,
+    String? bearerToken,
+  }) {
+    return _requestJson(
+      method: 'PATCH',
+      path: path,
+      body: body,
+      bearerToken: bearerToken,
+    );
+  }
+
   Future<Map<String, dynamic>> _requestJson({
     required String method,
     required String path,
@@ -57,8 +71,9 @@ class ApiClient {
       );
     }
 
-    if ((method == 'GET' && body != null) ||
-        (method == 'POST' && body == null)) {
+    if (!const <String>{'GET', 'POST', 'PATCH'}.contains(method) ||
+        (method == 'GET' && body != null) ||
+        ((method == 'POST' || method == 'PATCH') && body == null)) {
       throw StateError('Invalid internal API request configuration.');
     }
 
@@ -80,9 +95,13 @@ class ApiClient {
         response = await _client
             .get(uri, headers: headers)
             .timeout(requestTimeout);
-      } else {
+      } else if (method == 'POST') {
         response = await _client
             .post(uri, headers: headers, body: jsonEncode(body))
+            .timeout(requestTimeout);
+      } else {
+        response = await _client
+            .patch(uri, headers: headers, body: jsonEncode(body))
             .timeout(requestTimeout);
       }
     } on TimeoutException catch (error) {

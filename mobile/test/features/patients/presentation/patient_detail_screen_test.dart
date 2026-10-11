@@ -31,16 +31,19 @@ Map<String, dynamic> _patientJson() => {
   'updated_at': '2026-01-02T10:00:00+00:00',
 };
 
-PatientRemoteDataSource _dataSource(MockClient client) =>
-    PatientRemoteDataSource(
-      apiClient: ApiClient(
-        config: const BackendConfig(
-          baseUrl: 'http://127.0.0.1:5000',
-          allowInsecureHttp: true,
-        ),
-        client: client,
-      ),
-    );
+PatientRemoteDataSource _dataSource(
+  MockClient client, {
+  Duration requestTimeout = const Duration(seconds: 10),
+}) => PatientRemoteDataSource(
+  apiClient: ApiClient(
+    config: const BackendConfig(
+      baseUrl: 'http://127.0.0.1:5000',
+      allowInsecureHttp: true,
+    ),
+    client: client,
+    requestTimeout: requestTimeout,
+  ),
+);
 
 void main() {
   testWidgets('detail screen renders authorized patient details', (
@@ -102,4 +105,316 @@ void main() {
     expect(find.text('Return to sign in'), findsOneWidget);
     expect(find.byKey(const ValueKey('patient-detail-name')), findsNothing);
   });
+
+  testWidgets(
+    'status change requires explicit confirmation and cancel sends no PATCH',
+    (tester) async {
+      final requests = <String>[];
+      final client = MockClient((request) async {
+        requests.add('${request.method} ${request.url.path}');
+        if (request.method == 'GET' &&
+            request.url.path == '/api/v1/patients/7') {
+          return http.Response(
+            jsonEncode({'success': true, 'data': _patientJson()}),
+            200,
+          );
+        }
+        return http.Response('{}', 500);
+      });
+      addTearDown(client.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PatientDetailScreen(
+            dataSource: _dataSource(client),
+            bearerToken: 'test-token',
+            patientId: 7,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('patient-status-action-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('patient-status-confirmation-dialog')),
+        findsOneWidget,
+      );
+      expect(find.text('Deactivate this patient?'), findsOneWidget);
+      expect(find.textContaining('active-only patient lists'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('patient-status-cancel-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(requests, ['GET /api/v1/patients/7']);
+      expect(
+        find.byKey(const ValueKey('patient-status-action-button')),
+        findsOneWidget,
+      );
+      expect(find.text('Active'), findsOneWidget);
+    },
+  );
+
+  testWidgets('confirmed deactivation applies server-returned patient state', (
+    tester,
+  ) async {
+    final requests = <String>[];
+    final client = MockClient((request) async {
+      requests.add('${request.method} ${request.url.path}');
+      if (request.method == 'GET' && request.url.path == '/api/v1/patients/7') {
+        return http.Response(
+          jsonEncode({'success': true, 'data': _patientJson()}),
+          200,
+        );
+      }
+      if (request.method == 'PATCH' &&
+          request.url.path == '/api/v1/patients/7/status') {
+        expect(request.headers['authorization'], 'Bearer test-token');
+        expect(jsonDecode(request.body), {'is_active': false});
+        final updated = _patientJson()..['is_active'] = false;
+        return http.Response(
+          jsonEncode({'success': true, 'data': updated}),
+          200,
+        );
+      }
+      return http.Response('{}', 500);
+    });
+    addTearDown(client.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PatientDetailScreen(
+          dataSource: _dataSource(client),
+          bearerToken: 'test-token',
+          patientId: 7,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('patient-status-action-button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('patient-status-confirm-button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(requests, [
+      'GET /api/v1/patients/7',
+      'PATCH /api/v1/patients/7/status',
+    ]);
+    expect(find.text('Inactive'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('patient-status-action-button')),
+      findsOneWidget,
+    );
+    expect(find.text('Activate patient'), findsOneWidget);
+    expect(find.text('Patient deactivated successfully.'), findsOneWidget);
+  });
+
+  testWidgets('confirmed activation applies server-returned patient state', (
+    tester,
+  ) async {
+    final requests = <String>[];
+    final client = MockClient((request) async {
+      requests.add('${request.method} ${request.url.path}');
+      if (request.method == 'GET' && request.url.path == '/api/v1/patients/7') {
+        final inactive = _patientJson()..['is_active'] = false;
+        return http.Response(
+          jsonEncode({'success': true, 'data': inactive}),
+          200,
+        );
+      }
+      if (request.method == 'PATCH' &&
+          request.url.path == '/api/v1/patients/7/status') {
+        expect(request.headers['authorization'], 'Bearer test-token');
+        expect(jsonDecode(request.body), {'is_active': true});
+        final updated = _patientJson()..['is_active'] = true;
+        return http.Response(
+          jsonEncode({'success': true, 'data': updated}),
+          200,
+        );
+      }
+      return http.Response('{}', 500);
+    });
+    addTearDown(client.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PatientDetailScreen(
+          dataSource: _dataSource(client),
+          bearerToken: 'test-token',
+          patientId: 7,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Activate patient'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('patient-status-action-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Activate this patient?'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('patient-status-confirm-button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(requests, [
+      'GET /api/v1/patients/7',
+      'PATCH /api/v1/patients/7/status',
+    ]);
+    expect(find.text('Active'), findsOneWidget);
+    expect(find.text('Deactivate patient'), findsOneWidget);
+    expect(find.text('Patient activated successfully.'), findsOneWidget);
+  });
+
+  testWidgets(
+    '403 status response shows permission message and does not flip state',
+    (tester) async {
+      final requests = <String>[];
+      final client = MockClient((request) async {
+        requests.add('${request.method} ${request.url.path}');
+        if (request.method == 'GET' &&
+            request.url.path == '/api/v1/patients/7') {
+          return http.Response(
+            jsonEncode({'success': true, 'data': _patientJson()}),
+            200,
+          );
+        }
+        if (request.method == 'PATCH') {
+          return http.Response(
+            jsonEncode({'success': false, 'error': 'Forbidden'}),
+            403,
+          );
+        }
+        return http.Response('{}', 500);
+      });
+      addTearDown(client.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PatientDetailScreen(
+            dataSource: _dataSource(client),
+            bearerToken: 'test-token',
+            patientId: 7,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('patient-status-action-button')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('patient-status-confirm-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Your account is not permitted to change patient status.'),
+        findsOneWidget,
+      );
+      expect(find.text('Active'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('patient-status-action-button')),
+        findsNothing,
+      );
+      expect(requests, [
+        'GET /api/v1/patients/7',
+        'PATCH /api/v1/patients/7/status',
+      ]);
+    },
+  );
+
+  testWidgets(
+    'uncertain 5xx status outcome requires refresh before another change',
+    (tester) async {
+      var patientGets = 0;
+      final requests = <String>[];
+      final client = MockClient((request) async {
+        requests.add('${request.method} ${request.url.path}');
+        if (request.method == 'GET' &&
+            request.url.path == '/api/v1/patients/7') {
+          patientGets++;
+          final current = _patientJson()..['is_active'] = patientGets == 1;
+          return http.Response(
+            jsonEncode({'success': true, 'data': current}),
+            200,
+          );
+        }
+        if (request.method == 'PATCH') {
+          expect(jsonDecode(request.body), {'is_active': false});
+          // The test deliberately cannot know if the server applied the change.
+          return http.Response(jsonEncode({'success': false}), 503);
+        }
+        return http.Response('{}', 500);
+      });
+      addTearDown(client.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PatientDetailScreen(
+            dataSource: _dataSource(client),
+            bearerToken: 'test-token',
+            patientId: 7,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('patient-status-action-button')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('patient-status-confirm-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining(
+          'We could not confirm whether the server applied this change.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('patient-status-reconcile-button')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('patient-status-action-button')),
+        findsNothing,
+      );
+      expect(requests, [
+        'GET /api/v1/patients/7',
+        'PATCH /api/v1/patients/7/status',
+      ]);
+
+      await tester.tap(
+        find.byKey(const ValueKey('patient-status-reconcile-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Inactive'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('patient-status-action-button')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('patient-status-reconcile-button')),
+        findsNothing,
+      );
+      expect(requests, [
+        'GET /api/v1/patients/7',
+        'PATCH /api/v1/patients/7/status',
+        'GET /api/v1/patients/7',
+      ]);
+    },
+  );
 }

@@ -71,6 +71,29 @@ class PatientRemoteDataSource {
     return Patient.fromJson(data);
   }
 
+  /// Sets a patient's active status through the existing status endpoint.
+  ///
+  /// The backend remains the authority for role permissions, clinic ownership,
+  /// audit logging, and the resulting patient state.
+  Future<Patient> setPatientStatus({
+    required String bearerToken,
+    required int patientId,
+    required bool isActive,
+  }) async {
+    _validateToken(bearerToken);
+    if (patientId <= 0) {
+      throw ArgumentError('patientId must be positive.');
+    }
+
+    final envelope = await _apiClient.patchJson(
+      'api/v1/patients/$patientId/status',
+      body: <String, dynamic>{'is_active': isActive},
+      bearerToken: bearerToken,
+    );
+    final data = _dataFromEnvelope(envelope);
+    return Patient.fromJson(data);
+  }
+
   Map<String, dynamic> _dataFromEnvelope(Map<String, dynamic> envelope) {
     if (envelope['success'] != true) {
       throw const FormatException(

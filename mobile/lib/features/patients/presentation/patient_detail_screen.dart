@@ -29,6 +29,11 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   String? _errorMessage;
   bool _loading = true;
   int _requestGeneration = 0;
+  bool _statusUpdating = false;
+  bool _statusOutcomeUnknown = false;
+  bool _statusPermissionDenied = false;
+  bool _statusAuthenticationRequired = false;
+  String? _statusMessage;
 
   @override
   void initState() {
@@ -210,6 +215,8 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
           ),
         ),
         const SizedBox(height: 12),
+        _statusManagementCard(patient),
+        const SizedBox(height: 12),
         _section('Patient information', [
           _detail('Date of birth', _dateOnly(patient.dateOfBirth)),
           _detail('Gender', patient.gender),
@@ -228,6 +235,276 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         ]),
       ],
     );
+  }
+
+  Widget _statusManagementCard(Patient patient) {
+    final isActive = patient.isActive;
+
+    return Card(
+      key: const ValueKey('patient-status-management-card'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Manage patient status',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              isActive
+                  ? 'This patient is active and appears in active-only lists.'
+                  : 'This patient is inactive and is excluded from active-only lists.',
+            ),
+            if (_statusMessage != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _statusMessage!,
+                key: const ValueKey('patient-status-message'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 12),
+            if (_statusAuthenticationRequired)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  key: const ValueKey('patient-status-sign-in-button'),
+                  onPressed: () => context.go('/login'),
+                  child: const Text('Return to sign in'),
+                ),
+              )
+            else if (_statusPermissionDenied)
+              const SizedBox.shrink()
+            else if (_statusOutcomeUnknown)
+              OutlinedButton.icon(
+                key: const ValueKey('patient-status-reconcile-button'),
+                onPressed: _statusUpdating
+                    ? null
+                    : () => unawaited(_reconcilePatientStatus()),
+                icon: _statusUpdating
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh),
+                label: Text(
+                  _statusUpdating ? 'Refreshing status...' : 'Refresh status',
+                ),
+              )
+            else
+              FilledButton.tonalIcon(
+                key: const ValueKey('patient-status-action-button'),
+                onPressed: _statusUpdating
+                    ? null
+                    : () => unawaited(_confirmPatientStatusChange(patient)),
+                icon: _statusUpdating
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        isActive
+                            ? Icons.person_off_outlined
+                            : Icons.person_add_alt_1_outlined,
+                      ),
+                label: Text(
+                  _statusUpdating
+                      ? 'Updating status...'
+                      : isActive
+                      ? 'Deactivate patient'
+                      : 'Activate patient',
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmPatientStatusChange(Patient patient) async {
+    if (_statusUpdating ||
+        _statusOutcomeUnknown ||
+        _statusPermissionDenied ||
+        _statusAuthenticationRequired) {
+      return;
+    }
+
+    final desiredStatus = !patient.isActive;
+    final actionLabel = desiredStatus
+        ? 'Activate patient'
+        : 'Deactivate patient';
+    final explanation = desiredStatus
+        ? 'This will mark the patient as active and include them in active-only patient lists.'
+        : 'This will mark the patient as inactive and remove them from active-only patient lists. You can reactivate them later.';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('patient-status-confirmation-dialog'),
+        title: Text(
+          desiredStatus ? 'Activate this patient?' : 'Deactivate this patient?',
+        ),
+        content: Text(explanation),
+        actions: [
+          TextButton(
+            key: const ValueKey('patient-status-cancel-button'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('patient-status-confirm-button'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(actionLabel),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || confirmed != true) return;
+
+    setState(() {
+      _statusUpdating = true;
+      _statusMessage = null;
+    });
+
+    try {
+      final updated = await widget.dataSource.setPatientStatus(
+        bearerToken: widget.bearerToken,
+        patientId: patient.id,
+        isActive: desiredStatus,
+      );
+
+      if (!mounted) return;
+      if (updated.id != patient.id || updated.isActive != desiredStatus) {
+        setState(() {
+          _statusUpdating = false;
+          _statusOutcomeUnknown = true;
+          _statusMessage = 'The response did not confirm the requested status. Refresh status before trying again.';
+        });
+        return;
+      }
+
+      setState(() {
+        _patient = updated;
+        _statusUpdating = false;
+        _statusOutcomeUnknown = false;
+        _statusPermissionDenied = false;
+        _statusAuthenticationRequired = false;
+        _statusMessage = null;
+        _lastError = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            desiredStatus
+                ? 'Patient activated successfully.'
+                : 'Patient deactivated successfully.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final outcomeUnknown = _isStatusOutcomeUnknown(error);
+      setState(() {
+        _statusUpdating = false;
+        _statusOutcomeUnknown = outcomeUnknown;
+        _statusPermissionDenied =
+            error is ApiException && error.statusCode == 403;
+        _statusAuthenticationRequired =
+            error is ApiException && error.statusCode == 401;
+        _statusMessage = _statusFailureMessage(
+          error,
+          outcomeUnknown: outcomeUnknown,
+        );
+      });
+    }
+  }
+
+  bool _isStatusOutcomeUnknown(Object error) {
+    if (error is ApiException) {
+      final status = error.statusCode;
+      if (status == 408 || (status != null && status >= 500)) return true;
+      if (status != null && status >= 400 && status < 500) return false;
+      return error.kind == ApiFailureKind.timeout ||
+          error.kind == ApiFailureKind.connection ||
+          error.kind == ApiFailureKind.invalidResponse;
+    }
+
+    // A malformed success envelope, unexpected parse failure, or unclassified
+    // exception cannot prove whether the server committed the status change.
+    return true;
+  }
+
+  String _statusFailureMessage(Object error, {required bool outcomeUnknown}) {
+    if (error is ApiException) {
+      if (error.statusCode == 401) {
+        return 'Your session is no longer authorized. Sign in again before changing patient status.';
+      }
+      if (error.statusCode == 403) {
+        return 'Your account is not permitted to change patient status.';
+      }
+      if (error.statusCode == 404) {
+        return 'This patient could not be found. Refresh the patient details.';
+      }
+      if (outcomeUnknown) {
+        return 'We could not confirm whether the server applied this change. Refresh status before trying again.';
+      }
+      return 'The backend rejected the status change (HTTP ${error.statusCode}).';
+    }
+
+    if (outcomeUnknown) {
+      return 'We could not confirm whether the server applied this change. Refresh status before trying again.';
+    }
+    return 'The status change could not be completed. Please try again.';
+  }
+
+  Future<void> _reconcilePatientStatus() async {
+    if (_statusUpdating || !_statusOutcomeUnknown) return;
+    setState(() => _statusUpdating = true);
+
+    try {
+      final current = await widget.dataSource.fetchPatient(
+        bearerToken: widget.bearerToken,
+        patientId: widget.patientId,
+      );
+      if (!mounted) return;
+
+      setState(() {
+        _patient = current;
+        _statusUpdating = false;
+        _statusOutcomeUnknown = false;
+        _statusPermissionDenied = false;
+        _statusAuthenticationRequired = false;
+        _statusMessage = null;
+        _lastError = null;
+        _errorMessage = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Patient status refreshed from the server.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final needsSignIn = error is ApiException && error.statusCode == 401;
+      setState(() {
+        _statusUpdating = false;
+        _statusOutcomeUnknown = !needsSignIn;
+        _statusAuthenticationRequired = needsSignIn;
+        if (needsSignIn) {
+          _lastError = error;
+          _errorMessage = _messageFor(error);
+          _patient = null;
+        }
+        _statusMessage = needsSignIn
+            ? 'Your session is no longer authorized. Sign in again to view current patient status.'
+            : 'Could not refresh the status. The outcome remains unconfirmed; refresh again before attempting another change.';
+      });
+    }
   }
 
   Widget _section(String title, List<Widget?> details) {

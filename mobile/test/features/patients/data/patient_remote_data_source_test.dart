@@ -110,6 +110,36 @@ void main() {
       expect(patient.allergies, 'Peanuts');
     });
 
+    for (final desiredStatus in <bool>[true, false]) {
+      test(
+        'setPatientStatus sends is_active=$desiredStatus and parses response',
+        () async {
+          final client = MockClient((request) async {
+            expect(request.method, 'PATCH');
+            expect(request.url.path, '/api/v1/patients/7/status');
+            expect(request.headers['authorization'], 'Bearer $_token');
+            expect(jsonDecode(request.body), {'is_active': desiredStatus});
+            final responsePatient = patientJson()
+              ..['is_active'] = desiredStatus;
+            return http.Response(
+              jsonEncode({'success': true, 'data': responsePatient}),
+              200,
+            );
+          });
+          addTearDown(client.close);
+
+          final patient = await dataSource(client).setPatientStatus(
+            bearerToken: _token,
+            patientId: 7,
+            isActive: desiredStatus,
+          );
+
+          expect(patient.id, 7);
+          expect(patient.isActive, desiredStatus);
+        },
+      );
+    }
+
     test(
       'rejects a malformed success envelope instead of accepting partial data',
       () async {
