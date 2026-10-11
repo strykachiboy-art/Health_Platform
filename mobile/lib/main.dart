@@ -11,11 +11,13 @@ import 'package:clinic_system_pro/features/auth/data/auth_session_store.dart';
 import 'package:clinic_system_pro/features/auth/data/google_sign_in_provider.dart';
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 
 void main() {
   final apiClient = ApiClient(config: BackendConfig.fromEnvironment());
 
   final healthDataSource = BackendHealthRemoteDataSource(apiClient: apiClient);
+  final patientDataSource = PatientRemoteDataSource(apiClient: apiClient);
   final authRemoteDataSource = AuthRemoteDataSource(apiClient: apiClient);
   final sessionStore = AuthSessionStore(
     storage: FlutterSecureKeyValueStorage(),
@@ -31,6 +33,7 @@ void main() {
   runApp(
     ClinicSystemProApp(
       healthDataSource: healthDataSource,
+      patientDataSource: patientDataSource,
       loginScreen: GoogleLoginScreen(
         acquireGoogleIdToken: googleSignInProvider.signInForIdToken,
         authRemoteDataSource: authRemoteDataSource,
@@ -45,10 +48,12 @@ class ClinicSystemProApp extends StatefulWidget {
     super.key,
     required this.healthDataSource,
     required this.loginScreen,
+    this.patientDataSource,
   });
 
   final BackendHealthRemoteDataSource healthDataSource;
   final Widget loginScreen;
+  final PatientRemoteDataSource? patientDataSource;
 
   @override
   State<ClinicSystemProApp> createState() => _ClinicSystemProAppState();
@@ -63,6 +68,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
     _router = createAppRouter(
       healthDataSource: widget.healthDataSource,
       loginScreen: widget.loginScreen,
+      patientDataSource: widget.patientDataSource,
     );
   }
 

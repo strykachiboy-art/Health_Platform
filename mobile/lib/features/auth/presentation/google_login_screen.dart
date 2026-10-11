@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
@@ -284,6 +285,21 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         const SizedBox(height: 8),
         Text('Role: ${session.role}'),
         const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            key: const ValueKey('open-patient-directory-button'),
+            onPressed: _busy
+                ? null
+                : () => context.push<void>(
+                    '/patients',
+                    extra: session.accessToken,
+                  ),
+            icon: const Icon(Icons.people_outline),
+            label: const Text('Open patient directory'),
+          ),
+        ),
+        const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
           child: OutlinedButton.icon(
