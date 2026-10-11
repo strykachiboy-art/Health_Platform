@@ -52,6 +52,45 @@ class AuthSessionCoordinator {
   Future<AuthLogoutResult>? _logoutInFlight;
 
   bool _logoutRequested = false;
+  bool _sessionEstablishmentInFlight = false;
+
+  /// Persists a token pair returned by a successful authentication call.
+  ///
+  /// An existing session is never silently replaced by another login.
+  Future<AuthSessionState> persistAuthenticatedSession(
+    AuthTokenResponse session,
+  ) async {
+    if (_logoutRequested ||
+        _logoutInFlight != null ||
+        _refreshInFlight != null ||
+        _sessionEstablishmentInFlight) {
+      throw StateError(
+        'Cannot establish a session during another session operation.',
+      );
+    }
+
+    _sessionEstablishmentInFlight = true;
+    try {
+      final stored = await _sessionStore.readRecord();
+      if (stored != null) {
+        throw StateError(
+          'An authentication session already exists. '
+          'Sign out before switching accounts.',
+        );
+      }
+
+      if (_logoutRequested ||
+          _logoutInFlight != null ||
+          _refreshInFlight != null) {
+        throw StateError('Session state changed during authentication.');
+      }
+
+      await _sessionStore.save(session);
+      return AuthSessionState.ready(session);
+    } finally {
+      _sessionEstablishmentInFlight = false;
+    }
+  }
 
   /// Restores local state without doing network I/O.
   Future<AuthSessionState> restoreSession() async {
@@ -76,10 +115,10 @@ class AuthSessionCoordinator {
 
   /// Rotates the current refresh token once and persists the replacement pair.
   Future<AuthSessionState> refreshSession() {
-    if (_logoutRequested) {
+    if (_logoutRequested || _sessionEstablishmentInFlight) {
       return Future.value(
         AuthSessionState.recoveryRequired(
-          cause: StateError('Refresh blocked during logout.'),
+          cause: StateError('Refresh blocked during a session transition.'),
         ),
       );
     }
@@ -139,6 +178,12 @@ class AuthSessionCoordinator {
 
   /// Signs out locally first, then makes one best-effort remote logout call.
   Future<AuthLogoutResult> logoutSession() {
+    if (_sessionEstablishmentInFlight) {
+      throw StateError(
+        'Cannot log out while a new session is being persisted.',
+      );
+    }
+
     final active = _logoutInFlight;
     if (active != null) {
       return active;

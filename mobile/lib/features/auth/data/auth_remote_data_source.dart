@@ -13,6 +13,7 @@ class AuthRemoteDataSource {
   final ApiClient _apiClient;
 
   static const String _loginPath = 'api/v1/auth/login';
+  static const String _googleMobileLoginPath = 'api/v1/auth/google/mobile';
   static const String _refreshPath = 'api/v1/auth/refresh';
   static const String _logoutPath = 'api/v1/auth/logout';
 
@@ -23,6 +24,20 @@ class AuthRemoteDataSource {
     final response = await _apiClient.postJson(
       _loginPath,
       body: {'email': email, 'password': password},
+    );
+
+    return AuthTokenResponse.fromEnvelope(response);
+  }
+
+  /// Sends a Google ID token to the backend for verification.
+  Future<AuthTokenResponse> loginWithGoogleIdToken({
+    required String idToken,
+  }) async {
+    _requireGoogleIdToken(idToken);
+
+    final response = await _apiClient.postJson(
+      _googleMobileLoginPath,
+      body: {'id_token': idToken},
     );
 
     return AuthTokenResponse.fromEnvelope(response);
@@ -60,6 +75,14 @@ class AuthRemoteDataSource {
 
     if (response['success'] != true) {
       throw const FormatException('Logout response did not indicate success.');
+    }
+  }
+
+  void _requireGoogleIdToken(String token) {
+    if (token.isEmpty || token.trim() != token || token.length > 8192) {
+      throw ArgumentError(
+        'idToken must be non-empty, trimmed, and at most 8192 characters.',
+      );
     }
   }
 

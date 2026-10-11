@@ -71,6 +71,70 @@ void main() {
       expect(result.clinicContextId, isNull);
     });
 
+    test(
+      'sends a Google ID token to mobile auth and parses the response',
+      () async {
+        const idToken = 'google-id-token';
+        final mock = MockClient((request) async {
+          expect(request.method, 'POST');
+          expect(
+            request.url,
+            Uri.parse('http://127.0.0.1:5000/api/v1/auth/google/mobile'),
+          );
+          expect(request.headers['accept'], 'application/json');
+          expect(request.headers['content-type'], contains('application/json'));
+          expect(request.headers.containsKey('authorization'), isFalse);
+          expect(jsonDecode(request.body), {'id_token': idToken});
+
+          return http.Response(
+            jsonEncode(successfulLoginEnvelope()),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        });
+        addTearDown(mock.close);
+
+        final source = AuthRemoteDataSource(
+          apiClient: ApiClient(config: testConfig(), client: mock),
+        );
+
+        final result = await source.loginWithGoogleIdToken(idToken: idToken);
+
+        expect(result.accessToken, 'access-example');
+        expect(result.refreshToken, 'refresh-example');
+        expect(result.userId, 42);
+        expect(result.role, 'DOCTOR');
+      },
+    );
+
+    test('rejects malformed Google ID tokens before network I/O', () async {
+      var requests = 0;
+      final mock = MockClient((request) async {
+        requests++;
+        return http.Response(jsonEncode(successfulLoginEnvelope()), 200);
+      });
+      addTearDown(mock.close);
+
+      final source = AuthRemoteDataSource(
+        apiClient: ApiClient(config: testConfig(), client: mock),
+      );
+      final invalidTokens = <String>[
+        '',
+        ' leading-space',
+        'trailing-space ',
+        List<String>.filled(8193, 'x').join(),
+      ];
+
+      for (final token in invalidTokens) {
+        await expectLater(
+          source.loginWithGoogleIdToken(idToken: token),
+          throwsArgumentError,
+        );
+      }
+
+      expect(requests, 0);
+    });
+
     test('propagates typed HTTP failures', () async {
       final mock = MockClient((request) async {
         return http.Response(

@@ -128,6 +128,82 @@ void main() {
       expect(requests, 0);
     });
 
+    test('persists an authenticated token pair in secure storage', () async {
+      final storage = _MemorySecureStorage();
+      final coordinator = _coordinator(
+        storage: storage,
+        handler: (_) async {
+          fail('Persisting an existing response must not make a network call.');
+        },
+      );
+
+      final state = await coordinator.persistAuthenticatedSession(
+        _oldSession(),
+      );
+      final stored = await _store(storage).readRecord();
+
+      expect(state.disposition, AuthSessionDisposition.ready);
+      expect(state.session?.accessToken, _accessToken);
+      expect(state.session?.refreshToken, _refreshToken);
+      expect(stored?.refreshPending, isFalse);
+      expect(stored?.session.accessToken, _accessToken);
+      expect(stored?.session.refreshToken, _refreshToken);
+      expect(storage.writeCount, 1);
+    });
+
+    test(
+      'does not replace an existing session during authentication',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+
+        const replacement = AuthTokenResponse(
+          accessToken: _newAccessToken,
+          refreshToken: _newRefreshToken,
+          userId: 99,
+          role: 'PATIENT',
+          clinicContextId: null,
+        );
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (_) async {
+            fail('Persisting a session must not make a network call.');
+          },
+        );
+
+        await expectLater(
+          coordinator.persistAuthenticatedSession(replacement),
+          throwsA(isA<StateError>()),
+        );
+
+        final stored = await _store(storage).readRecord();
+        expect(stored?.session.accessToken, _accessToken);
+        expect(stored?.session.refreshToken, _refreshToken);
+        expect(storage.writeCount, 1);
+      },
+    );
+
+    test(
+      'does not claim session establishment after secure write failure',
+      () async {
+        final storage = _MemorySecureStorage();
+        storage.failWriteNumber = 1;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (_) async {
+            fail('Persisting a session must not make a network call.');
+          },
+        );
+
+        await expectLater(
+          coordinator.persistAuthenticatedSession(_oldSession()),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(storage.values, isEmpty);
+      },
+    );
+
     test(
       'restores a pending record as recovery required without retrying',
       () async {
