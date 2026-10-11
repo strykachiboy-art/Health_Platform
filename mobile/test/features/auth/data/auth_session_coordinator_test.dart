@@ -255,6 +255,64 @@ void main() {
     );
 
     test(
+      'pending refresh survives coordinator restart without retrying old token',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+
+        var requests = 0;
+        var simulatedRotation = false;
+
+        final firstCoordinator = _coordinator(
+          storage: storage,
+          handler: (request) async {
+            requests++;
+            expect(request.url.path, '/api/v1/auth/refresh');
+            expect(request.headers['authorization'], 'Bearer $_refreshToken');
+            expect(_pendingMarker(storage), isTrue);
+
+            simulatedRotation = true;
+            throw http.ClientException(
+              'Refresh response lost after simulated token rotation.',
+            );
+          },
+        );
+
+        final firstState = await firstCoordinator.refreshSession();
+
+        expect(firstState.disposition, AuthSessionDisposition.recoveryRequired);
+        expect(simulatedRotation, isTrue);
+        expect(requests, 1);
+        expect(_pendingMarker(storage), isTrue);
+
+        final restartedStorage = _MemorySecureStorage()
+          ..values.addAll(storage.values);
+
+        final restartedCoordinator = _coordinator(
+          storage: restartedStorage,
+          handler: (_) async {
+            requests++;
+            fail(
+              'A restarted coordinator must not retry the old refresh token.',
+            );
+          },
+        );
+
+        final restored = await restartedCoordinator.restoreSession();
+        final refreshState = await restartedCoordinator.refreshSession();
+
+        expect(restored.disposition, AuthSessionDisposition.recoveryRequired);
+        expect(restored.session, isNull);
+        expect(
+          refreshState.disposition,
+          AuthSessionDisposition.recoveryRequired,
+        );
+        expect(refreshState.session, isNull);
+        expect(_pendingMarker(restartedStorage), isTrue);
+        expect(requests, 1);
+      },
+    );
+    test(
       'connection failure leaves pending marker and requires recovery',
       () async {
         final storage = _MemorySecureStorage();
