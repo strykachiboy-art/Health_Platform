@@ -51,6 +51,7 @@ class _MemorySecureStorage implements SecureKeyValueStorage {
   final Map<String, String> values = <String, String>{};
   int writeCount = 0;
   int? failWriteNumber;
+  bool failDelete = false;
 
   @override
   Future<String?> read({required String key}) async => values[key];
@@ -66,6 +67,9 @@ class _MemorySecureStorage implements SecureKeyValueStorage {
 
   @override
   Future<void> delete({required String key}) async {
+    if (failDelete) {
+      throw StateError('Injected secure-storage delete failure.');
+    }
     values.remove(key);
   }
 }
@@ -373,6 +377,242 @@ void main() {
       expect(stored?.session.refreshToken, _refreshToken);
     });
 
+    test(
+      'logout clears local credentials before confirmed remote logout',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (request) async {
+            requests++;
+            expect(request.method, 'POST');
+            expect(request.url.path, '/api/v1/auth/logout');
+            expect(request.headers['authorization'], 'Bearer $_accessToken');
+            expect(jsonDecode(request.body), {'refresh_token': _refreshToken});
+            expect(
+              storage.values.containsKey(AuthSessionStore.storageKey),
+              isFalse,
+              reason: 'Local credentials must be deleted before network I/O.',
+            );
+
+            return http.Response(
+              jsonEncode({
+                'success': true,
+                'message': 'Successfully logged out',
+              }),
+              200,
+            );
+          },
+        );
+
+        final result = await coordinator.logoutSession();
+
+        expect(result.remoteStatus, AuthLogoutRemoteStatus.confirmed);
+        expect(result.cause, isNull);
+        expect(requests, 1);
+        expect(await _store(storage).readRecord(), isNull);
+        expect(
+          (await coordinator.restoreSession()).disposition,
+          AuthSessionDisposition.signedOut,
+        );
+      },
+    );
+
+    test('HTTP 500 produces uncertain remote status but remains locally signed out', () async {
+      final storage = _MemorySecureStorage();
+      await _store(storage).save(_oldSession());
+
+      final coordinator = _coordinator(
+        storage: storage,
+        handler: (_) async {
+          expect(
+            storage.values.containsKey(AuthSessionStore.storageKey),
+            isFalse,
+          );
+          return http.Response(
+            jsonEncode({'success': false, 'error': 'Revocation failed'}),
+            500,
+          );
+        },
+      );
+
+      final result = await coordinator.logoutSession();
+
+      expect(result.remoteStatus, AuthLogoutRemoteStatus.uncertain);
+      expect(result.cause, isA<ApiException>());
+      expect((result.cause! as ApiException).statusCode, 500);
+      expect(await _store(storage).readRecord(), isNull);
+    });
+
+    test(
+      'pending refresh clears locally without sending stale tokens to logout',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession(), refreshPending: true);
+
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (_) async {
+            requests++;
+            fail('Must not send a possibly stale token pair to logout.');
+          },
+        );
+
+        final result = await coordinator.logoutSession();
+
+        expect(result.remoteStatus, AuthLogoutRemoteStatus.notAttempted);
+        expect(result.cause, isA<StateError>());
+        expect(requests, 0);
+        expect(await _store(storage).readRecord(), isNull);
+      },
+    );
+
+    test('local delete failure prevents remote logout and keeps coordinator fail-closed', () async {
+      final storage = _MemorySecureStorage();
+      await _store(storage).save(_oldSession());
+      storage.failDelete = true;
+
+      var requests = 0;
+      final coordinator = _coordinator(
+        storage: storage,
+        handler: (_) async {
+          requests++;
+          return http.Response(jsonEncode({'success': true}), 200);
+        },
+      );
+
+      await expectLater(
+        coordinator.logoutSession(),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(requests, 0);
+      expect(storage.values.containsKey(AuthSessionStore.storageKey), isTrue);
+      expect(
+        (await coordinator.restoreSession()).disposition,
+        AuthSessionDisposition.recoveryRequired,
+      );
+      expect(
+        (await coordinator.refreshSession()).disposition,
+        AuthSessionDisposition.recoveryRequired,
+      );
+    });
+
+    test(
+      'concurrent logout callers share one request and block new refresh',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+
+        final requestStarted = Completer<void>();
+        final responseCompleter = Completer<http.Response>();
+        var requests = 0;
+
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (request) {
+            requests++;
+            expect(request.url.path, '/api/v1/auth/logout');
+            if (!requestStarted.isCompleted) {
+              requestStarted.complete();
+            }
+            return responseCompleter.future;
+          },
+        );
+
+        final first = coordinator.logoutSession();
+        await requestStarted.future;
+        final second = coordinator.logoutSession();
+
+        expect(identical(first, second), isTrue);
+
+        final blockedRefresh = await coordinator.refreshSession();
+        expect(
+          blockedRefresh.disposition,
+          AuthSessionDisposition.recoveryRequired,
+        );
+        expect(requests, 1);
+
+        responseCompleter.complete(
+          http.Response(jsonEncode({'success': true}), 200),
+        );
+        final result = await first;
+
+        expect(result.remoteStatus, AuthLogoutRemoteStatus.confirmed);
+        expect(requests, 1);
+        expect(await _store(storage).readRecord(), isNull);
+      },
+    );
+
+    test(
+      'logout waits for in-flight refresh then revokes the replacement pair',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+
+        final refreshStarted = Completer<void>();
+        final refreshResponse = Completer<http.Response>();
+        var refreshRequests = 0;
+        var logoutRequests = 0;
+
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (request) async {
+            if (request.url.path == '/api/v1/auth/refresh') {
+              refreshRequests++;
+              expect(_pendingMarker(storage), isTrue);
+              refreshStarted.complete();
+              return refreshResponse.future;
+            }
+
+            if (request.url.path == '/api/v1/auth/logout') {
+              logoutRequests++;
+              expect(
+                request.headers['authorization'],
+                'Bearer $_newAccessToken',
+              );
+              expect(jsonDecode(request.body), {
+                'refresh_token': _newRefreshToken,
+              });
+              expect(
+                storage.values.containsKey(AuthSessionStore.storageKey),
+                isFalse,
+              );
+              return http.Response(jsonEncode({'success': true}), 200);
+            }
+
+            fail('Unexpected request path: ${request.url.path}');
+          },
+        );
+
+        final refreshFuture = coordinator.refreshSession();
+        await refreshStarted.future;
+
+        final logoutFuture = coordinator.logoutSession();
+        final blockedRefresh = await coordinator.refreshSession();
+        expect(
+          blockedRefresh.disposition,
+          AuthSessionDisposition.recoveryRequired,
+        );
+
+        refreshResponse.complete(
+          http.Response(jsonEncode(_replacementEnvelope()), 200),
+        );
+
+        final refreshResult = await refreshFuture;
+        final logoutResult = await logoutFuture;
+
+        expect(refreshResult.disposition, AuthSessionDisposition.ready);
+        expect(logoutResult.remoteStatus, AuthLogoutRemoteStatus.confirmed);
+        expect(refreshRequests, 1);
+        expect(logoutRequests, 1);
+        expect(await _store(storage).readRecord(), isNull);
+      },
+    );
     test('concurrent refresh callers share one rotation request', () async {
       final storage = _MemorySecureStorage();
       await _store(storage).save(_oldSession());

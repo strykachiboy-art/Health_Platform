@@ -4,9 +4,6 @@ import 'auth_session_store.dart';
 import 'models/auth_token_response.dart';
 
 /// Describes what the app may safely do with the locally stored session.
-///
-/// `ready` means a structurally valid session is available locally; the
-/// backend remains authoritative about expiry and revocation.
 enum AuthSessionDisposition { signedOut, ready, recoveryRequired }
 
 class AuthSessionState {
@@ -25,21 +22,21 @@ class AuthSessionState {
       session = null;
 
   final AuthSessionDisposition disposition;
-
-  /// Intentionally null for recovery-required states so callers cannot use
-  /// the old token pair as if it were known to be valid.
   final AuthTokenResponse? session;
+  final Object? cause;
+}
 
-  /// Optional failure context. Do not log request credentials or token values.
+enum AuthLogoutRemoteStatus { notAttempted, confirmed, uncertain }
+
+/// Returned only after the local session record is absent.
+class AuthLogoutResult {
+  const AuthLogoutResult({required this.remoteStatus, this.cause});
+
+  final AuthLogoutRemoteStatus remoteStatus;
   final Object? cause;
 }
 
 /// Coordinates refresh-token rotation with the secure session record.
-///
-/// The pending marker is written before network I/O. Only a confirmed refresh
-/// token rejection clears the old local session. Network failures, invalid
-/// responses, and replacement-session persistence failures require recovery;
-/// this class never retries an uncertain refresh request.
 class AuthSessionCoordinator {
   factory AuthSessionCoordinator({
     required AuthSessionStore sessionStore,
@@ -52,12 +49,18 @@ class AuthSessionCoordinator {
   final AuthRemoteDataSource _remoteDataSource;
 
   Future<AuthSessionState>? _refreshInFlight;
+  Future<AuthLogoutResult>? _logoutInFlight;
+
+  bool _logoutRequested = false;
 
   /// Restores local state without doing network I/O.
-  ///
-  /// A pending refresh is not exposed as a usable session. The caller should
-  /// route the user through the app's safe reauthentication/recovery path.
   Future<AuthSessionState> restoreSession() async {
+    if (_logoutRequested) {
+      return AuthSessionState.recoveryRequired(
+        cause: StateError('Logout is in progress or local cleanup failed.'),
+      );
+    }
+
     final stored = await _sessionStore.readRecord();
 
     if (stored == null) {
@@ -72,11 +75,15 @@ class AuthSessionCoordinator {
   }
 
   /// Rotates the current refresh token once and persists the replacement pair.
-  ///
-  /// Concurrent callers share one in-flight operation. If a pending marker is
-  /// already present (for example, after a process restart), no request is
-  /// sent with the old refresh token.
   Future<AuthSessionState> refreshSession() {
+    if (_logoutRequested) {
+      return Future.value(
+        AuthSessionState.recoveryRequired(
+          cause: StateError('Refresh blocked during logout.'),
+        ),
+      );
+    }
+
     final active = _refreshInFlight;
     if (active != null) {
       return active;
@@ -103,8 +110,6 @@ class AuthSessionCoordinator {
       return const AuthSessionState.recoveryRequired();
     }
 
-    // This write must complete before the remote refresh starts. If secure
-    // storage fails here, the exception propagates and no request is sent.
     await _sessionStore.save(stored.session, refreshPending: true);
 
     final AuthTokenResponse replacement;
@@ -114,30 +119,145 @@ class AuthSessionCoordinator {
       );
     } on ApiException catch (error) {
       if (_isDefinitiveTokenRejection(error)) {
-        // The backend explicitly rejected the refresh credential. If local
-        // clearing fails, let that storage failure propagate rather than
-        // claim the client is signed out.
         await _sessionStore.clear();
         return const AuthSessionState.signedOut();
       }
 
       return AuthSessionState.recoveryRequired(cause: error);
     } catch (error) {
-      // Includes malformed success payloads: the server may already have
-      // rotated its token even though the client cannot use the response.
       return AuthSessionState.recoveryRequired(cause: error);
     }
 
     try {
-      // One secure record write replaces both tokens and clears the marker.
       await _sessionStore.save(replacement, refreshPending: false);
     } catch (error) {
-      // The existing pending record is the safe recovery signal unless the
-      // storage platform completed the write before reporting its failure.
       return AuthSessionState.recoveryRequired(cause: error);
     }
 
     return AuthSessionState.ready(replacement);
+  }
+
+  /// Signs out locally first, then makes one best-effort remote logout call.
+  Future<AuthLogoutResult> logoutSession() {
+    final active = _logoutInFlight;
+    if (active != null) {
+      return active;
+    }
+
+    _logoutRequested = true;
+
+    late final Future<AuthLogoutResult> operation;
+    operation = _logoutStoredSession()
+        .then((result) {
+          _logoutRequested = false;
+          return result;
+        })
+        .whenComplete(() {
+          if (identical(_logoutInFlight, operation)) {
+            _logoutInFlight = null;
+          }
+        });
+
+    _logoutInFlight = operation;
+    return operation;
+  }
+
+  Future<AuthLogoutResult> _logoutStoredSession() async {
+    final activeRefresh = _refreshInFlight;
+    StoredAuthSession? beforeRefresh;
+    AuthSessionState? refreshState;
+    Object? refreshError;
+
+    if (activeRefresh != null) {
+      try {
+        beforeRefresh = await _sessionStore.readRecord();
+      } catch (_) {}
+
+      try {
+        refreshState = await activeRefresh;
+      } catch (error) {
+        refreshError = error;
+      }
+    }
+
+    StoredAuthSession? stored;
+    Object? readError;
+    try {
+      stored = await _sessionStore.readRecord();
+    } catch (error) {
+      readError = error;
+    }
+
+    if (readError != null) {
+      await _sessionStore.clear();
+      return AuthLogoutResult(
+        remoteStatus: AuthLogoutRemoteStatus.notAttempted,
+        cause: readError,
+      );
+    }
+
+    if (stored == null) {
+      if (activeRefresh == null) {
+        return const AuthLogoutResult(
+          remoteStatus: AuthLogoutRemoteStatus.notAttempted,
+        );
+      }
+
+      if (refreshState?.disposition == AuthSessionDisposition.signedOut) {
+        if (beforeRefresh == null) {
+          return const AuthLogoutResult(
+            remoteStatus: AuthLogoutRemoteStatus.notAttempted,
+          );
+        }
+
+        return _attemptRemoteLogout(beforeRefresh.session);
+      }
+
+      return AuthLogoutResult(
+        remoteStatus: AuthLogoutRemoteStatus.uncertain,
+        cause:
+            refreshError ??
+            StateError(
+              'Session state changed during refresh; remote logout was not attempted.',
+            ),
+      );
+    }
+
+    final refreshPending = stored.refreshPending;
+
+    await _sessionStore.clear();
+
+    if (refreshPending) {
+      return AuthLogoutResult(
+        remoteStatus: AuthLogoutRemoteStatus.notAttempted,
+        cause: StateError(
+          'Refresh outcome is uncertain; local session was cleared without '
+          'sending a potentially stale token pair to logout.',
+        ),
+      );
+    }
+
+    return _attemptRemoteLogout(stored.session);
+  }
+
+  Future<AuthLogoutResult> _attemptRemoteLogout(
+    AuthTokenResponse session,
+  ) async {
+    try {
+      await _remoteDataSource.logout(
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken,
+      );
+
+      return const AuthLogoutResult(
+        remoteStatus: AuthLogoutRemoteStatus.confirmed,
+      );
+    } catch (error) {
+      return AuthLogoutResult(
+        remoteStatus: AuthLogoutRemoteStatus.uncertain,
+        cause: error,
+      );
+    }
   }
 
   bool _isDefinitiveTokenRejection(ApiException error) {
@@ -145,9 +265,6 @@ class AuthSessionCoordinator {
       return false;
     }
 
-    // Flask-JWT-Extended rejects expired/revoked credentials with 401 and
-    // malformed/invalid JWTs with 422. Other status codes remain uncertain:
-    // an intermediary/server error could occur after rotation took place.
     return error.statusCode == 401 || error.statusCode == 422;
   }
 }
