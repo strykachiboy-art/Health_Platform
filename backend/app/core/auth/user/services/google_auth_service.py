@@ -425,8 +425,7 @@ def _get_or_create_google_user(
     google_user: GoogleUserInfoSchema,
 ) -> tuple[User, bool]:
     """
-    Resolve an existing Google-linked user, link Google to an
-    existing email account, or create a new OAuth-only patient.
+    Resolve linked Google users or create a new patient; account linking is separate.
     """
 
     provider_user_id = (
@@ -501,33 +500,9 @@ def _get_or_create_google_user(
                 False,
             )
 
-        # Existing local user has no Google identity yet.
-        identity = UserAuthIdentity(
-            user_id=existing_user.id,
-            provider=GOOGLE_PROVIDER,
-            provider_user_id=provider_user_id,
-        )
-
-        db.session.add(
-            identity
-        )
-
-        db.session.flush()
-
-        create_audit_log(
-            action=AuditAction.UPDATE,
-            entity_type="User",
-            entity_id=existing_user.id,
-            description=(
-                "Google identity linked to "
-                f"existing user: {email}"
-            ),
-            user_id=existing_user.id,
-        )
-
-        return (
-            existing_user,
-            False,
+        raise ConflictError(
+            "An account with this email already exists. "
+            "Sign in with the existing method."
         )
 
     # ------------------------------------------------------------------------

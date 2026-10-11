@@ -1051,7 +1051,7 @@ def test_get_or_create_google_user_does_not_duplicate_existing_identity(
     assert len(identities) == 1
 
 
-def test_get_or_create_google_user_links_existing_email_user(
+def test_get_or_create_google_user_rejects_existing_email_without_explicit_link(
     db_session,
     user,
 ):
@@ -1065,40 +1065,21 @@ def test_get_or_create_google_user_links_existing_email_user(
         google_auth_service,
         "create_audit_log",
     ) as audit_mock:
-        result_user, created = (
+        with pytest.raises(
+            ConflictError,
+            match="An account with this email already exists",
+        ):
             google_auth_service._get_or_create_google_user(
                 google_user
             )
-        )
 
-    assert result_user.id == user.id
-    assert created is False
-
-    identity = UserAuthIdentity.query.filter_by(
+    identities = UserAuthIdentity.query.filter_by(
         user_id=user.id,
         provider=google_auth_service.GOOGLE_PROVIDER,
-        provider_user_id="google-new",
-    ).first()
+    ).all()
 
-    assert identity is not None
-
-    audit_mock.assert_called_once()
-
-    audit = audit_mock.call_args.kwargs
-
-    assert audit["action"] == AuditAction.UPDATE
-    assert audit["entity_type"] == "User"
-    assert audit["entity_id"] == user.id
-    assert audit["user_id"] == user.id
-
-    assert (
-        audit["description"]
-        == (
-            "Google identity linked to "
-            f"existing user: {user.email}"
-        )
-    )
-
+    assert identities == []
+    audit_mock.assert_not_called()
 
 def test_get_or_create_google_user_rejects_different_google_identity(
     db_session,
