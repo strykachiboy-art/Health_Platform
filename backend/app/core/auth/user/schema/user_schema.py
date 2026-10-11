@@ -84,6 +84,13 @@ class GoogleAuthCallbackSchema(BaseModel):
     )
 
 
+class GoogleMobileAuthSchema(BaseModel):
+    id_token: str = Field(
+        min_length=1,
+        max_length=8192,
+    )
+
+
 class GoogleUserInfoSchema(BaseModel):
     provider_user_id: str = Field(
         min_length=1,

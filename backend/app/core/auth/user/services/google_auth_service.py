@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import secrets
 from urllib.parse import urlencode
 
 import requests
 from flask import current_app
+from google.auth import exceptions as google_auth_exceptions
+from google.auth.transport import requests as google_auth_requests
+from google.oauth2 import id_token as google_id_token
 from redis.exceptions import ConnectionError, TimeoutError
 from sqlalchemy import select
 
@@ -596,6 +600,83 @@ def authenticate_google_user(
     db.session.commit()
 
     return tokens
+
+
+def verify_google_id_token(
+    token: str,
+) -> GoogleUserInfoSchema:
+    """Verify a Google-issued ID token for this backend audience."""
+
+    if (
+        not isinstance(token, str)
+        or not token
+        or token != token.strip()
+        or len(token) > 8192
+    ):
+        raise ValidationError("Google ID token is required or invalid")
+
+    client_id = current_app.config.get("GOOGLE_CLIENT_ID")
+    if not client_id:
+        raise ValidationError(
+            "Google OAuth client ID is not configured"
+        )
+
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            token,
+            google_auth_requests.Request(),
+            audience=client_id,
+        )
+    except (
+        ValueError,
+        google_auth_exceptions.GoogleAuthError,
+    ) as exc:
+        raise ValidationError("Invalid Google ID token") from exc
+
+    if not isinstance(claims, Mapping):
+        raise ValidationError("Invalid Google ID token")
+
+    provider_user_id = claims.get("sub")
+    email = claims.get("email")
+
+    if (
+        not isinstance(provider_user_id, str)
+        or not provider_user_id.strip()
+    ):
+        raise ValidationError(
+            "Google ID token is missing the user ID"
+        )
+
+    if (
+        not isinstance(email, str)
+        or not email.strip()
+        or claims.get("email_verified") is not True
+    ):
+        raise ValidationError(
+            "Google ID token must include a verified email"
+        )
+
+    given_name = claims.get("given_name")
+    family_name = claims.get("family_name")
+    picture = claims.get("picture")
+
+    return GoogleUserInfoSchema(
+        provider_user_id=provider_user_id,
+        email=email.strip().lower(),
+        first_name=given_name if isinstance(given_name, str) else None,
+        last_name=family_name if isinstance(family_name, str) else None,
+        picture=picture if isinstance(picture, str) else None,
+        email_verified=True,
+    )
+
+
+def authenticate_google_id_token(
+    id_token: str,
+) -> dict:
+    """Authenticate a native-app user using a verified Google ID token."""
+
+    google_user = verify_google_id_token(id_token)
+    return authenticate_google_user(google_user)
 
 
 # ============================================================================
