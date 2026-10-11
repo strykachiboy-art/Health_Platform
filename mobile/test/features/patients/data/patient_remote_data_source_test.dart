@@ -162,5 +162,153 @@ void main() {
       );
       expect(requests, 0);
     });
+    test(
+      'createPatient sends the existing API contract and parses HTTP 201',
+      () async {
+        final client = MockClient((request) async {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/api/v1/patients');
+          expect(request.headers['authorization'], 'Bearer $_token');
+          expect(request.headers['content-type'], 'application/json');
+
+          expect(jsonDecode(request.body), {
+            'first_name': 'Ada',
+            'last_name': 'Lovelace',
+            'date_of_birth': '1990-02-03',
+            'gender': 'female',
+            'blood_type': 'O+',
+            'phone': '+2348000000000',
+            'email': 'ada@example.test',
+            'address': 'Test address',
+            'chronic_conditions': 'Asthma',
+            'emirates_id': 'ID-7',
+            'umrn': 'UMRN-7',
+          });
+
+          return http.Response(
+            jsonEncode({'success': true, 'data': patientJson()}),
+            201,
+          );
+        });
+        addTearDown(client.close);
+
+        final patient = await dataSource(client).createPatient(
+          bearerToken: _token,
+          firstName: ' Ada ',
+          lastName: ' Lovelace ',
+          dateOfBirth: DateTime(1990, 2, 3),
+          gender: 'female',
+          bloodType: 'O+',
+          phone: ' +2348000000000 ',
+          email: ' ada@example.test ',
+          address: ' Test address ',
+          allergies: '  ',
+          chronicConditions: ' Asthma ',
+          emiratesId: ' ID-7 ',
+          umrn: ' UMRN-7 ',
+        );
+
+        expect(patient.id, 7);
+        expect(patient.patientNumber, 'PT-0007');
+        expect(patient.fullName, 'Ada Lovelace');
+      },
+    );
+
+    test('createPatient omits absent and blank optional fields', () async {
+      final client = MockClient((request) async {
+        expect(jsonDecode(request.body), {
+          'first_name': 'Ada',
+          'last_name': 'Lovelace',
+        });
+        return http.Response(
+          jsonEncode({'success': true, 'data': patientJson()}),
+          201,
+        );
+      });
+      addTearDown(client.close);
+
+      await dataSource(client).createPatient(
+        bearerToken: _token,
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        phone: ' ',
+        email: '',
+        address: null,
+      );
+    });
+
+    test('createPatient rejects invalid required names before HTTP', () async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount++;
+        return http.Response(
+          jsonEncode({'success': true, 'data': patientJson()}),
+          201,
+        );
+      });
+      addTearDown(client.close);
+
+      await expectLater(
+        dataSource(client).createPatient(
+          bearerToken: _token,
+          firstName: '  ',
+          lastName: 'Lovelace',
+        ),
+        throwsArgumentError,
+      );
+
+      expect(requestCount, 0);
+    });
+
+    test(
+      '422 responses expose sanitized field errors, not submitted values',
+      () async {
+        const invalidEmail = 'not-an-email-sensitive-input';
+        final client = MockClient((request) async {
+          return http.Response(
+            jsonEncode({
+              'success': false,
+              'error': 'Validation failed',
+              'details': [
+                {
+                  'loc': ['body', 'email'],
+                  'msg': 'value is not a valid email address',
+                  'type': 'value_error',
+                  'input': invalidEmail,
+                },
+              ],
+            }),
+            422,
+          );
+        });
+        addTearDown(client.close);
+
+        await expectLater(
+          dataSource(client).createPatient(
+            bearerToken: _token,
+            firstName: 'Ada',
+            lastName: 'Lovelace',
+            email: invalidEmail,
+          ),
+          throwsA(
+            isA<ApiException>()
+                .having((error) => error.statusCode, 'statusCode', 422)
+                .having(
+                  (error) => error.serverMessage,
+                  'serverMessage',
+                  'Validation failed',
+                )
+                .having((error) => error.validationErrors, 'validationErrors', {
+                  'email': 'value is not a valid email address',
+                })
+                .having(
+                  (error) => error.toString().contains(invalidEmail),
+                  'does not expose the submitted value',
+                  isFalse,
+                ),
+          ),
+        );
+      },
+    );
   });
 }

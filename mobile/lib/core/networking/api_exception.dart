@@ -7,6 +7,8 @@ class ApiException implements Exception {
     required this.uri,
     this.statusCode,
     this.cause,
+    this.validationErrors = const <String, String>{},
+    this.serverMessage,
   });
 
   final ApiFailureKind kind;
@@ -14,6 +16,11 @@ class ApiException implements Exception {
   final Uri uri;
   final int? statusCode;
   final Object? cause;
+
+  /// Server field messages only; raw response bodies and submitted values
+  /// are deliberately not retained here.
+  final Map<String, String> validationErrors;
+  final String? serverMessage;
 
   @override
   String toString() {
