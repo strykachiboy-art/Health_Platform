@@ -6,6 +6,7 @@ import 'package:clinic_system_pro/features/backend_health/presentation/backend_h
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_detail_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_directory_screen.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_registration_screen.dart';
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
@@ -29,6 +30,20 @@ GoRouter createAppRouter({
           final extra = state.extra;
           final token = extra is String ? extra : '';
           return PatientDirectoryScreen(dataSource: source, bearerToken: token);
+        },
+      ),
+      GoRoute(
+        path: '/patients/register',
+        name: 'patient-registration',
+        builder: (context, state) {
+          final source = patientDataSource;
+          if (source == null) return const _PatientRouteUnavailableScreen();
+          final extra = state.extra;
+          final token = extra is String ? extra : '';
+          return PatientRegistrationScreen(
+            dataSource: source,
+            bearerToken: token,
+          );
         },
       ),
       GoRoute(
