@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
@@ -5,10 +6,16 @@ import 'package:clinic_system_pro/features/backend_health/presentation/backend_h
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
+  required Widget loginScreen,
 }) {
   return GoRouter(
-    initialLocation: '/health',
+    initialLocation: '/login',
     routes: [
+      GoRoute(
+        path: '/login',
+        name: 'login',
+        builder: (context, state) => loginScreen,
+      ),
       GoRoute(
         path: '/health',
         name: 'health',
