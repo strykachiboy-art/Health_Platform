@@ -147,7 +147,22 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Patient directory')),
+      appBar: AppBar(
+        title: const Text('Patient directory'),
+        actions: [
+          IconButton(
+            key: const ValueKey('patient-register-button'),
+            tooltip: 'Register patient',
+            icon: const Icon(Icons.person_add_alt_1),
+            onPressed: () => unawaited(
+              context.push<void>(
+                '/patients/register',
+                extra: widget.bearerToken,
+              ),
+            ),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(

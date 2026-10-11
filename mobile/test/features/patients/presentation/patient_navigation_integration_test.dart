@@ -69,7 +69,7 @@ Map<String, dynamic> _patientJson() => {
 
 void main() {
   testWidgets(
-    'signed-in patient navigation preserves bearer token for list and detail',
+    'signed-in patient navigation preserves token for directory, registration and detail',
     (tester) async {
       final storage = _MemorySecureStorage();
       final store = AuthSessionStore(storage: storage);
@@ -151,6 +151,22 @@ void main() {
       expect(find.text('Patient directory'), findsOneWidget);
       expect(find.text('Ada Lovelace'), findsOneWidget);
       expect(requestedPaths, ['/api/v1/patients']);
+
+      await tester.tap(find.byKey(const ValueKey('patient-register-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Register a new patient'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('patient-registration-first-name')),
+        findsOneWidget,
+      );
+      expect(requestedPaths, [
+        '/api/v1/patients',
+      ], reason: 'Opening registration must not issue a registration request.');
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Patient directory'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('patient-row-7')));
       await tester.pumpAndSettle();
