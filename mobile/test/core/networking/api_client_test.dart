@@ -167,5 +167,81 @@ void main() {
         ),
       );
     });
+
+    test(
+      'PATCH sends authenticated JSON and returns a decoded object',
+      () async {
+        final mock = MockClient((request) async {
+          expect(request.method, 'PATCH');
+          expect(request.url.path, '/api/v1/patients/7');
+          expect(request.headers['authorization'], 'Bearer test-access-token');
+          expect(request.headers['content-type'], 'application/json');
+          expect(jsonDecode(request.body), {'first_name': 'Grace'});
+          return http.Response('{"success":true,"data":{"id":7}}', 200);
+        });
+        addTearDown(mock.close);
+
+        final api = ApiClient(config: testConfig(), client: mock);
+        final result = await api.patchJson(
+          'api/v1/patients/7',
+          body: {'first_name': 'Grace'},
+          bearerToken: 'test-access-token',
+        );
+
+        expect(result, {
+          'success': true,
+          'data': {'id': 7},
+        });
+      },
+    );
+
+    test(
+      'HTTP validation metadata is parsed without retaining raw body',
+      () async {
+        final mock = MockClient(
+          (request) async => http.Response(
+            jsonEncode({
+              'message': 'Validation failed',
+              'details': [
+                {
+                  'loc': ['body', 'first_name'],
+                  'msg': 'String should have at least 1 character',
+                },
+                {
+                  'loc': ['body', 'email'],
+                  'msg': 'Invalid email address',
+                },
+              ],
+            }),
+            422,
+          ),
+        );
+        addTearDown(mock.close);
+
+        final api = ApiClient(config: testConfig(), client: mock);
+        await expectLater(
+          api.patchJson('api/v1/patients/7', body: {'first_name': ''}),
+          throwsA(
+            isA<ApiException>()
+                .having((error) => error.statusCode, 'statusCode', 422)
+                .having(
+                  (error) => error.serverMessage,
+                  'serverMessage',
+                  'Validation failed',
+                )
+                .having(
+                  (error) => error.validationErrors['first_name'],
+                  'first name error',
+                  'String should have at least 1 character',
+                )
+                .having(
+                  (error) => error.validationErrors['email'],
+                  'email error',
+                  'Invalid email address',
+                ),
+          ),
+        );
+      },
+    );
   });
 }

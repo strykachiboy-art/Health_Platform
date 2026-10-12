@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_profile_edit_screen.dart';
 
 class PatientDetailScreen extends StatefulWidget {
   const PatientDetailScreen({
@@ -111,10 +112,51 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       (_lastError is ApiException &&
           (_lastError as ApiException).statusCode == 401);
 
+  Future<void> _openEditPatient() async {
+    final patient = _patient;
+    if (patient == null || _loading) return;
+
+    final updated = await Navigator.of(context).push<Patient>(
+      MaterialPageRoute(
+        builder: (_) => PatientProfileEditScreen(
+          dataSource: widget.dataSource,
+          bearerToken: widget.bearerToken,
+          patient: patient,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+    if (updated == null) {
+      // Also reconcile after cancellation: the editor may have encountered an
+      // uncertain network outcome before the user returned to this screen.
+      await _loadPatient();
+      return;
+    }
+
+    setState(() {
+      _patient = updated;
+      _lastError = null;
+      _errorMessage = null;
+      _loading = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Patient details')),
+      appBar: AppBar(
+        title: const Text('Patient details'),
+        actions: [
+          if (_patient != null && !_loading)
+            IconButton(
+              key: const ValueKey('patient-detail-edit-button'),
+              tooltip: 'Edit patient',
+              icon: const Icon(Icons.edit),
+              onPressed: () => unawaited(_openEditPatient()),
+            ),
+        ],
+      ),
       body: _buildBody(),
     );
   }
