@@ -551,6 +551,40 @@ void main() {
     });
 
     test(
+      'logout clears locally when session read fails without contacting server',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+        storage.failRead = true;
+
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (_) async {
+            requests++;
+            fail('Remote logout must not run when session read failed.');
+          },
+        );
+
+        final result = await coordinator.logoutSession();
+
+        expect(result.remoteStatus, AuthLogoutRemoteStatus.notAttempted);
+        expect(result.cause, isA<StateError>());
+        expect(requests, 0);
+        expect(
+          storage.values.containsKey(AuthSessionStore.storageKey),
+          isFalse,
+        );
+
+        storage.failRead = false;
+        expect(
+          (await coordinator.restoreSession()).disposition,
+          AuthSessionDisposition.signedOut,
+        );
+      },
+    );
+
+    test(
       'logout clears local credentials before confirmed remote logout',
       () async {
         final storage = _MemorySecureStorage();
