@@ -2,7 +2,7 @@
 
 - Status: Proposed
 - Date: 2026-10-12
-- Evidence baseline: `915f90cb0f26dec671ab88adf212896a123b325c`
+- Evidence baseline: `00c199325be61647ba7da328c2412c506863021b`
 
 ## Context
 
@@ -12,7 +12,10 @@ abstraction. These components must be extended rather than recreated.
 
 At the evidence baseline:
 
-- `AppDatabase` uses schema version 2.
+- `AppDatabase` uses schema version 2. Its existing v1-to-v2 upgrade runs the migration steps inside a transaction.
+- A focused migration failure-injection test verifies that a thrown failure rolls back the `updated_at` column addition, preserves the existing `app.locale=en` metadata, and leaves SQLite `user_version` at 1. This is evidence for the tested exception/transaction path, not a device-crash or power-loss guarantee.
+- A default-connection integration test verifies that metadata survives closing and reopening the database in the tested development environment. This is not a cross-platform device-security guarantee.
+- Inspection of `mobile/lib` at this baseline found no application-runtime references to `AppDatabase` or `appMetadata` outside the database implementation/generated files. The database is not yet wired into an application-runtime consumer, so production retention, deletion, and logout-cleanup behavior for this metadata store has not been exercised.
 - `AppMetadata` stores client-local metadata and is explicitly restricted
   from holding authentication secrets or clinical records.
 - `SecureKeyValueStorage` is intended for small secrets, such as session
