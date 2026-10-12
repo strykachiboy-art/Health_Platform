@@ -676,6 +676,54 @@ void main() {
     });
 
     test(
+      'logout retry recovers after temporary local deletion failure',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+        storage.failDelete = true;
+
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (request) async {
+            requests++;
+            expect(request.method, 'POST');
+            expect(request.url.path, '/api/v1/auth/logout');
+            expect(
+              storage.values.containsKey(AuthSessionStore.storageKey),
+              isFalse,
+              reason: 'Local session must be deleted before remote logout.',
+            );
+            return http.Response(jsonEncode({'success': true}), 200);
+          },
+        );
+
+        await expectLater(
+          coordinator.logoutSession(),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(requests, 0);
+        expect(storage.values.containsKey(AuthSessionStore.storageKey), isTrue);
+        expect(
+          (await coordinator.restoreSession()).disposition,
+          AuthSessionDisposition.recoveryRequired,
+        );
+
+        storage.failDelete = false;
+        final result = await coordinator.logoutSession();
+
+        expect(result.remoteStatus, AuthLogoutRemoteStatus.confirmed);
+        expect(requests, 1);
+        expect(await _store(storage).readRecord(), isNull);
+        expect(
+          (await coordinator.restoreSession()).disposition,
+          AuthSessionDisposition.signedOut,
+        );
+      },
+    );
+
+    test(
       'concurrent logout callers share one request and block new refresh',
       () async {
         final storage = _MemorySecureStorage();
