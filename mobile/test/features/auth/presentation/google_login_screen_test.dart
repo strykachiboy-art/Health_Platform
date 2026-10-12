@@ -21,9 +21,15 @@ const _refreshToken =
 
 class _MemorySecureStorage implements SecureKeyValueStorage {
   final Map<String, String> values = <String, String>{};
+  Object? readFailure;
 
   @override
-  Future<String?> read({required String key}) async => values[key];
+  Future<String?> read({required String key}) async {
+    if (readFailure != null) {
+      throw readFailure!;
+    }
+    return values[key];
+  }
 
   @override
   Future<void> write({required String key, required String value}) async {
@@ -278,6 +284,70 @@ void main() {
       );
     });
 
+    testWidgets(
+      'secure-storage read failure requires recovery without deleting session',
+      (tester) async {
+        final storage = _MemorySecureStorage();
+        final store = AuthSessionStore(storage: storage);
+        await store.save(_session());
+
+        final savedRecord = storage.values[AuthSessionStore.storageKey];
+        storage.readFailure = StateError(
+          'Injected secure-storage read failure.',
+        );
+
+        var requests = 0;
+        final client = MockClient((_) async {
+          requests++;
+          return http.Response(jsonEncode({'success': true}), 200);
+        });
+        addTearDown(client.close);
+
+        final remote = AuthRemoteDataSource(
+          apiClient: ApiClient(
+            config: const BackendConfig(
+              baseUrl: 'http://127.0.0.1:5000',
+              allowInsecureHttp: true,
+            ),
+            client: client,
+          ),
+        );
+        final coordinator = AuthSessionCoordinator(
+          sessionStore: store,
+          remoteDataSource: remote,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GoogleLoginScreen(
+              acquireGoogleIdToken: () async => _idToken,
+              authRemoteDataSource: remote,
+              sessionCoordinator: coordinator,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('session-recovery-required')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('auth-error-message')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('google-sign-in-button')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('clear-local-session-button')),
+          findsOneWidget,
+        );
+        expect(requests, 0);
+        expect(storage.values[AuthSessionStore.storageKey], savedRecord);
+      },
+    );
     testWidgets('pending refresh requires local recovery before sign-in', (
       tester,
     ) async {
