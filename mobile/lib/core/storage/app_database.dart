@@ -33,14 +33,18 @@ class AppDatabase extends _$AppDatabase {
     onCreate: (migrator) async {
       await migrator.createAll();
     },
-    onUpgrade: stepByStep(
-      from1To2: (migrator, schema) async {
-        await migrator.addColumn(
-          schema.appMetadata,
-          schema.appMetadata.updatedAt,
-        );
-      },
-    ),
+    onUpgrade: (migrator, from, to) async {
+      await transaction(
+        () => stepByStep(
+          from1To2: (migrator, schema) async {
+            await migrator.addColumn(
+              schema.appMetadata,
+              schema.appMetadata.updatedAt,
+            );
+          },
+        )(migrator, from, to),
+      );
+    },
     beforeOpen: (_) async {
       await customStatement('PRAGMA foreign_keys = ON');
     },
