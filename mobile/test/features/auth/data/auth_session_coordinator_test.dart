@@ -80,6 +80,27 @@ class _MemorySecureStorage implements SecureKeyValueStorage {
   }
 }
 
+class _GateFirstReadSecureStorage extends _MemorySecureStorage {
+  final Completer<void> firstReadStarted = Completer<void>();
+  final Completer<void> releaseFirstRead = Completer<void>();
+  int _readCount = 0;
+
+  @override
+  Future<String?> read({required String key}) async {
+    _readCount++;
+    if (_readCount == 1) {
+      if (failRead) {
+        throw StateError('Injected secure-storage read failure.');
+      }
+      final snapshot = values[key];
+      firstReadStarted.complete();
+      await releaseFirstRead.future;
+      return snapshot;
+    }
+    return super.read(key: key);
+  }
+}
+
 AuthSessionStore _store(_MemorySecureStorage storage) =>
     AuthSessionStore(storage: storage);
 
@@ -921,6 +942,88 @@ void main() {
         expect(await _store(storage).readRecord(), isNull);
       },
     );
+    test(
+      'does not return a stale session when refresh starts during restore read',
+      () async {
+        final storage = _GateFirstReadSecureStorage();
+        await _store(storage).save(_oldSession());
+
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (request) async {
+            requests++;
+            expect(request.url.path, '/api/v1/auth/refresh');
+            expect(_pendingMarker(storage), isTrue);
+            return http.Response(jsonEncode(_replacementEnvelope()), 200);
+          },
+        );
+
+        // Begin restoration first; the storage helper snapshots the old record
+        // and suspends the read before returning it to the coordinator.
+        final restoreFuture = coordinator.restoreSession();
+        await storage.firstReadStarted.future;
+
+        // Finish rotation while the restoration read remains suspended.
+        final refreshed = await coordinator.refreshSession();
+
+        storage.releaseFirstRead.complete();
+        final restored = await restoreFuture;
+
+        expect(refreshed.disposition, AuthSessionDisposition.ready);
+        expect(refreshed.session?.accessToken, _newAccessToken);
+        expect(
+          restored.disposition,
+          AuthSessionDisposition.recoveryRequired,
+          reason:
+              'Restore must not publish a session snapshot read before '
+              'a concurrent refresh completed.',
+        );
+        expect(restored.session, isNull);
+        expect(requests, 1);
+      },
+    );
+
+    test('does not restore the old session as ready while refresh startup is blocked', () async {
+      final storage = _GateFirstReadSecureStorage();
+      await _store(storage).save(_oldSession());
+
+      var requests = 0;
+      final coordinator = _coordinator(
+        storage: storage,
+        handler: (request) async {
+          requests++;
+          expect(request.url.path, '/api/v1/auth/refresh');
+          expect(
+            _pendingMarker(storage),
+            isTrue,
+            reason: 'The pending marker must exist before refresh network I/O.',
+          );
+          return http.Response(jsonEncode(_replacementEnvelope()), 200);
+        },
+      );
+
+      final refreshFuture = coordinator.refreshSession();
+      await storage.firstReadStarted.future;
+
+      final restored = await coordinator.restoreSession();
+
+      storage.releaseFirstRead.complete();
+      final refreshed = await refreshFuture;
+
+      expect(
+        restored.disposition,
+        AuthSessionDisposition.recoveryRequired,
+        reason:
+            'Restore must not expose the old session while refresh is '
+            'already in flight.',
+      );
+      expect(restored.session, isNull);
+      expect(refreshed.disposition, AuthSessionDisposition.ready);
+      expect(refreshed.session?.accessToken, _newAccessToken);
+      expect(requests, 1);
+    });
+
     test('concurrent refresh callers share one rotation request', () async {
       final storage = _MemorySecureStorage();
       await _store(storage).save(_oldSession());

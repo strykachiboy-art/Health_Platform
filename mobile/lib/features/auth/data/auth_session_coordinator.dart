@@ -53,6 +53,7 @@ class AuthSessionCoordinator {
 
   bool _logoutRequested = false;
   bool _sessionEstablishmentInFlight = false;
+  int _sessionTransitionGeneration = 0;
 
   /// Persists a token pair returned by a successful authentication call.
   ///
@@ -70,6 +71,7 @@ class AuthSessionCoordinator {
     }
 
     _sessionEstablishmentInFlight = true;
+    _sessionTransitionGeneration++;
     try {
       final stored = await _sessionStore.readRecord();
       if (stored != null) {
@@ -94,13 +96,25 @@ class AuthSessionCoordinator {
 
   /// Restores local state without doing network I/O.
   Future<AuthSessionState> restoreSession() async {
-    if (_logoutRequested) {
+    if (_logoutRequested ||
+        _refreshInFlight != null ||
+        _sessionEstablishmentInFlight) {
       return AuthSessionState.recoveryRequired(
-        cause: StateError('Logout is in progress or local cleanup failed.'),
+        cause: StateError('A session transition is in progress.'),
       );
     }
 
+    final observedGeneration = _sessionTransitionGeneration;
     final stored = await _sessionStore.readRecord();
+
+    if (_logoutRequested ||
+        _refreshInFlight != null ||
+        _sessionEstablishmentInFlight ||
+        observedGeneration != _sessionTransitionGeneration) {
+      return AuthSessionState.recoveryRequired(
+        cause: StateError('Session state changed during restoration.'),
+      );
+    }
 
     if (stored == null) {
       return const AuthSessionState.signedOut();
@@ -128,6 +142,7 @@ class AuthSessionCoordinator {
       return active;
     }
 
+    _sessionTransitionGeneration++;
     late final Future<AuthSessionState> operation;
     operation = _refreshStoredSession().whenComplete(() {
       if (identical(_refreshInFlight, operation)) {
@@ -190,6 +205,7 @@ class AuthSessionCoordinator {
     }
 
     _logoutRequested = true;
+    _sessionTransitionGeneration++;
 
     late final Future<AuthLogoutResult> operation;
     operation = _logoutStoredSession()
