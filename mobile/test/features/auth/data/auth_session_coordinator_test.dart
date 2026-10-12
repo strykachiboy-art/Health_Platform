@@ -329,6 +329,59 @@ void main() {
       },
     );
 
+    test(
+      'keeps refresh recovery state when rejected-token cleanup fails',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+        storage.failDelete = true;
+
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (request) async {
+            requests++;
+            expect(request.url.path, '/api/v1/auth/refresh');
+            expect(_pendingMarker(storage), isTrue);
+            return http.Response(
+              jsonEncode({'success': false, 'error': 'Token revoked'}),
+              401,
+            );
+          },
+        );
+
+        await expectLater(
+          coordinator.refreshSession(),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(requests, 1);
+        expect(_pendingMarker(storage), isTrue);
+        expect(
+          (await coordinator.restoreSession()).disposition,
+          AuthSessionDisposition.recoveryRequired,
+        );
+
+        final retry = await coordinator.refreshSession();
+        expect(retry.disposition, AuthSessionDisposition.recoveryRequired);
+        expect(requests, 1, reason: 'Must not retry the old refresh token.');
+
+        storage.failDelete = false;
+        final logout = await coordinator.logoutSession();
+        expect(logout.remoteStatus, AuthLogoutRemoteStatus.notAttempted);
+        expect(
+          requests,
+          1,
+          reason: 'Pending refresh must not be sent to logout.',
+        );
+        expect(await _store(storage).readRecord(), isNull);
+        expect(
+          (await coordinator.restoreSession()).disposition,
+          AuthSessionDisposition.signedOut,
+        );
+      },
+    );
+
     test('confirmed 401 rejection clears the local session', () async {
       final storage = _MemorySecureStorage();
       await _store(storage).save(_oldSession());
