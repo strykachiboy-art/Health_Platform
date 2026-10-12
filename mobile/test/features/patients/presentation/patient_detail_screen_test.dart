@@ -43,6 +43,69 @@ PatientRemoteDataSource _dataSource(MockClient client) =>
     );
 
 void main() {
+  testWidgets(
+    'detail screen opens editor and reflects the server-updated patient',
+    (tester) async {
+      var firstName = 'Ada';
+      Map<String, dynamic>? submitted;
+      final client = MockClient((request) async {
+        if (request.method == 'GET') {
+          return http.Response(
+            jsonEncode({
+              'success': true,
+              'data': _patientJson()..['first_name'] = firstName,
+            }),
+            200,
+          );
+        }
+        expect(request.method, 'PATCH');
+        expect(request.url.path, '/api/v1/patients/7');
+        submitted = jsonDecode(request.body) as Map<String, dynamic>;
+        firstName = submitted!['first_name'] as String;
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'data': _patientJson()..['first_name'] = firstName,
+          }),
+          200,
+        );
+      });
+      addTearDown(client.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PatientDetailScreen(
+            dataSource: _dataSource(client),
+            bearerToken: 'test-token',
+            patientId: 7,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey('patient-detail-edit-button')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Edit patient'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('patient-profile-edit-first-name')),
+        'Grace',
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('patient-profile-edit-save')),
+      );
+      await tester.tap(find.byKey(const ValueKey('patient-profile-edit-save')));
+      await tester.pumpAndSettle();
+
+      expect(submitted, {'first_name': 'Grace'});
+      expect(find.text('Patient details'), findsOneWidget);
+      expect(find.text('Grace Lovelace'), findsOneWidget);
+      expect(find.text('Patient no. PT-0007'), findsOneWidget);
+    },
+  );
+
   testWidgets('detail screen renders authorized patient details', (
     tester,
   ) async {
