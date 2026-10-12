@@ -52,9 +52,15 @@ class _MemorySecureStorage implements SecureKeyValueStorage {
   int writeCount = 0;
   int? failWriteNumber;
   bool failDelete = false;
+  bool failRead = false;
 
   @override
-  Future<String?> read({required String key}) async => values[key];
+  Future<String?> read({required String key}) async {
+    if (failRead) {
+      throw StateError('Injected secure-storage read failure.');
+    }
+    return values[key];
+  }
 
   @override
   Future<void> write({required String key, required String value}) async {
@@ -204,6 +210,39 @@ void main() {
       },
     );
 
+    test(
+      'does not establish a session when secure-storage read fails',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+        final existingRaw = storage.values[AuthSessionStore.storageKey];
+        final writesBefore = storage.writeCount;
+        storage.failRead = true;
+
+        const attemptedSession = AuthTokenResponse(
+          accessToken: _newAccessToken,
+          refreshToken: _newRefreshToken,
+          userId: 99,
+          role: 'PATIENT',
+          clinicContextId: null,
+        );
+
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (_) async {
+            fail('Session persistence must not make a network call.');
+          },
+        );
+
+        await expectLater(
+          coordinator.persistAuthenticatedSession(attemptedSession),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(storage.values[AuthSessionStore.storageKey], existingRaw);
+        expect(storage.writeCount, writesBefore);
+      },
+    );
     test(
       'restores a pending record as recovery required without retrying',
       () async {
