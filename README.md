@@ -2137,6 +2137,36 @@ duplicate detection, retry limits, and backoff belong to Phase 16.
 Sensitive operation payloads must not be persisted before the applicable
 security and lifecycle requirements are approved.
 
+**Phase 15 foundation status (2026-10-13): VERIFIED LOCALLY — exit review
+complete for the currently inventoried mobile data surface.**
+
+The full read-only audit inventoried 28 tracked Dart files under `mobile/lib`.
+It found remote-data workflows for authentication, backend liveness, and
+patients, but no useful non-sensitive remote API payload approved for
+persistent caching. The foundation establishes distinct device-connectivity
+and API-communication signals, plus guarded in-memory stale patient display
+with explicit refresh/revalidation behavior.
+
+At verified source commit `71e31e4ddb11e8e8c2a57a8ebd497766bc86fcd2`,
+`flutter analyze --no-pub` reported no issues and the full Flutter suite
+passed **182 tests**. These are local development results, not Android
+platform-integration or production-operation evidence.
+
+Persistent and cross-process offline application-data caching is **not
+implemented by this closeout**. Previously loaded patient snapshots are
+in-memory only; they do not survive process termination, do not authorize
+mutations, and are cleared when the applicable server response rejects
+access. No patient, clinical, financial, or sensitive operation payload is
+approved for persistent storage by this result.
+
+The Phase 15 foundation is considered complete for this inventoried client
+surface. Revisit persistent caching only when a concrete, useful data
+candidate and its sensitivity, ownership, freshness, authorization, retention,
+deletion, and lifecycle requirements have been reviewed. Durable queued writes,
+operation IDs, idempotency, duplicate detection, retry limits, and backoff
+remain Phase 16 work; synchronization remains Phase 17; conflict resolution
+remains Phase 18; sensitive offline-data security remains Phase 19.
+
 ---
 
 # 71. Phase 16 Ã¢â‚¬â€ Offline Queue / Idempotency

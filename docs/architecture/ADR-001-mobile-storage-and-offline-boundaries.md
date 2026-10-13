@@ -314,6 +314,89 @@ The ADR remains **Proposed**. The result does not implement or approve a
 durable queue, synchronization, conflict resolution, or a sensitive-data
 cache, and makes no claim of production operation.
 
+## Phase 15 foundation exit review and full mobile source audit
+
+Review date: 2026-10-13.
+
+Reviewed implementation and regression baseline:
+`71e31e4ddb11e8e8c2a57a8ebd497766bc86fcd2`.
+
+The final read-only inventory enumerated 28 tracked Dart files under
+`mobile/lib`. The API/network pattern search reported 13 matching source
+locations, and the data-boundary declaration search found the shared
+`ApiClient` plus the authentication, backend-liveness, and patient remote
+data sources. No additional useful, non-sensitive remote-data candidate
+was identified for persistent offline caching.
+
+The storage-reference search found the existing platform secure-storage
+boundary, Drift `AppDatabase` / `AppMetadata` implementation and generated
+schema, and authentication session-store use. No application-runtime
+consumer of `AppDatabase` or `appMetadata` was found outside the database
+implementation and generated schema files. This does not justify wiring the
+database into the application merely to claim offline support.
+
+### Phase 15 implementation evidence
+
+The following behaviors are present in the reviewed source:
+
+- Device connectivity and API communication are represented as distinct
+  signals. HTTP response receipt does not imply backend health or operation
+  success.
+- Patient-detail refresh failures retain a previously loaded snapshot in
+  memory only for applicable failures, label it potentially stale, and
+  block editing and status changes until a successful server read.
+- Patient-detail refresh responses of HTTP 401, 403, or 404 clear the
+  displayed snapshot.
+- Patient-directory refreshes retain same-query results in memory on
+  applicable transient failures and visibly mark them as potentially stale.
+- Patient-directory HTTP 401 and 403 responses clear the displayed rows.
+  Search changes invalidate the prior request and clear results for the
+  previous query immediately. A successful refresh clears the stale state.
+- The stale-display behavior is not persistent storage, does not survive
+  process termination, and does not authorize an offline mutation.
+
+### Local verification
+
+At the reviewed commit:
+
+- `flutter analyze --no-pub`: no issues found.
+- Full Flutter test suite: 182 tests passed.
+- The patient-directory focused suite: 7 tests passed, including transient
+  refresh failure, HTTP 401/403 clearing, search invalidation, and successful
+  retry clearing the stale warning.
+- `git diff --check`: passed during the verified regression.
+- The exact `main` remote SHA and expected untracked-path scope were verified.
+
+These are development-environment results, not Android platform-integration
+or production-operation evidence. No production claim is made.
+
+### Phase 15 exit decision and limitations
+
+**The Phase 15 foundation is complete for the currently inventoried mobile
+data surface, with persistent offline application-data caching explicitly
+deferred.** This decision reflects the lack of a concrete, useful,
+non-sensitive remote payload that is eligible for caching under the current
+data policy. It is not permission to persist patient, clinical, financial,
+authentication, authorization, or sensitive operation data.
+
+This closeout does not implement general persistent or cross-process offline
+reads. The current patient behavior is an in-memory stale-display safeguard,
+not an offline database or a general-purpose cache. Existing local metadata
+storage remains unwired to an application-runtime consumer, and this closeout
+does not authorize wiring it in the absence of a demonstrated requirement.
+
+Any future cache proposal must identify the actual data fields and use,
+then review sensitivity, ownership, source authority, freshness, authorization,
+expiration, retention, deletion, logout/session lifecycle, and recovery before
+implementation. Sensitive clinical and financial data remains subject to the
+applicable Phase 19 design and verification gate. Offline queueing remains
+Phase 16, synchronization Phase 17, and conflict resolution Phase 18.
+
+The ADR remains **Proposed**. This exit evidence records the implemented
+foundation, local test results, and limitations; it does not by itself
+constitute architectural approval, platform-integration verification, or
+production-operation evidence.
+
 ## Scope and review
 
 This record captures the current mobile storage boundary and the constraints
