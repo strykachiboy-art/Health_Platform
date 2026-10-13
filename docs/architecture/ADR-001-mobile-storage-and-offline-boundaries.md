@@ -180,6 +180,14 @@ development machine. These tests remain deferred until a suitable device or
 adequately resourced emulator is available. The local unit/widget and migration
 results do not substitute for Android platform integration verification.
 
+The `Continue with Google` flow was also not exercised end-to-end on an
+Android device or emulator during this closeout. The local
+`test/features/auth/presentation/google_login_screen_test.dart` suite passed
+(6 tests), but that widget-test result does not verify the native Google
+Sign-In interaction or the complete on-device authentication handoff. This
+remains an environment-constrained verification gap, not a finding that
+Google Sign-In is defective.
+
 The secure-storage adapter's `resetOnError: false` and
 `migrateOnAlgorithmChange: true` settings, along with Android backup-related
 manifest configuration, have been reviewed at source level. Actual device
