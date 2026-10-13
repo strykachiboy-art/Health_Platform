@@ -275,6 +275,45 @@ or conflict resolution.
 The ADR remains **Proposed**. This evidence update and Phase 15 roadmap
 clarification do not by themselves authorize persistent sensitive local data.
 
+## Phase 15 Slice 5: local-data eligibility inventory
+
+Review date: 2026-10-13.
+
+Source inventory commit: `9cd87c9fe186354b59cc86f0c1d46893a4c7f988`.
+
+This was a read-only source inventory. It identified nine tracked,
+non-generated Dart files under the mobile feature data directories and
+remote-data boundaries for authentication, backend liveness, and patient
+workflows. The corrected search found no `AppDatabase`, `appMetadata`,
+`AppMetadata`, or `driftDatabase` references outside the database
+implementation and generated schema files in `mobile/lib`.
+
+The classifications below are the provisional eligibility decisions for
+Phase 15. They do not change this ADR's Proposed status or constitute a
+production security approval.
+
+| Data category | Phase 15 decision | Required boundary |
+| --- | --- | --- |
+| Non-sensitive app-local settings and metadata | Eligible in principle, subject to a demonstrated purpose | Keep values minimal and non-sensitive. Define ownership and any necessary retention or deletion behavior before wiring a runtime consumer. `AppMetadata` is not currently connected to an application-runtime consumer. |
+| Authentication credentials, access tokens, and refresh tokens | Not eligible for `AppMetadata` or a general offline cache | Keep appropriate small secrets within the existing platform secure-storage boundary. Do not duplicate them into general application data storage. |
+| Patient details, patient directories, identifiers, and clinical content | Persistent local caching is not approved in Phase 15 | Requires a dedicated sensitive-data design and verification gate under Phase 19. The existing patient-detail snapshot is in-memory only, is labelled potentially stale after applicable refresh failures, and remains read-only until a successful server read. HTTP 401, 403, or 404 during refresh clears that snapshot. |
+| Financial and payment records or payloads | Persistent local caching is not approved | Requires explicit data-protection, access, retention, deletion, and recovery review before implementation. |
+| Authorization decisions, cached permissions, and clinic context used as an access grant | Must not become a source of authority | The backend remains authoritative. Persisted client state must not grant privileges or bypass fresh server authorization. |
+| Backend liveness and API transport observations | Transient status only; not approved as an offline truth cache | A saved response cannot establish current backend health or current API reachability. |
+| Durable queued-operation payloads and outbox records | Outside Phase 15 | Queue identifiers, idempotency, retries, and uncertain outcomes belong to Phase 16; synchronization belongs to Phase 17. Sensitive payload persistence also requires the applicable Phase 19 security and lifecycle gate. Do not store queue payloads in `AppMetadata`. |
+| Other remote reference or lookup data | No eligible candidate identified by this inventory | No category-wide approval is granted. Review the actual response fields, sensitivity, ownership, purpose, freshness, and lifecycle before proposing persistence. |
+
+**Slice 5 decision:** no persistent remote API payload is approved by this
+inventory. The current source inventory provides no defensible reason to
+introduce an API cache or wire `AppDatabase` into runtime code merely to
+claim offline support. Reassess when a concrete, useful, non-sensitive
+resource and its lifecycle requirements have been identified.
+
+This is an inventory decision, not authorization to persist sensitive data.
+The ADR remains **Proposed**. The result does not implement or approve a
+durable queue, synchronization, conflict resolution, or a sensitive-data
+cache, and makes no claim of production operation.
+
 ## Scope and review
 
 This record captures the current mobile storage boundary and the constraints
