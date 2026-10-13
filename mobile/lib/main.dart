@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/config/backend_config.dart';
 import 'package:clinic_system_pro/core/networking/api_client.dart';
+import 'package:clinic_system_pro/core/networking/device_connectivity_banner.dart';
+import 'package:clinic_system_pro/core/networking/device_connectivity_cubit.dart';
+import 'package:clinic_system_pro/core/networking/device_connectivity_source.dart';
 import 'package:clinic_system_pro/core/routing/app_router.dart';
 import 'package:clinic_system_pro/core/security/secure_key_value_storage.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
@@ -49,11 +53,13 @@ class ClinicSystemProApp extends StatefulWidget {
     required this.healthDataSource,
     required this.loginScreen,
     this.patientDataSource,
+    this.deviceConnectivitySource,
   });
 
   final BackendHealthRemoteDataSource healthDataSource;
   final Widget loginScreen;
   final PatientRemoteDataSource? patientDataSource;
+  final DeviceConnectivitySource? deviceConnectivitySource;
 
   @override
   State<ClinicSystemProApp> createState() => _ClinicSystemProAppState();
@@ -80,12 +86,21 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: 'Clinic System Pro',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+    return BlocProvider<DeviceConnectivityCubit>(
+      create: (_) => DeviceConnectivityCubit(
+        source:
+            widget.deviceConnectivitySource ??
+            ConnectivityPlusDeviceConnectivitySource(),
+      )..start(),
+      child: MaterialApp.router(
+        title: 'Clinic System Pro',
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        ),
+        routerConfig: _router,
+        builder: (context, child) =>
+            DeviceConnectivityBanner(child: child ?? const SizedBox.shrink()),
       ),
-      routerConfig: _router,
     );
   }
 }
