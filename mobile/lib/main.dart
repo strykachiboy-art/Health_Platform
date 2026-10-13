@@ -98,8 +98,10 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         ),
         routerConfig: _router,
-        builder: (context, child) =>
-            DeviceConnectivityBanner(child: child ?? const SizedBox.shrink()),
+        builder: (context, child) => DeviceConnectivityBanner(
+          apiClient: widget.healthDataSource.apiClient,
+          child: child ?? const SizedBox.shrink(),
+        ),
       ),
     );
   }

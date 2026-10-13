@@ -4,6 +4,12 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+import 'package:clinic_system_pro/core/config/backend_config.dart';
+import 'package:clinic_system_pro/core/networking/api_client.dart';
+import 'package:clinic_system_pro/core/networking/api_exception.dart';
 
 import 'package:clinic_system_pro/core/networking/device_connectivity_banner.dart';
 import 'package:clinic_system_pro/core/networking/device_connectivity_cubit.dart';
@@ -46,6 +52,20 @@ class FakeDeviceConnectivitySource implements DeviceConnectivitySource {
 
   Future<void> dispose() => _changes.close();
 }
+
+ApiClient createApiClient(http.Client client) {
+  return ApiClient(
+    config: const BackendConfig(
+      baseUrl: 'http://127.0.0.1:5000',
+      allowInsecureHttp: true,
+    ),
+    client: client,
+  );
+}
+
+const apiCommunicationMessage =
+    'The latest API request did not receive an HTTP response. '
+    'Use the affected screen to verify the result before retrying.';
 
 void main() {
   group('Connectivity result classification', () {
@@ -162,6 +182,12 @@ void main() {
       final source = FakeDeviceConnectivitySource(
         initialStatus: DeviceNetworkStatus.disconnected,
       );
+      final apiMock = MockClient(
+        (request) async => http.Response('{"success":true}', 200),
+      );
+      final apiClient = createApiClient(apiMock);
+      addTearDown(apiClient.close);
+      addTearDown(apiMock.close);
       final cubit = DeviceConnectivityCubit(source: source);
 
       addTearDown(() async {
@@ -176,6 +202,7 @@ void main() {
           builder: (context, child) => BlocProvider.value(
             value: cubit,
             child: DeviceConnectivityBanner(
+              apiClient: apiClient,
               child: child ?? const SizedBox.shrink(),
             ),
           ),
@@ -193,5 +220,74 @@ void main() {
       expect(find.text(offlineMessage), findsNothing);
       expect(find.text('Application content'), findsOneWidget);
     });
+
+    testWidgets(
+      'shows a communication warning after a request fails to receive a response',
+      (tester) async {
+        var shouldFail = true;
+
+        final mock = MockClient((request) async {
+          if (shouldFail) {
+            throw http.ClientException(
+              'Synthetic connection failure',
+              request.url,
+            );
+          }
+
+          // An HTTP error still proves that an HTTP response arrived.
+          return http.Response('{"success":false}', 503);
+        });
+        final apiClient = createApiClient(mock);
+        final source = FakeDeviceConnectivitySource();
+        final cubit = DeviceConnectivityCubit(source: source);
+
+        addTearDown(() async {
+          await cubit.close();
+          await source.dispose();
+          apiClient.close();
+          mock.close();
+        });
+
+        await cubit.start();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => BlocProvider.value(
+              value: cubit,
+              child: DeviceConnectivityBanner(
+                apiClient: apiClient,
+                child: child ?? const SizedBox.shrink(),
+              ),
+            ),
+            home: const Scaffold(body: Text('Application content')),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await expectLater(
+          apiClient.getJson('health/live'),
+          throwsA(isA<ApiException>()),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text(apiCommunicationMessage), findsOneWidget);
+
+        shouldFail = false;
+        await expectLater(
+          apiClient.getJson('health/live'),
+          throwsA(
+            isA<ApiException>().having(
+              (error) => error.statusCode,
+              'statusCode',
+              503,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text(apiCommunicationMessage), findsNothing);
+        expect(find.text('Application content'), findsOneWidget);
+      },
+    );
   });
 }

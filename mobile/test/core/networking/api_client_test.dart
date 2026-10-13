@@ -68,6 +68,259 @@ void main() {
       },
     );
 
+    test(
+      'records HTTP response receipt even when the status is unsuccessful',
+      () async {
+        final mock = MockClient((request) async {
+          return http.Response('{"success":false}', 503);
+        });
+        addTearDown(mock.close);
+
+        final api = ApiClient(config: testConfig(), client: mock);
+        addTearDown(api.close);
+
+        final eventExpectation = expectLater(
+          api.communicationStatusChanges,
+          emits(ApiCommunicationStatus.responseReceived),
+        );
+
+        await expectLater(
+          api.getJson('health/live'),
+          throwsA(
+            isA<ApiException>()
+                .having(
+                  (error) => error.kind,
+                  'kind',
+                  ApiFailureKind.httpStatus,
+                )
+                .having((error) => error.statusCode, 'statusCode', 503),
+          ),
+        );
+
+        await eventExpectation;
+        expect(
+          api.communicationStatus,
+          ApiCommunicationStatus.responseReceived,
+        );
+      },
+    );
+
+    test(
+      'records missing responses for connection errors and timeouts',
+      () async {
+        final connectionMock = MockClient((request) async {
+          throw http.ClientException('Connection unavailable', request.url);
+        });
+        addTearDown(connectionMock.close);
+
+        final connectionApi = ApiClient(
+          config: testConfig(),
+          client: connectionMock,
+        );
+        addTearDown(connectionApi.close);
+
+        final connectionEvent = expectLater(
+          connectionApi.communicationStatusChanges,
+          emits(ApiCommunicationStatus.responseNotReceived),
+        );
+
+        await expectLater(
+          connectionApi.getJson('health/live'),
+          throwsA(
+            isA<ApiException>().having(
+              (error) => error.kind,
+              'kind',
+              ApiFailureKind.connection,
+            ),
+          ),
+        );
+
+        await connectionEvent;
+        expect(
+          connectionApi.communicationStatus,
+          ApiCommunicationStatus.responseNotReceived,
+        );
+
+        final timeoutMock = MockClient(
+          (request) => Completer<http.Response>().future,
+        );
+        addTearDown(timeoutMock.close);
+
+        final timeoutApi = ApiClient(
+          config: testConfig(),
+          client: timeoutMock,
+          requestTimeout: const Duration(milliseconds: 20),
+        );
+        addTearDown(timeoutApi.close);
+
+        final timeoutEvent = expectLater(
+          timeoutApi.communicationStatusChanges,
+          emits(ApiCommunicationStatus.responseNotReceived),
+        );
+
+        await expectLater(
+          timeoutApi.getJson('health/live'),
+          throwsA(
+            isA<ApiException>().having(
+              (error) => error.kind,
+              'kind',
+              ApiFailureKind.timeout,
+            ),
+          ),
+        );
+
+        await timeoutEvent;
+        expect(
+          timeoutApi.communicationStatus,
+          ApiCommunicationStatus.responseNotReceived,
+        );
+      },
+    );
+
+    test(
+      'late older response cannot overwrite a newer request transport result',
+      () async {
+        final olderResponse = Completer<http.Response>();
+        final newerResponse = Completer<http.Response>();
+        final olderStarted = Completer<void>();
+        final newerStarted = Completer<void>();
+
+        final mock = MockClient((request) {
+          if (request.url.path.endsWith('/older')) {
+            if (!olderStarted.isCompleted) olderStarted.complete();
+            return olderResponse.future;
+          }
+
+          if (request.url.path.endsWith('/newer')) {
+            if (!newerStarted.isCompleted) newerStarted.complete();
+            return newerResponse.future;
+          }
+
+          throw StateError('Unexpected request path: ${request.url.path}');
+        });
+        addTearDown(mock.close);
+
+        final api = ApiClient(config: testConfig(), client: mock);
+        addTearDown(api.close);
+
+        final events = <ApiCommunicationStatus>[];
+        final subscription = api.communicationStatusChanges.listen(events.add);
+        addTearDown(subscription.cancel);
+
+        final olderRequest = api.getJson('older');
+        await olderStarted.future;
+
+        final newerRequest = api.getJson('newer');
+        await newerStarted.future;
+
+        newerResponse.completeError(
+          http.ClientException(
+            'Newer request failed',
+            Uri.parse('http://127.0.0.1:5000/newer'),
+          ),
+        );
+
+        await expectLater(
+          newerRequest,
+          throwsA(
+            isA<ApiException>().having(
+              (error) => error.kind,
+              'kind',
+              ApiFailureKind.connection,
+            ),
+          ),
+        );
+
+        expect(
+          api.communicationStatus,
+          ApiCommunicationStatus.responseNotReceived,
+        );
+
+        olderResponse.complete(http.Response('{"success":true}', 200));
+
+        await expectLater(olderRequest, completion(equals({'success': true})));
+
+        expect(
+          api.communicationStatus,
+          ApiCommunicationStatus.responseNotReceived,
+        );
+        expect(events, [ApiCommunicationStatus.responseNotReceived]);
+      },
+    );
+
+    test(
+      'older response is ignored while the newest request is still pending',
+      () async {
+        final olderResponse = Completer<http.Response>();
+        final newerResponse = Completer<http.Response>();
+        final olderStarted = Completer<void>();
+        final newerStarted = Completer<void>();
+
+        final mock = MockClient((request) {
+          if (request.url.path.endsWith('/older')) {
+            if (!olderStarted.isCompleted) olderStarted.complete();
+            return olderResponse.future;
+          }
+
+          if (request.url.path.endsWith('/newer')) {
+            if (!newerStarted.isCompleted) newerStarted.complete();
+            return newerResponse.future;
+          }
+
+          throw StateError('Unexpected request path: ${request.url.path}');
+        });
+        addTearDown(mock.close);
+
+        final api = ApiClient(config: testConfig(), client: mock);
+        addTearDown(api.close);
+
+        final events = <ApiCommunicationStatus>[];
+        final subscription = api.communicationStatusChanges.listen(events.add);
+        addTearDown(subscription.cancel);
+
+        final olderRequest = api.getJson('older');
+        await olderStarted.future;
+
+        final newerRequest = api.getJson('newer');
+        await newerStarted.future;
+
+        // The older success arrives first, while the newer request is pending.
+        olderResponse.complete(http.Response('{"success":true}', 200));
+        await expectLater(olderRequest, completion(equals({'success': true})));
+
+        final statusWhileNewerPending = api.communicationStatus;
+        final eventsWhileNewerPending = List<ApiCommunicationStatus>.of(events);
+
+        // Finish all requests before assertions so the test cannot leave
+        // an unresolved mock request behind if the regression is present.
+        newerResponse.completeError(
+          http.ClientException(
+            'Newer request failed',
+            Uri.parse('http://127.0.0.1:5000/newer'),
+          ),
+        );
+
+        await expectLater(
+          newerRequest,
+          throwsA(
+            isA<ApiException>().having(
+              (error) => error.kind,
+              'kind',
+              ApiFailureKind.connection,
+            ),
+          ),
+        );
+
+        expect(statusWhileNewerPending, ApiCommunicationStatus.notChecked);
+        expect(eventsWhileNewerPending, isEmpty);
+        expect(
+          api.communicationStatus,
+          ApiCommunicationStatus.responseNotReceived,
+        );
+        expect(events, [ApiCommunicationStatus.responseNotReceived]);
+      },
+    );
+
     test('non-success status becomes a typed failure', () async {
       final mock = MockClient((request) async {
         return http.Response('{"success":false}', 503);

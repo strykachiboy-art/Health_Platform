@@ -6,6 +6,12 @@ import 'package:http/http.dart' as http;
 import '../config/backend_config.dart';
 import 'api_exception.dart';
 
+enum ApiCommunicationStatus {
+  notChecked,
+  responseReceived,
+  responseNotReceived,
+}
+
 /// HTTP boundary for the existing Clinic System Pro backend.
 class ApiClient {
   ApiClient({
@@ -19,6 +25,35 @@ class ApiClient {
   final http.Client _client;
   final bool _ownsClient;
   final Duration requestTimeout;
+
+  int _requestSequence = 0;
+
+  ApiCommunicationStatus _communicationStatus =
+      ApiCommunicationStatus.notChecked;
+
+  final StreamController<ApiCommunicationStatus> _communicationStatusChanges =
+      StreamController<ApiCommunicationStatus>.broadcast(sync: true);
+
+  /// Latest observed transport result; this is not a backend health check.
+  ApiCommunicationStatus get communicationStatus => _communicationStatus;
+
+  /// Emits whether each completed request received an HTTP response.
+  Stream<ApiCommunicationStatus> get communicationStatusChanges =>
+      _communicationStatusChanges.stream;
+
+  void _recordCommunicationStatus(
+    ApiCommunicationStatus status,
+    int requestId,
+  ) {
+    // An older in-flight request must not overwrite the newest request's
+    // transport state, even if the newest request is still pending.
+    if (requestId != _requestSequence) return;
+
+    _communicationStatus = status;
+    if (!_communicationStatusChanges.isClosed) {
+      _communicationStatusChanges.add(status);
+    }
+  }
 
   /// Performs a GET request and requires a JSON object response.
   Future<Map<String, dynamic>> getJson(String path, {String? bearerToken}) {
@@ -88,6 +123,8 @@ class ApiClient {
       headers['Authorization'] = 'Bearer $bearerToken';
     }
 
+    final requestId = ++_requestSequence;
+
     late final http.Response response;
 
     try {
@@ -105,6 +142,10 @@ class ApiClient {
             .timeout(requestTimeout);
       }
     } on TimeoutException catch (error) {
+      _recordCommunicationStatus(
+        ApiCommunicationStatus.responseNotReceived,
+        requestId,
+      );
       throw ApiException(
         kind: ApiFailureKind.timeout,
         message: 'The backend request timed out.',
@@ -112,6 +153,10 @@ class ApiClient {
         cause: error,
       );
     } on http.ClientException catch (error) {
+      _recordCommunicationStatus(
+        ApiCommunicationStatus.responseNotReceived,
+        requestId,
+      );
       throw ApiException(
         kind: ApiFailureKind.connection,
         message: 'Unable to connect to the backend.',
@@ -119,6 +164,13 @@ class ApiClient {
         cause: error,
       );
     }
+
+    // Any HTTP response proves a response arrived, not that the operation
+    // succeeded. Status and payload validation remain separate below.
+    _recordCommunicationStatus(
+      ApiCommunicationStatus.responseReceived,
+      requestId,
+    );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiException(
@@ -211,6 +263,9 @@ class ApiClient {
   void close() {
     if (_ownsClient) {
       _client.close();
+    }
+    if (!_communicationStatusChanges.isClosed) {
+      unawaited(_communicationStatusChanges.close());
     }
   }
 }
