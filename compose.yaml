@@ -2,24 +2,26 @@ services:
   postgres:
     image: postgres:18
     environment:
-      POSTGRES_DB: clinic_system
-      POSTGRES_USER: clinic
-      POSTGRES_PASSWORD: clinic_phase6
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U clinic -d clinic_system"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 10
 
   redis:
     image: redis:8
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -30,13 +32,18 @@ services:
     environment:
       FLASK_ENV: production
       PORT: 5000
-      SECRET_KEY: phase6-development-secret
-      JWT_SECRET_KEY: phase6-development-jwt-secret
-      DATABASE_URL: postgresql://clinic:clinic_phase6@postgres:5432/clinic_system
-      REDIS_URL: redis://redis:6379/0
-      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Set CORS_ALLOWED_ORIGINS in .env}
       STORAGE_ROOT: /data/storage
       BACKUP_ROOT: /data/backups
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?Set INTEGRATION_ENCRYPTION_KEY in .env}
+      INTEGRATION_ENCRYPTION_KEY_VERSION: ${INTEGRATION_ENCRYPTION_KEY_VERSION:-1}
+      INTEGRATION_ENCRYPTION_LEGACY_KEYS: ${INTEGRATION_ENCRYPTION_LEGACY_KEYS:?Set INTEGRATION_ENCRYPTION_LEGACY_KEYS in .env (use an empty object if none)}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?Set BACKUP_ENCRYPTION_KEY in .env}
+      BACKUP_ENCRYPTION_KEY_VERSION: ${BACKUP_ENCRYPTION_KEY_VERSION:-1}
     volumes:
       - ./runtime/storage:/data/storage
       - ./runtime/backups:/data/backups
@@ -45,8 +52,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "5000:5000"
     healthcheck:
       test:
         [
@@ -65,13 +70,18 @@ services:
     command: ["celery", "-A", "celery_worker.celery", "worker", "--loglevel=INFO"]
     environment:
       FLASK_ENV: production
-      SECRET_KEY: phase6-development-secret
-      JWT_SECRET_KEY: phase6-development-jwt-secret
-      DATABASE_URL: postgresql://clinic:clinic_phase6@postgres:5432/clinic_system
-      REDIS_URL: redis://redis:6379/0
-      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Set CORS_ALLOWED_ORIGINS in .env}
       STORAGE_ROOT: /data/storage
       BACKUP_ROOT: /data/backups
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?Set INTEGRATION_ENCRYPTION_KEY in .env}
+      INTEGRATION_ENCRYPTION_KEY_VERSION: ${INTEGRATION_ENCRYPTION_KEY_VERSION:-1}
+      INTEGRATION_ENCRYPTION_LEGACY_KEYS: ${INTEGRATION_ENCRYPTION_LEGACY_KEYS:?Set INTEGRATION_ENCRYPTION_LEGACY_KEYS in .env (use an empty object if none)}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?Set BACKUP_ENCRYPTION_KEY in .env}
+      BACKUP_ENCRYPTION_KEY_VERSION: ${BACKUP_ENCRYPTION_KEY_VERSION:-1}
     volumes:
       - ./runtime/storage:/data/storage
       - ./runtime/backups:/data/backups
@@ -87,13 +97,18 @@ services:
     command: ["celery", "-A", "celery_worker.celery", "beat", "--loglevel=INFO"]
     environment:
       FLASK_ENV: production
-      SECRET_KEY: phase6-development-secret
-      JWT_SECRET_KEY: phase6-development-jwt-secret
-      DATABASE_URL: postgresql://clinic:clinic_phase6@postgres:5432/clinic_system
-      REDIS_URL: redis://redis:6379/0
-      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?Set POSTGRES_DB in .env}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Set CORS_ALLOWED_ORIGINS in .env}
       STORAGE_ROOT: /data/storage
       BACKUP_ROOT: /data/backups
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?Set INTEGRATION_ENCRYPTION_KEY in .env}
+      INTEGRATION_ENCRYPTION_KEY_VERSION: ${INTEGRATION_ENCRYPTION_KEY_VERSION:-1}
+      INTEGRATION_ENCRYPTION_LEGACY_KEYS: ${INTEGRATION_ENCRYPTION_LEGACY_KEYS:?Set INTEGRATION_ENCRYPTION_LEGACY_KEYS in .env (use an empty object if none)}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?Set BACKUP_ENCRYPTION_KEY in .env}
+      BACKUP_ENCRYPTION_KEY_VERSION: ${BACKUP_ENCRYPTION_KEY_VERSION:-1}
     volumes:
       - ./runtime/storage:/data/storage
       - ./runtime/backups:/data/backups
