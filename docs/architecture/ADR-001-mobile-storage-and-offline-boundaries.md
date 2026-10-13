@@ -144,6 +144,72 @@ authorization to submit a previously queued action.
 - Documentation and status claims must distinguish planned, implemented,
   verified, committed, pushed, and production-operated behavior.
 
+## Phase 10.3 validation evidence and limitations
+
+Closeout validation date: 2026-10-13.
+Source commit under test: `d5f587a8ae3af88f0a44c42b70f28a66af2ece9d`.
+
+The final local Flutter gate completed with no analyzer issues and 78 passing
+tests across nine focused test files:
+
+| Test file | Result |
+| --- | ---: |
+| `test/core/security/secure_key_value_storage_test.dart` | 7 passed |
+| `test/features/auth/data/auth_session_store_test.dart` | 17 passed |
+| `test/features/auth/data/auth_session_coordinator_test.dart` | 28 passed |
+| `test/features/auth/data/auth_remote_data_source_test.dart` | 6 passed |
+| `test/features/auth/data/auth_remote_session_operations_test.dart` | 7 passed |
+| `test/features/auth/presentation/google_login_screen_test.dart` | 6 passed |
+| `test/core/storage/app_database_schema_test.dart` | 1 passed |
+| `test/core/storage/app_database_test.dart` | 3 passed |
+| `test/drift/app_database/migration_test.dart` | 3 passed |
+
+`flutter analyze --no-pub` reported no issues. `git diff --check` also passed
+before this documentation-only reconciliation. These are local development
+test results, not production-operation evidence.
+
+### Platform integration deferred
+
+The final local gate did not run the following Android integration tests:
+
+- `mobile/integration_test/secure_key_value_storage_integration_test.dart`
+- `mobile/integration_test/app_database_integration_test.dart`
+
+Launching the Android emulator caused severe memory pressure on the available
+development machine. These tests remain deferred until a suitable device or
+adequately resourced emulator is available. The local unit/widget and migration
+results do not substitute for Android platform integration verification.
+
+The secure-storage adapter's `resetOnError: false` and
+`migrateOnAlgorithmChange: true` settings, along with Android backup-related
+manifest configuration, have been reviewed at source level. Actual device
+behavior has not been established by this closeout run.
+
+### Runtime wiring limitation
+
+No application-runtime consumer of `AppDatabase` or `appMetadata` was identified
+in `mobile/lib` beyond database implementation/generated files at the inspected
+baseline. Accordingly, application-level metadata retention, deletion, and
+logout cleanup behavior remain unverified. The database must not be connected
+to runtime code merely to close this phase; any wiring must follow a demonstrated
+requirement and an explicit lifecycle design.
+
+### Status classification
+
+- **Implemented:** the existing secure-storage adapter boundary, session
+  transition coordination safeguards, and Drift schema/migration code are
+  present in source at the commit recorded above.
+- **Verified locally:** the analyzer and the nine focused test files listed
+  above passed in the development environment.
+- **Deferred:** Android platform-backed integration tests.
+- **Not implemented or approved here:** offline queueing, synchronization,
+  conflict resolution, and sensitive clinical-data caching in SQLite.
+- **Production operated:** no claim is made.
+
+The ADR remains **Proposed**. This evidence update records validation and
+limitations; it does not by itself constitute architectural approval.
+
+
 ## Scope and review
 
 This record captures the current mobile storage boundary and the constraints
