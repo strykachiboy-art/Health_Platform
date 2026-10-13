@@ -2,6 +2,8 @@ from app.core.exceptions import ValidationError
 from functools import wraps
 
 from flask import g, jsonify, request
+from sqlalchemy import select
+
 from flask_jwt_extended import (
     get_jwt,
     get_jwt_identity,
@@ -115,6 +117,61 @@ def role_required(*required_roles):
         return wrapper
 
     return decorator
+
+
+def active_staff_required(fn):
+    """
+    Deny clinical-route access to linked staff who are suspended or terminated.
+
+    Users without a linked Staff record retain the route's existing
+    role-based authorization behavior. ON_LEAVE is not treated as suspension.
+    """
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        _load_auth_context()
+
+        if g.current_user_id is None:
+            return jsonify({
+                "error": "Invalid authentication identity",
+            }), 401
+
+        # Keep the import local to avoid model import cycles during app startup.
+        from app.core.enums.staff_enums import StaffStatus
+        from app.modules.staff.models.staff_model import Staff
+
+        staff = db.session.execute(
+            select(Staff).where(
+                Staff.user_id == g.current_user_id,
+            )
+        ).scalar_one_or_none()
+
+        # Some role-bearing accounts intentionally have no Staff row.
+        if staff is None:
+            return fn(*args, **kwargs)
+
+        clinic_id = getattr(
+            g,
+            "current_clinic_id",
+            None,
+        )
+
+        if clinic_id is None or staff.clinic_id != clinic_id:
+            return jsonify({
+                "error": "Staff access is not available for this clinic",
+            }), 403
+
+        if staff.status in (
+            StaffStatus.SUSPENDED,
+            StaffStatus.TERMINATED,
+        ):
+            return jsonify({
+                "error": "Staff account is suspended or terminated",
+            }), 403
+
+        return fn(*args, **kwargs)
+
+    return wrapper
 
 
 def require_roles(*allowed_roles):

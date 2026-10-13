@@ -774,6 +774,80 @@ def test_change_staff_status_same_status_is_noop(
     audit.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "new_status",
+    [
+        StaffStatus.SUSPENDED,
+        StaffStatus.TERMINATED,
+    ],
+)
+def test_change_staff_status_revokes_user_tokens_for_suspended_or_terminated_staff(
+    clinic,
+    make_staff,
+    monkeypatch,
+    new_status,
+):
+    staff = make_staff(
+        clinic=clinic,
+        role=Role.DOCTOR,
+        status=StaffStatus.ACTIVE,
+    )
+    revoke_tokens = Mock()
+
+    monkeypatch.setattr(
+        staff_service,
+        "revoke_user_tokens",
+        revoke_tokens,
+    )
+    monkeypatch.setattr(
+        staff_service,
+        "create_audit_log",
+        Mock(),
+    )
+
+    result = staff_service.change_staff_status(
+        staff_id=staff.id,
+        clinic_id=clinic.id,
+        new_status=new_status,
+    )
+
+    assert result.status == new_status
+    revoke_tokens.assert_called_once_with(staff.user_id)
+
+
+def test_change_staff_status_does_not_revoke_user_tokens_for_on_leave(
+    clinic,
+    make_staff,
+    monkeypatch,
+):
+    staff = make_staff(
+        clinic=clinic,
+        role=Role.DOCTOR,
+        status=StaffStatus.ACTIVE,
+    )
+    revoke_tokens = Mock()
+
+    monkeypatch.setattr(
+        staff_service,
+        "revoke_user_tokens",
+        revoke_tokens,
+    )
+    monkeypatch.setattr(
+        staff_service,
+        "create_audit_log",
+        Mock(),
+    )
+
+    result = staff_service.change_staff_status(
+        staff_id=staff.id,
+        clinic_id=clinic.id,
+        new_status=StaffStatus.ON_LEAVE,
+    )
+
+    assert result.status == StaffStatus.ON_LEAVE
+    revoke_tokens.assert_not_called()
+
+
 def test_request_leave_success(
     clinic,
     make_staff,
