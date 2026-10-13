@@ -66,7 +66,10 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         _lastError = error;
         _errorMessage = _messageFor(error);
         _loading = false;
-        if (error is ApiException && error.statusCode == 401) {
+        if (error is ApiException &&
+            const <int>{401, 403, 404}.contains(error.statusCode)) {
+          // Do not keep showing a snapshot after access is rejected or
+          // the backend reports that this patient is no longer available.
           _patient = null;
         }
       });
@@ -112,9 +115,13 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       (_lastError is ApiException &&
           (_lastError as ApiException).statusCode == 401);
 
+  /// True when the displayed patient snapshot has not been re-confirmed.
+  bool get _patientSnapshotStale =>
+      _patient != null && (_errorMessage != null || _statusOutcomeUnknown);
+
   Future<void> _openEditPatient() async {
     final patient = _patient;
-    if (patient == null || _loading) return;
+    if (patient == null || _loading || _patientSnapshotStale) return;
 
     final updated = await Navigator.of(context).push<Patient>(
       MaterialPageRoute(
@@ -148,7 +155,14 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       appBar: AppBar(
         title: const Text('Patient details'),
         actions: [
-          if (_patient != null && !_loading)
+          if (_patient != null && !_loading && !_statusOutcomeUnknown)
+            IconButton(
+              key: const ValueKey('patient-detail-refresh-button'),
+              tooltip: 'Refresh patient details',
+              icon: const Icon(Icons.refresh),
+              onPressed: () => unawaited(_loadPatient()),
+            ),
+          if (_patient != null && !_loading && !_patientSnapshotStale)
             IconButton(
               key: const ValueKey('patient-detail-edit-button'),
               tooltip: 'Edit patient',
@@ -210,6 +224,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (_patientSnapshotStale) _buildStalePatientNotice(),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(20),
@@ -279,6 +294,42 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
     );
   }
 
+  Widget _buildStalePatientNotice() {
+    final colors = Theme.of(context).colorScheme;
+
+    return Card(
+      key: const ValueKey('patient-detail-stale-data-notice'),
+      color: colors.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Last confirmed patient details may be out of date.',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: colors.onErrorContainer,
+                  ),
+            ),
+            if (_errorMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _errorMessage!,
+                style: TextStyle(color: colors.onErrorContainer),
+              ),
+            ],
+            const SizedBox(height: 8),
+            Text(
+              'The latest request did not confirm the current record. '
+              'Refresh the patient details before making changes.',
+              style: TextStyle(color: colors.onErrorContainer),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _statusManagementCard(Patient patient) {
     final isActive = patient.isActive;
 
@@ -336,6 +387,12 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
                   _statusUpdating ? 'Refreshing status...' : 'Refresh status',
                 ),
               )
+            else if (_patientSnapshotStale)
+              const Text(
+                'Status changes are disabled until patient details are '
+                'confirmed current.',
+                key: ValueKey('patient-status-stale-disabled-message'),
+              )
             else
               FilledButton.tonalIcon(
                 key: const ValueKey('patient-status-action-button'),
@@ -369,6 +426,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
 
   Future<void> _confirmPatientStatusChange(Patient patient) async {
     if (_statusUpdating ||
+        _patientSnapshotStale ||
         _statusOutcomeUnknown ||
         _statusPermissionDenied ||
         _statusAuthenticationRequired) {

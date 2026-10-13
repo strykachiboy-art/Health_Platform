@@ -170,6 +170,152 @@ void main() {
   });
 
   testWidgets(
+    'failed refresh marks retained patient data stale until revalidated',
+    (tester) async {
+      var patientGets = 0;
+      final client = MockClient((request) async {
+        expect(request.method, 'GET');
+        patientGets++;
+
+        if (patientGets == 2) {
+          return http.Response('{"success":false}', 503);
+        }
+
+        return http.Response(
+          jsonEncode({'success': true, 'data': _patientJson()}),
+          200,
+        );
+      });
+      addTearDown(client.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PatientDetailScreen(
+            dataSource: _dataSource(client),
+            bearerToken: 'test-token',
+            patientId: 7,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ada Lovelace'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('patient-detail-refresh-button')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('patient-detail-refresh-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('patient-detail-stale-data-notice')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Last confirmed patient details may be out of date.'),
+        findsOneWidget,
+      );
+      expect(find.text('Ada Lovelace'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('patient-detail-edit-button')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('patient-status-action-button')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('patient-status-stale-disabled-message'),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const ValueKey('patient-detail-refresh-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(patientGets, 3);
+      expect(
+        find.byKey(const ValueKey('patient-detail-stale-data-notice')),
+        findsNothing,
+      );
+      expect(find.text('Ada Lovelace'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('patient-detail-edit-button')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('patient-status-action-button')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  for (final statusCode in <int>[401, 403, 404]) {
+    testWidgets(
+      'clears previously loaded patient data after HTTP $statusCode refresh',
+      (tester) async {
+        var patientGets = 0;
+        final client = MockClient((request) async {
+          expect(request.method, 'GET');
+          patientGets++;
+
+          if (patientGets == 1) {
+            return http.Response(
+              jsonEncode({'success': true, 'data': _patientJson()}),
+              200,
+            );
+          }
+
+          return http.Response(
+            jsonEncode({'success': false, 'error': 'Unavailable'}),
+            statusCode,
+          );
+        });
+        addTearDown(client.close);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: PatientDetailScreen(
+              dataSource: _dataSource(client),
+              bearerToken: 'test-token',
+              patientId: 7,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Ada Lovelace'), findsOneWidget);
+
+        await tester.tap(
+          find.byKey(const ValueKey('patient-detail-refresh-button')),
+        );
+        await tester.pumpAndSettle();
+
+        expect(patientGets, 2);
+        expect(find.text('Ada Lovelace'), findsNothing);
+        expect(
+          find.byKey(const ValueKey('patient-detail-name')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('patient-detail-stale-data-notice')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('patient-detail-refresh-button')),
+          findsNothing,
+        );
+      },
+    );
+  }
+
+  testWidgets(
     'status change requires explicit confirmation and cancel sends no PATCH',
     (tester) async {
       final requests = <String>[];
