@@ -1315,6 +1315,53 @@ class TestAssertEmergencyAccess:
             is False
         )
 
+    def test_denies_access_after_staff_is_suspended(
+        self,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+        db_session,
+    ):
+        emergency_staff.status = StaffStatus.SUSPENDED
+        db_session.flush()
+
+        with pytest.raises(
+            ValidationError,
+            match="Staff record is not active",
+        ):
+            emergency_access_service.assert_emergency_access(
+                actor_id=emergency_staff.user.id,
+                patient_id=emergency_patient.id,
+                resource_type="patient",
+                resource_id=emergency_patient.id,
+                action="read",
+            )
+
+    def test_denies_access_after_clinic_is_suspended(
+        self,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+        clinic,
+        db_session,
+    ):
+        from app.core.enums.clinic_enums import ClinicStatus
+
+        clinic.status = ClinicStatus.SUSPENDED
+        db_session.flush()
+
+        with pytest.raises(
+            ValidationError,
+            match="Clinic .* is not active",
+        ):
+            emergency_access_service.assert_emergency_access(
+                actor_id=emergency_staff.user.id,
+                patient_id=emergency_patient.id,
+                resource_type="patient",
+                resource_id=emergency_patient.id,
+                action="read",
+            )
+
     def test_denies_ineligible_role(
         self,
         emergency_active_grant,

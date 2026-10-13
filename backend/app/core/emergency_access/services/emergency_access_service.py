@@ -1129,12 +1129,27 @@ def assert_emergency_access(
     if role not in EMERGENCY_REQUESTER_ROLES:
         return False
 
+    # Revalidate the requester against current staff and clinic lifecycle.
+    staff = _get_staff_for_user(
+        actor,
+    )
+
     clinic_id = _get_user_clinic_id(
         actor,
     )
 
     if clinic_id is None:
         return False
+
+    if staff.clinic_id != clinic_id:
+        raise ConflictError(
+            "Staff clinic does not match "
+            "authenticated user clinic"
+        )
+
+    _ensure_active_clinic(
+        clinic_id,
+    )
 
     patient = _get_patient(
         patient_id,
