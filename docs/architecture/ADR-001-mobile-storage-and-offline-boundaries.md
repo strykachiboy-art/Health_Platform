@@ -132,6 +132,30 @@ and behavior when authorization changes.
 Offline availability does not imply indefinite local retention or continued
 authorization to submit a previously queued action.
 
+### 8. Read freshness and connectivity semantics
+
+- Device connectivity is a local network signal. It does not prove that the
+  API is reachable or that the backend is healthy.
+- Receiving an HTTP response establishes that a response arrived. It does
+  not establish that an operation succeeded; an HTTP error response remains
+  a response, not a successful operation.
+- If the patient-detail view has a previously fetched patient and a refresh
+  fails for any reason other than HTTP 401, 403, or 404, it may retain that
+  snapshot in memory only while clearly marking it as potentially stale.
+  Editing and patient-status changes remain unavailable until a successful
+  server read confirms the current record.
+- An HTTP 401, 403, or 404 while refreshing patient details clears the
+  displayed patient snapshot rather than continuing to show data after
+  access is rejected or the requested record is reported unavailable.
+- A successful server read clears the stale indication and restores only
+  the actions permitted by the resulting current application state.
+- This in-memory presentation behavior is not a persistent cache and does
+  not establish a general offline patient-read capability. It does not
+  survive process termination and must never authorize a mutation.
+- AppMetadata remains limited to approved non-sensitive metadata. This
+  decision does not approve persistent patient, clinical, financial, or
+  sensitive operation payloads.
+
 ## Consequences
 
 - Existing Drift and secure-storage components remain in place.
@@ -217,6 +241,39 @@ requirement and an explicit lifecycle design.
 The ADR remains **Proposed**. This evidence update records validation and
 limitations; it does not by itself constitute architectural approval.
 
+
+## Phase 15 offline-foundation implementation evidence
+
+Review date: 2026-10-13.
+
+Reviewed runtime source commit: `f18b6491794f4e824f7876f372abd236599847a8`.
+
+The following Phase 15 foundation slices are present at this commit:
+
+- Slice 1 (`0158d6e`): device connectivity awareness and an app-level
+  offline notice.
+- Slice 2 (`1f35882`): shared API transport observation that distinguishes
+  HTTP response receipt from a request that receives no response. It does
+  not claim backend health or operation success and does not add retries.
+- Slice 3 (`f18b649`): patient-detail stale-state labeling, blocking edits
+  and status changes while the displayed record is unconfirmed, and clearing
+  the displayed snapshot after HTTP 401, 403, or 404 during a refresh.
+
+Local verification at Slice 3:
+
+- Patient-detail test file: 12 tests passed.
+- Full Flutter test suite: 178 tests passed.
+- `flutter analyze --no-pub`: no issues found.
+- `git diff --check`: passed before commit.
+
+These results are development-environment test evidence, not Android
+platform-integration or production-operation evidence. The implementation
+establishes in-memory stale-read behavior only; it does not implement
+persistent patient caching, an offline operation queue, synchronization,
+or conflict resolution.
+
+The ADR remains **Proposed**. This evidence update and Phase 15 roadmap
+clarification do not by themselves authorize persistent sensitive local data.
 
 ## Scope and review
 

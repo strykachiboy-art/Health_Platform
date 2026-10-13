@@ -2121,15 +2121,21 @@ Implement:
 
 # 70. Phase 15 Ã¢â‚¬â€ Flutter Offline-first
 
-Introduce:
+Establish and verify:
 
-- local cache
-- offline state
-- local persistence
-- offline read behavior
-- queued write operations
+- device online/offline state and API communication as distinct signals
+- explicitly approved local-data categories and storage boundaries
+- safe offline reads using only approved local data
+- visible stale/last-confirmed state and explicit refresh/revalidation rules
+- retention, expiration, deletion, and lifecycle expectations before persistent caches are introduced
 
 The server remains authoritative.
+
+This phase does not authorize persistent caching of patient, clinical, or
+financial records. Durable queued writes, operation IDs, idempotency,
+duplicate detection, retry limits, and backoff belong to Phase 16.
+Sensitive operation payloads must not be persisted before the applicable
+security and lifecycle requirements are approved.
 
 ---
 
