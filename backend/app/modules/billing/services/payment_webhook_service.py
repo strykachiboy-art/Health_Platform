@@ -213,7 +213,7 @@ def _normalize_webhook_result(
         "event_type": event_type,
         "reference": reference,
         "transaction_id": transaction_id,
-        "currency": currency,
+        "currency": currency.upper() if currency else None,
         "amount": amount,
         "status": status,
         "failure_reason": failure_reason,
@@ -344,6 +344,8 @@ def _validate_payment_match(
     reference: str | None,
     transaction_id: str | None,
     amount: Decimal | None,
+    currency: str | None,
+    status: str,
 ):
     if payment.gateway != gateway:
         raise ConflictError(
@@ -368,24 +370,76 @@ def _validate_payment_match(
             "Webhook transaction ID does not match the payment"
         )
 
-    if amount is not None:
-        expected_amount = Decimal(
-            str(payment.amount)
+    successful = status in {
+        "success",
+        "successful",
+        "succeeded",
+    }
+
+    expected_currency = getattr(payment, "currency", None)
+    if isinstance(expected_currency, str) and expected_currency.strip():
+        expected_currency = expected_currency.strip().upper()
+    else:
+        expected_currency = None
+
+    if currency is not None:
+        if not isinstance(currency, str) or not currency.strip():
+            if successful:
+                raise ConflictError(
+                    "Successful webhook currency is missing"
+                )
+        else:
+            normalized_currency = currency.strip().upper()
+            if len(normalized_currency) != 3 or not normalized_currency.isalpha():
+                raise ConflictError(
+                    "Webhook currency is invalid"
+                )
+            if expected_currency and normalized_currency != expected_currency:
+                raise ConflictError(
+                    "Webhook currency does not match the payment"
+                )
+            if successful and expected_currency is None:
+                raise ConflictError(
+                    "Payment currency is unknown; cannot verify webhook currency"
+                )
+    elif successful:
+        raise ConflictError(
+            "Successful webhook currency is missing"
         )
 
-        accepted_amounts = {
-            expected_amount,
-        }
+    if successful and expected_currency is None:
+        raise ConflictError(
+            "Payment currency is unknown; cannot verify webhook currency"
+        )
 
-        if gateway == PaymentGateway.PAYSTACK:
-            accepted_amounts.add(
-                expected_amount * Decimal("100")
-            )
-
-        if amount not in accepted_amounts:
+    if amount is None:
+        if successful:
             raise ConflictError(
-                "Webhook amount does not match the payment"
+                "Successful webhook amount is missing"
             )
+        return
+
+    try:
+        normalized_amount = Decimal(str(amount))
+    except (
+        InvalidOperation,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ConflictError(
+            "Webhook amount is invalid"
+        ) from exc
+
+    if not normalized_amount.is_finite():
+        raise ConflictError(
+            "Webhook amount is invalid"
+        )
+
+    expected_amount = Decimal(str(payment.amount))
+    if normalized_amount != expected_amount:
+        raise ConflictError(
+            "Webhook amount does not match the payment"
+        )
 
 
 def _reserve_event(
@@ -658,6 +712,8 @@ def process_payment_webhook(
         reference=normalized["reference"],
         transaction_id=normalized["transaction_id"],
         amount=normalized["amount"],
+        currency=normalized["currency"],
+        status=normalized["status"],
     )
 
     event, created = _reserve_event(

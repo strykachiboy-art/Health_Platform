@@ -36,7 +36,8 @@ class FakeGateway:
                 "transaction_id": "123",
                 "status": "pending",
                 "paid": False,
-                "amount": 10000,
+                "amount": 100,
+                "currency": "NGN",
             }
         )
         self.verify_error = verify_error
@@ -66,11 +67,13 @@ def make_payment(
     gateway=PaymentGateway.PAYSTACK,
     reference="PAY-1",
     transaction_id="123",
+    currency="NGN",
 ):
     return SimpleNamespace(
         id=1,
         invoice_id=10,
         amount=100,
+        currency=currency,
         method="card",
         gateway=gateway,
         reference=reference,
@@ -211,7 +214,8 @@ def test_retry_of_existing_pending_payment_reconciles_without_initialize(
             "transaction_id": "123",
             "status": "success",
             "paid": True,
-            "amount": 10000,
+            "amount": 100,
+            "currency": "NGN",
         }
     )
 
@@ -332,7 +336,8 @@ def test_initialization_forwards_idempotency_key(
             "transaction_id": "123",
             "status": "success",
             "paid": True,
-            "amount": 10000,
+            "amount": 100,
+            "currency": "NGN",
         }
     )
 
@@ -392,7 +397,8 @@ def test_provider_reference_mismatch_is_rejected_safely(
             "transaction_id": "123",
             "status": "success",
             "paid": True,
-            "amount": 10000,
+            "amount": 100,
+            "currency": "NGN",
         }
     )
 

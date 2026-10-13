@@ -285,6 +285,13 @@ class Payment(db.Model):
         nullable=False,
     )
 
+    # Nullable for legacy/manual payment rows whose original currency is unknown.
+    # New gateway payment intents always persist their expected currency.
+    currency = db.Column(
+        db.String(3),
+        nullable=True,
+    )
+
     method = db.Column(
         db.Enum(PaymentMethod),
         nullable=False,

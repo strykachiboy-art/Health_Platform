@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import hashlib
 import hmac
 import json
@@ -85,7 +87,7 @@ def test_handle_webhook_success(
         "livemode": False,
         "transaction_id": "123456",
         "reference": "INV-001",
-        "amount": 12550,
+        "amount": Decimal("125.50"),
         "currency": "NGN",
         "status": "successful",
     }
@@ -681,3 +683,21 @@ def test_handle_webhook_allows_missing_optional_transaction_fields(
     assert result["amount"] is None
     assert result["currency"] == ""
     assert result["status"] == "pending"
+
+@pytest.mark.parametrize("currency", [123, [], {}])
+def test_handle_webhook_rejects_non_string_currency(
+    gateway,
+    currency,
+):
+    event = _webhook_payload(data={"currency": currency})
+    payload = json.dumps(
+        event,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    signature = _webhook_signature(payload)
+
+    with pytest.raises(ValueError, match="Currency is invalid"):
+        gateway.handle_webhook(
+            payload=payload,
+            signature=signature,
+        )
