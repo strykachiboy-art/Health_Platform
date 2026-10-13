@@ -32,6 +32,8 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   int _requestGeneration = 0;
   bool _loadingInitial = true;
   bool _loadingMore = false;
+  bool _refreshing = false;
+  bool _resultsStale = false;
   String? _errorMessage;
   Object? _lastError;
 
@@ -49,8 +51,24 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   }
 
   void _onSearchChanged(String _) {
-    setState(() {});
     _searchDebounce?.cancel();
+
+    // Invalidate an in-flight request for the previous query immediately,
+    // before the debounce timer allows the next query to be requested.
+    _requestGeneration++;
+
+    setState(() {
+      _patients = <Patient>[];
+      _page = 0;
+      _total = null;
+      _errorMessage = null;
+      _lastError = null;
+      _loadingInitial = true;
+      _loadingMore = false;
+      _refreshing = false;
+      _resultsStale = false;
+    });
+
     _searchDebounce = Timer(
       const Duration(milliseconds: 350),
       () => unawaited(_loadPage(reset: true)),
@@ -58,19 +76,24 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   }
 
   Future<void> _loadPage({required bool reset}) async {
-    if (!reset && (_loadingInitial || _loadingMore)) return;
+    if (!reset &&
+        (_loadingInitial || _loadingMore || _refreshing || _resultsStale)) {
+      return;
+    }
 
     final generation = ++_requestGeneration;
     final requestedPage = reset ? 1 : _page + 1;
+    final hasExistingResults = reset && _patients.isNotEmpty;
+
     setState(() {
       _errorMessage = null;
       _lastError = null;
       if (reset) {
-        _loadingInitial = true;
+        // Keep same-query results visible while refreshing them. Search
+        // changes clear the old query immediately in _onSearchChanged.
+        _loadingInitial = !hasExistingResults;
         _loadingMore = false;
-        _patients = <Patient>[];
-        _page = 0;
-        _total = null;
+        _refreshing = hasExistingResults;
       } else {
         _loadingMore = true;
       }
@@ -94,18 +117,35 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
         _total = result.total;
         _loadingInitial = false;
         _loadingMore = false;
+        _refreshing = false;
+        _resultsStale = false;
       });
     } catch (error) {
       if (!mounted || generation != _requestGeneration) return;
-      final rejected = error is ApiException && error.statusCode == 401;
+
+      final accessRejected =
+          error is ApiException &&
+          const <int>{401, 403}.contains(error.statusCode);
+
       setState(() {
         _lastError = error;
         _errorMessage = _messageFor(error);
         _loadingInitial = false;
         _loadingMore = false;
-        if (rejected) {
+        _refreshing = false;
+
+        if (accessRejected) {
+          // Never retain a displayed directory after authentication or
+          // authorization has been rejected by the backend.
           _patients = <Patient>[];
+          _page = 0;
           _total = 0;
+          _resultsStale = false;
+        } else if (reset && _patients.isNotEmpty) {
+          // This is an in-memory snapshot, not a persistent offline cache.
+          _resultsStale = true;
+        } else if (_patients.isEmpty) {
+          _resultsStale = false;
         }
       });
     }
@@ -200,15 +240,28 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
               ),
             ),
           Expanded(child: _buildResults()),
-          if (_patients.isNotEmpty && _errorMessage != null)
+          if (_patients.isNotEmpty &&
+              (_errorMessage != null || _resultsStale || _refreshing))
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Column(
                 children: [
-                  Text(_errorMessage!, textAlign: TextAlign.center),
+                  if (_resultsStale)
+                    const Text(
+                      'Showing previously loaded patients. These results may be out of date.',
+                      textAlign: TextAlign.center,
+                    ),
+                  if (_errorMessage != null)
+                    Text(_errorMessage!, textAlign: TextAlign.center),
                   TextButton(
-                    onPressed: () => unawaited(_loadPage(reset: !_needsSignIn)),
-                    child: Text(_needsSignIn ? 'Return to sign in' : 'Retry'),
+                    onPressed: _refreshing
+                        ? null
+                        : () => unawaited(_loadPage(reset: !_needsSignIn)),
+                    child: Text(
+                      _refreshing
+                          ? 'Refreshing...'
+                          : (_needsSignIn ? 'Return to sign in' : 'Retry'),
+                    ),
                   ),
                 ],
               ),
@@ -216,7 +269,9 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
           if (_patients.isNotEmpty &&
               _total != null &&
               _patients.length < _total! &&
-              _errorMessage == null)
+              _errorMessage == null &&
+              !_resultsStale &&
+              !_refreshing)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
               child: SizedBox(

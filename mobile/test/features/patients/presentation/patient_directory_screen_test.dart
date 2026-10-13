@@ -81,6 +81,169 @@ void main() {
     },
   );
 
+  testWidgets(
+    'refresh retains previously loaded results as stale after a transient failure',
+    (tester) async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount++;
+        if (requestCount == 1) {
+          return http.Response(jsonEncode(_pageEnvelope()), 200);
+        }
+        return http.Response(
+          jsonEncode({'success': false, 'message': 'temporary unavailable'}),
+          503,
+        );
+      });
+      addTearDown(client.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PatientDirectoryScreen(
+            dataSource: _dataSource(client),
+            bearerToken: 'test-token',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(requestCount, 1);
+      expect(find.text('Ada Lovelace'), findsOneWidget);
+
+      await tester.drag(
+        find.byKey(const ValueKey('patient-directory-list')),
+        const Offset(0, 400),
+      );
+      await tester.pumpAndSettle();
+
+      expect(requestCount, 2);
+      expect(find.text('Ada Lovelace'), findsOneWidget);
+      expect(
+        find.text(
+          'Showing previously loaded patients. These results may be out of date.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('HTTP 503'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('+2348000000000'), findsNothing);
+    },
+  );
+
+  testWidgets('successful retry clears the stale directory warning', (
+    tester,
+  ) async {
+    var requestCount = 0;
+    final client = MockClient((request) async {
+      requestCount++;
+      if (requestCount == 2) {
+        return http.Response(
+          jsonEncode({'success': false, 'message': 'temporary unavailable'}),
+          503,
+        );
+      }
+      return http.Response(jsonEncode(_pageEnvelope()), 200);
+    });
+    addTearDown(client.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PatientDirectoryScreen(
+          dataSource: _dataSource(client),
+          bearerToken: 'test-token',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(requestCount, 1);
+    expect(find.text('Ada Lovelace'), findsOneWidget);
+
+    await tester.drag(
+      find.byKey(const ValueKey('patient-directory-list')),
+      const Offset(0, 400),
+    );
+    await tester.pumpAndSettle();
+
+    expect(requestCount, 2);
+    expect(
+      find.text(
+        'Showing previously loaded patients. These results may be out of date.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('HTTP 503'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+
+    expect(requestCount, 3);
+    expect(find.text('Ada Lovelace'), findsOneWidget);
+    expect(
+      find.text(
+        'Showing previously loaded patients. These results may be out of date.',
+      ),
+      findsNothing,
+    );
+    expect(find.textContaining('HTTP 503'), findsNothing);
+  });
+  for (final statusCode in <int>[401, 403]) {
+    testWidgets('directory clears retained results after HTTP $statusCode', (
+      tester,
+    ) async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount++;
+        if (requestCount == 1) {
+          return http.Response(jsonEncode(_pageEnvelope()), 200);
+        }
+        return http.Response(
+          jsonEncode({'success': false, 'message': 'access rejected'}),
+          statusCode,
+        );
+      });
+      addTearDown(client.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PatientDirectoryScreen(
+            dataSource: _dataSource(client),
+            bearerToken: 'test-token',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ada Lovelace'), findsOneWidget);
+
+      await tester.drag(
+        find.byKey(const ValueKey('patient-directory-list')),
+        const Offset(0, 400),
+      );
+      await tester.pumpAndSettle();
+
+      expect(requestCount, 2);
+      expect(find.text('Ada Lovelace'), findsNothing);
+      expect(
+        find.text(
+          'Showing previously loaded patients. These results may be out of date.',
+        ),
+        findsNothing,
+      );
+
+      if (statusCode == 401) {
+        expect(find.textContaining('HTTP 401'), findsOneWidget);
+      } else {
+        expect(
+          find.text(
+            'Your account is not permitted to view the patient directory.',
+          ),
+          findsOneWidget,
+        );
+      }
+    });
+  }
+
   testWidgets('directory shows an explicit empty state', (tester) async {
     final client = MockClient((request) async {
       return http.Response(jsonEncode(_pageEnvelope(items: [])), 200);
@@ -130,6 +293,13 @@ void main() {
       find.byKey(const ValueKey('patient-search-field')),
       'Nobody',
     );
+    await tester.pump();
+    expect(find.text('Ada Lovelace'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('patient-directory-loading')),
+      findsOneWidget,
+    );
+
     await tester.pump(const Duration(milliseconds: 200));
     expect(receivedSearches, [null]);
     await tester.pump(const Duration(milliseconds: 200));
