@@ -219,7 +219,7 @@ def _ensure_status(
 
 def _validate_existing_appointment_patient_active(appointment):
     """
-    Require an active patient before advancing a scheduled appointment.
+    Require an active patient before confirming or rescheduling an appointment.
     Preserve tenant ownership checks for the existing appointment.
     """
     patient = get_patient(appointment.patient_id)
