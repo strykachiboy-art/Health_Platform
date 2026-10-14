@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.extensions import db
 from app.core.auth.user.models.user_model import User
+from app.core.emergency_access.services.emergency_access_service import assert_emergency_access
 from app.core.enums.role_enums import Role
 from app.core.exceptions import (
     DomainError,
@@ -406,6 +407,42 @@ def get_patient_route(
         patient = _get_patient_in_current_clinic(
             patient_id
         )
+
+        emergency_access_id_header = request.headers.get(
+            "X-Emergency-Access-ID"
+        )
+
+        if emergency_access_id_header is not None:
+            try:
+                emergency_access_id = int(
+                    emergency_access_id_header.strip()
+                )
+            except (TypeError, ValueError):
+                return jsonify({
+                    "success": False,
+                    "error": "Emergency access is not authorized for this resource",
+                }), 403
+
+            if emergency_access_id <= 0:
+                return jsonify({
+                    "success": False,
+                    "error": "Emergency access is not authorized for this resource",
+                }), 403
+
+            allowed = assert_emergency_access(
+                actor_id=_get_current_user().id,
+                patient_id=patient.id,
+                resource_type="patient",
+                resource_id=patient.id,
+                action="read",
+                emergency_access_id=emergency_access_id,
+            )
+
+            if not allowed:
+                return jsonify({
+                    "success": False,
+                    "error": "Emergency access is not authorized for this resource",
+                }), 403
 
         patient = get_patient(
             patient.id

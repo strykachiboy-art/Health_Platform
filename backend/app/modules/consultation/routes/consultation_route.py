@@ -10,8 +10,15 @@ from app.core.enums.consultation_enums import (
     ConsultationType,
 )
 from app.core.enums.role_enums import Role
+from app.core.emergency_access.services.emergency_access_service import (
+    assert_emergency_access,
+)
 from app.core.exceptions import ValidationError
-from app.core.utils.decorators import active_staff_required, role_required
+from app.core.utils.decorators import (
+    active_staff_required,
+    emergency_aware_role_required,
+    role_required,
+)
 from app.extensions import db
 
 from app.modules.consultation.schemas.consultation_schema import (
@@ -427,7 +434,7 @@ def start():
 
 
 @consultation_bp.get("/<int:consultation_id>")
-@role_required(*CONSULTATION_READ_ROLES)
+@emergency_aware_role_required(*CONSULTATION_READ_ROLES)
 @active_staff_required
 def get(consultation_id: int):
     clinic_id, error = _get_authenticated_clinic_id()
@@ -439,6 +446,42 @@ def get(consultation_id: int):
         consultation_id=consultation_id,
         clinic_id=clinic_id,
     )
+
+    emergency_access_id_header = request.headers.get(
+        "X-Emergency-Access-ID"
+    )
+
+    if emergency_access_id_header is not None:
+        try:
+            emergency_access_id = int(
+                emergency_access_id_header.strip()
+            )
+        except (TypeError, ValueError):
+            return jsonify({
+                "success": False,
+                "error": "Emergency access is not authorized for this resource",
+            }), 403
+
+        if emergency_access_id <= 0:
+            return jsonify({
+                "success": False,
+                "error": "Emergency access is not authorized for this resource",
+            }), 403
+
+        allowed = assert_emergency_access(
+            actor_id=_get_current_user().id,
+            patient_id=consultation.patient_id,
+            resource_type="consultation",
+            resource_id=consultation.id,
+            action="read",
+            emergency_access_id=emergency_access_id,
+        )
+
+        if not allowed:
+            return jsonify({
+                "success": False,
+                "error": "Emergency access is not authorized for this resource",
+            }), 403
 
     return jsonify({
         "success": True,

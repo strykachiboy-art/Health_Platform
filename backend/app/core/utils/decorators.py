@@ -119,6 +119,62 @@ def role_required(*required_roles):
     return decorator
 
 
+def emergency_aware_role_required(*required_roles):
+    """
+    Preserve ordinary route-role enforcement while allowing eligible
+    emergency requesters past this role gate when an emergency ID is
+    supplied.
+
+    This decorator is not resource authorization. The handler must
+    validate the exact grant with assert_emergency_access before
+    returning clinical data.
+    """
+    allowed_roles = {
+        role.value if isinstance(role, Role) else str(role)
+        for role in required_roles
+    }
+
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            _load_auth_context()
+
+            if g.current_user_id is None:
+                return jsonify({
+                    "error": "Invalid authentication identity",
+                }), 401
+
+            if g.current_user_role in allowed_roles:
+                return fn(*args, **kwargs)
+
+            if request.headers.get("X-Emergency-Access-ID") is None:
+                return jsonify({
+                    "error": "Insufficient permissions",
+                }), 403
+
+            # Import locally: emergency_access_service imports this module
+            # for transactional, so a module-level import would cycle.
+            from app.core.emergency_access.services.emergency_access_service import (
+                EMERGENCY_REQUESTER_ROLES,
+            )
+
+            emergency_roles = {
+                role.value if isinstance(role, Role) else str(role)
+                for role in EMERGENCY_REQUESTER_ROLES
+            }
+
+            if g.current_user_role not in emergency_roles:
+                return jsonify({
+                    "error": "Insufficient permissions",
+                }), 403
+
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def active_staff_required(fn):
     """
     Deny clinical-route access to linked staff who are suspended or terminated.

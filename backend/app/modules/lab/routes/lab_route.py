@@ -9,7 +9,14 @@ from app.extensions import db
 from app.core.exceptions import DomainError, ValidationError
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import (
+    emergency_aware_role_required,
+    get_current_clinic_id,
+    role_required,
+)
+from app.core.emergency_access.services.emergency_access_service import (
+    assert_emergency_access,
+)
 
 from app.modules.lab.schemas.lab_schema import (
     LabEquipmentLinkSchema,
@@ -532,7 +539,7 @@ def create_lab_order_route():
 
 
 @lab_bp.get("/orders/<int:order_id>")
-@role_required(*LAB_VIEW_ROLES)
+@emergency_aware_role_required(*LAB_VIEW_ROLES)
 def get_lab_order_route(order_id: int):
     try:
         clinic_id = _get_current_clinic_id()
@@ -541,6 +548,39 @@ def get_lab_order_route(order_id: int):
             order_id=order_id,
             clinic_id=clinic_id,
         )
+
+        emergency_access_header = request.headers.get(
+            "X-Emergency-Access-ID"
+        )
+        if emergency_access_header is not None:
+            try:
+                emergency_access_id = int(
+                    emergency_access_header
+                )
+            except (TypeError, ValueError):
+                return jsonify({
+                    "success": False,
+                    "message": "Emergency access is not authorized",
+                }), 403
+
+            if emergency_access_id <= 0:
+                return jsonify({
+                    "success": False,
+                    "message": "Emergency access is not authorized",
+                }), 403
+
+            if not assert_emergency_access(
+                actor_id=_get_current_user().id,
+                patient_id=order.patient_id,
+                resource_type="lab_order",
+                resource_id=order.id,
+                action="read",
+                emergency_access_id=emergency_access_id,
+            ):
+                return jsonify({
+                    "success": False,
+                    "message": "Emergency access is not authorized",
+                }), 403
 
         return jsonify({
             "success": True,
@@ -552,7 +592,7 @@ def get_lab_order_route(order_id: int):
 
 
 @lab_bp.get("/orders")
-@role_required(*LAB_VIEW_ROLES)
+@emergency_aware_role_required(*LAB_VIEW_ROLES)
 def list_orders_for_patient_route():
     try:
         data = LabOrderListQuerySchema.model_validate(
@@ -560,6 +600,37 @@ def list_orders_for_patient_route():
         )
 
         clinic_id = _get_current_clinic_id()
+
+        emergency_access_header = request.headers.get(
+            "X-Emergency-Access-ID"
+        )
+        if emergency_access_header is not None:
+            try:
+                emergency_access_id = int(emergency_access_header)
+            except (TypeError, ValueError):
+                return jsonify({
+                    "success": False,
+                    "message": "Emergency access is not authorized",
+                }), 403
+
+            if emergency_access_id <= 0:
+                return jsonify({
+                    "success": False,
+                    "message": "Emergency access is not authorized",
+                }), 403
+
+            if not assert_emergency_access(
+                actor_id=_get_current_user().id,
+                patient_id=data.patient_id,
+                resource_type="lab_order_list",
+                resource_id=data.patient_id,
+                action="read",
+                emergency_access_id=emergency_access_id,
+            ):
+                return jsonify({
+                    "success": False,
+                    "message": "Emergency access is not authorized",
+                }), 403
 
         result = list_orders_for_patient(
             patient_id=data.patient_id,
