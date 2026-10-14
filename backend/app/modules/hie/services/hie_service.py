@@ -24,7 +24,10 @@ from app.modules.hie.providers.exceptions import (
     HIEProviderHTTPError,
     classify_hie_failure,
 )
-from app.modules.hie.providers.registry import get_provider
+from app.modules.hie.providers.registry import (
+    get_provider,
+    is_provider_registered,
+)
 from app.modules.patient.models.patient_model import Patient
 
 
@@ -1164,8 +1167,6 @@ def update_hie_integration(
                 "Provider cannot be empty"
             )
 
-        integration.provider = provider
-
     if status is not None:
         if not isinstance(
             status,
@@ -1175,6 +1176,37 @@ def update_hie_integration(
                 "Invalid HIE integration status"
             )
 
+    effective_provider = (
+        provider
+        if provider is not None
+        else integration.provider
+    )
+    effective_status = (
+        status
+        if status is not None
+        else integration.status
+    )
+
+    # An integration may remain pending as an extension point, but it cannot
+    # be activated (or switched to another provider while active) unless the
+    # current process has registered an implementation for that provider.
+    if (
+        effective_status == HIEIntegrationStatus.ACTIVE
+        and (
+            status == HIEIntegrationStatus.ACTIVE
+            or provider is not None
+        )
+        and not is_provider_registered(effective_provider)
+    ):
+        raise ValidationError(
+            "HIE provider implementation is not registered; "
+            "integration cannot be activated or switched while active"
+        )
+
+    if provider is not None:
+        integration.provider = provider
+
+    if status is not None:
         integration.status = status
 
     if endpoint_url is not None:
