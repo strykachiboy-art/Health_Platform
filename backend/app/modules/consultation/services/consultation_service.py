@@ -967,7 +967,20 @@ def get_active_templates(
     page: int = DEFAULT_PAGE,
     per_page: int = DEFAULT_PER_PAGE,
 ) -> tuple[list[ConsultationTemplate], dict]:
-    if clinic_id is not None and clinic_id <= 0:
+    if clinic_id is None:
+        raise ValidationError(
+            "Clinic ID is required for consultation template lookup"
+        )
+
+    if (
+        isinstance(clinic_id, bool)
+        or not isinstance(clinic_id, int)
+    ):
+        raise ValidationError(
+            "Clinic ID must be a positive integer"
+        )
+
+    if clinic_id <= 0:
         raise ValidationError(
             "Clinic ID must be greater than 0"
         )
@@ -984,13 +997,13 @@ def get_active_templates(
         )
     )
 
-    if clinic_id is not None:
-        statement = statement.where(
-            or_(
-                ConsultationTemplate.clinic_id.is_(None),
-                ConsultationTemplate.clinic_id == clinic_id,
-            )
+    # Return shared templates and this clinic's templates only.
+    statement = statement.where(
+        or_(
+            ConsultationTemplate.clinic_id.is_(None),
+            ConsultationTemplate.clinic_id == clinic_id,
         )
+    )
 
     statement = statement.order_by(
         ConsultationTemplate.name.asc(),

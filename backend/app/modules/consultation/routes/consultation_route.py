@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request, g
+from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from pydantic import ValidationError as PydanticValidationError
 
@@ -133,25 +133,9 @@ def _get_authenticated_clinic_id():
     return clinic_id, None
 
 
-def _is_admin():
-    role = getattr(g, "current_user_role", None)
-
-    if isinstance(role, Role):
-        return role == Role.ADMIN
-
-    return role == Role.ADMIN.value
-
-
 def _resolve_template_clinic_id():
-    clinic_id, error = _get_authenticated_clinic_id()
-
-    if error is not None:
-        if _is_admin():
-            return None, None
-
-        return None, error
-
-    return clinic_id, None
+    # Template creation requires an authenticated clinic scope.
+    return _get_authenticated_clinic_id()
 
 
 def _parse_positive_int(
@@ -756,22 +740,20 @@ def active_templates():
         _get_authenticated_clinic_id()
     )
 
-    if _is_admin():
-        clinic_id = raw_clinic_id
-    else:
-        if error is not None:
-            return error
+    if error is not None:
+        return error
 
-        if (
-            raw_clinic_id is not None
-            and raw_clinic_id != authenticated_clinic_id
-        ):
-            return jsonify({
-                "success": False,
-                "error": "Access denied",
-            }), 403
+    # A query parameter cannot broaden the authenticated clinic scope.
+    if (
+        raw_clinic_id is not None
+        and raw_clinic_id != authenticated_clinic_id
+    ):
+        return jsonify({
+            "success": False,
+            "error": "Access denied",
+        }), 403
 
-        clinic_id = authenticated_clinic_id
+    clinic_id = authenticated_clinic_id
 
     templates, pagination = get_active_templates(
         clinic_id=clinic_id,

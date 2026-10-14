@@ -1859,91 +1859,103 @@ def test_create_template_rejects_empty_structure(
 
 def test_active_templates_admin_without_clinic_filter(
     app,
+    clinic,
     auth_headers_for,
     user,
     monkeypatch,
 ):
     headers = auth_headers_for(user, role=Role.ADMIN)
-
-    templates = [
-        make_template(
-            template_id=1,
-            clinic_id=None,
-            name="Global Template",
-        ),
-        make_template(
-            template_id=2,
-            clinic_id=1,
-            name="Clinic Template",
-        ),
-    ]
-
-    pagination = make_pagination(
-        total=2,
-        pages=1,
-    )
-
     called = {}
 
     def fake_get_active_templates(**kwargs):
         called.update(kwargs)
-        return templates, pagination
+        return [
+            make_template(clinic_id=None, name="Global"),
+            make_template(clinic_id=clinic.id, name="Clinic"),
+        ], make_pagination(total=2, pages=1)
 
     monkeypatch.setattr(
-        consultation_route,
-        "get_active_templates",
+        consultation_route, "get_active_templates",
         fake_get_active_templates,
     )
 
     response = app.test_client().get(
-        "/api/v1/consultations/templates",
-        headers=headers,
+        "/api/v1/consultations/templates", headers=headers,
     )
 
     assert response.status_code == 200
-
-    body = response.get_json()
-
-    assert body["success"] is True
-    assert len(body["data"]) == 2
-    assert body["pagination"] == pagination
-    assert called["clinic_id"] is None
-    assert called["page"] == 1
-    assert called["per_page"] == 50
-
+    assert len(response.get_json()["data"]) == 2
+    assert called["clinic_id"] == clinic.id
 
 def test_active_templates_admin_with_clinic_filter(
     app,
+    clinic,
     auth_headers_for,
     user,
     monkeypatch,
 ):
     headers = auth_headers_for(user, role=Role.ADMIN)
-
-    pagination = make_pagination(
-        total=1,
-        pages=1,
-    )
-
     called = {}
 
     def fake_get_active_templates(**kwargs):
         called.update(kwargs)
-        return [make_template(clinic_id=7)], pagination
+        return [make_template(clinic_id=clinic.id)], make_pagination(total=1)
 
     monkeypatch.setattr(
-        consultation_route,
-        "get_active_templates",
+        consultation_route, "get_active_templates",
         fake_get_active_templates,
     )
 
     response = app.test_client().get(
-        "/api/v1/consultations/templates?clinic_id=7",
+        f"/api/v1/consultations/templates?clinic_id={clinic.id}",
         headers=headers,
     )
 
     assert response.status_code == 200
-    assert called["clinic_id"] == 7
+    assert called["clinic_id"] == clinic.id
+
+
+def test_active_templates_admin_cannot_select_another_clinic(
+    app,
+    clinic,
+    auth_headers_for,
+    user,
+    monkeypatch,
+):
+    headers = auth_headers_for(user, role=Role.ADMIN)
+    called = {"value": False}
+
+    def fake_get_active_templates(**kwargs):
+        called["value"] = True
+        return [], make_pagination()
+
+    monkeypatch.setattr(
+        consultation_route, "get_active_templates",
+        fake_get_active_templates,
+    )
+
+    response = app.test_client().get(
+        f"/api/v1/consultations/templates?clinic_id={clinic.id + 1}",
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["error"] == "Access denied"
+    assert called["value"] is False
+
+def test_active_templates_admin_without_clinic_is_denied(
+    app,
+    auth_headers_for,
+    user,
+):
+    user.clinic_id = None
+    headers = auth_headers_for(user, role=Role.ADMIN)
+
+    response = app.test_client().get(
+        "/api/v1/consultations/templates", headers=headers,
+    )
+
+    assert response.status_code == 403
 
 
 def test_active_templates_non_admin_uses_authenticated_clinic(
@@ -2080,7 +2092,8 @@ def test_active_templates_forwards_pagination(
 
     assert body["data"] == []
     assert body["pagination"] == pagination
-    assert called["clinic_id"] is None
+    assert user.clinic_id is not None
+    assert called["clinic_id"] == user.clinic_id
     assert called["page"] == 2
     assert called["per_page"] == 20
 
@@ -2265,6 +2278,35 @@ def test_read_routes_forbidden_for_unauthorized_roles(
     )
 
     assert response.status_code == 403
+
+
+def test_create_template_admin_without_clinic_is_denied(
+    app,
+    auth_headers_for,
+    user,
+    monkeypatch,
+):
+    user.clinic_id = None
+    headers = auth_headers_for(user, role=Role.ADMIN)
+    called = {"value": False}
+
+    def fake_create_consultation_template(**kwargs):
+        called["value"] = True
+        return make_template(clinic_id=None)
+
+    monkeypatch.setattr(
+        consultation_route, "create_consultation_template",
+        fake_create_consultation_template,
+    )
+
+    response = app.test_client().post(
+        "/api/v1/consultations/templates",
+        json={"name": "Unscoped", "structure": {"sections": ["history"]}},
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+    assert called["value"] is False
 
 
 def test_template_create_allowed_for_admin(

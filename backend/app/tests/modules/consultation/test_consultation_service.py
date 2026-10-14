@@ -3061,31 +3061,12 @@ class TestGetActiveTemplates:
         assert inactive.id not in ids
         assert pagination["total"] == 2
 
-    def test_returns_all_active_templates_without_clinic_filter(
-        self,
-        make_template,
-    ):
-        global_template = make_template(
-            clinic=None,
-            is_active=True,
-            name="Global",
-        )
-
-        another_global = make_template(
-            clinic=None,
-            is_active=True,
-            name="Another Global",
-        )
-
-        results, pagination = (
+    def test_rejects_missing_clinic_scope(self):
+        with pytest.raises(
+            ValidationError,
+            match="Clinic ID is required for consultation template lookup",
+        ):
             consultation_service.get_active_templates()
-        )
-
-        ids = [item.id for item in results]
-
-        assert global_template.id in ids
-        assert another_global.id in ids
-        assert pagination["total"] == 2
 
     def test_returns_templates_in_name_order(
         self,
