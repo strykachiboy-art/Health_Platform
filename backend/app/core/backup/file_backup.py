@@ -3,16 +3,21 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 from typing import Callable, Mapping
 
 from flask import current_app
 
+from app.core.backup.backup_encryption import encrypt_backup_artifact
+
 
 DEFAULT_CHUNK_SIZE = 1024 * 1024
 MANIFEST_FILENAME = "manifest.json"
+ENCRYPTED_MANIFEST_FILENAME = "manifest.json.enc"
 FILES_DIRECTORY_NAME = "files"
 
 
@@ -43,6 +48,7 @@ class FileBackupResult:
     total_size_bytes: int
     created_at: str
     files: tuple[FileBackupEntry, ...]
+    encrypted: bool = True
 
 
 MetadataResolver = Callable[
@@ -213,107 +219,44 @@ def _calculate_sha256(
     return digest.hexdigest()
 
 
-def _copy_and_verify_file(
+def _encrypt_and_verify_file(
     source_path: Path,
     destination_path: Path,
 ) -> tuple[str, int]:
-    destination_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    source_digest = hashlib.sha256()
-    source_size = 0
-
+    """Encrypt a source file without writing a plaintext backup copy."""
     try:
-        with source_path.open(
-            "rb"
-        ) as source:
-            with destination_path.open(
-                "xb"
-            ) as destination:
-                while True:
-                    chunk = source.read(
-                        DEFAULT_CHUNK_SIZE
-                    )
+        expected_sha256 = _calculate_sha256(source_path)
+        expected_size = source_path.stat().st_size
 
-                    if not chunk:
-                        break
+        encrypt_backup_artifact(
+            source_path,
+            destination_path,
+        )
 
-                    source_digest.update(
-                        chunk
-                    )
+        # Detect a source file changing while it is backed up.
+        actual_sha256 = _calculate_sha256(source_path)
+        actual_size = source_path.stat().st_size
 
-                    source_size += len(
-                        chunk
-                    )
+        if (
+            actual_sha256 != expected_sha256
+            or actual_size != expected_size
+        ):
+            raise FileBackupError(
+                "File checksum mismatch during encryption: "
+                f"{source_path}"
+            )
 
-                    destination.write(
-                        chunk
-                    )
+        return expected_sha256, expected_size
 
     except FileBackupError:
-        destination_path.unlink(
-            missing_ok=True
-        )
+        destination_path.unlink(missing_ok=True)
         raise
 
-    except OSError as exc:
-        destination_path.unlink(
-            missing_ok=True
-        )
-
+    except Exception as exc:
+        destination_path.unlink(missing_ok=True)
         raise FileBackupError(
-            "Unable to copy file "
-            f"{source_path}: {exc}"
+            f"Unable to encrypt file {source_path}: {exc}"
         ) from exc
-
-    expected_sha256 = (
-        source_digest.hexdigest()
-    )
-
-    try:
-        destination_size = (
-            destination_path.stat().st_size
-        )
-    except OSError as exc:
-        destination_path.unlink(
-            missing_ok=True
-        )
-
-        raise FileBackupError(
-            "Unable to inspect copied file "
-            f"{destination_path}: {exc}"
-        ) from exc
-
-    if destination_size != source_size:
-        destination_path.unlink(
-            missing_ok=True
-        )
-
-        raise FileBackupError(
-            "File size mismatch after backup: "
-            f"{source_path}"
-        )
-
-    actual_sha256 = _calculate_sha256(
-        destination_path
-    )
-
-    if actual_sha256 != expected_sha256:
-        destination_path.unlink(
-            missing_ok=True
-        )
-
-        raise FileBackupError(
-            "File checksum mismatch after backup: "
-            f"{source_path}"
-        )
-
-    return (
-        expected_sha256,
-        source_size,
-    )
 
 
 def _format_modified_at(
@@ -495,13 +438,14 @@ def backup_files(
                 relative_path.as_posix()
             )
 
+            # Opaque backup names avoid exposing original storage keys.
             destination_path = (
                 files_root
-                / relative_path
+                / f"{uuid4().hex}.enc"
             )
 
             checksum, size_bytes = (
-                _copy_and_verify_file(
+                _encrypt_and_verify_file(
                     source_path,
                     destination_path,
                 )
@@ -525,10 +469,8 @@ def backup_files(
             )
 
             backup_relative_path = (
-                Path(
-                    FILES_DIRECTORY_NAME
-                )
-                / relative_path
+                Path(FILES_DIRECTORY_NAME)
+                / destination_path.name
             ).as_posix()
 
             entries.append(
@@ -559,20 +501,32 @@ def backup_files(
             entries=entries,
         )
 
-        manifest_path = (
-            partial_root
-            / MANIFEST_FILENAME
-        )
-
-        _write_manifest(
-            manifest_path,
-            manifest,
-        )
-
-        manifest_sha256 = (
-            _calculate_sha256(
-                manifest_path
+        # The plaintext manifest exists only in a temporary directory.
+        with tempfile.TemporaryDirectory(
+            prefix="clinic-file-backup-manifest-"
+        ) as temporary_root:
+            plaintext_manifest_path = (
+                Path(temporary_root)
+                / MANIFEST_FILENAME
             )
+
+            _write_manifest(
+                plaintext_manifest_path,
+                manifest,
+            )
+
+            encrypted_manifest_path = (
+                partial_root
+                / ENCRYPTED_MANIFEST_FILENAME
+            )
+
+            encrypt_backup_artifact(
+                plaintext_manifest_path,
+                encrypted_manifest_path,
+            )
+
+        manifest_sha256 = _calculate_sha256(
+            encrypted_manifest_path
         )
 
         partial_root.replace(
@@ -603,7 +557,7 @@ def backup_files(
         ),
         manifest_path=str(
             backup_root
-            / MANIFEST_FILENAME
+            / ENCRYPTED_MANIFEST_FILENAME
         ),
         manifest_sha256=manifest_sha256,
         file_count=len(

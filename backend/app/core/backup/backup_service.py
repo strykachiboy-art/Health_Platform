@@ -58,6 +58,48 @@ def _result_to_mapping(
     )
 
 
+def _file_result_to_mapping(
+    value: Any,
+    *,
+    backup_directory: Path,
+) -> dict[str, Any]:
+    """Return portable file metadata without per-file details.
+
+    Individual entries contain storage keys and original paths; they remain
+    only in the encrypted manifest. The manifest and backup-directory paths
+    are stored relative to the full backup root so the backup can be moved.
+    """
+    result = _result_to_mapping(value)
+    result.pop("files", None)
+
+    root = backup_directory.resolve()
+
+    for field_name in ("backup_path", "manifest_path"):
+        value_path = result.get(field_name)
+
+        # Test doubles and older external result shapes may omit these fields.
+        if value_path is None:
+            continue
+
+        if not isinstance(value_path, str) or not value_path.strip():
+            raise BackupServiceError(
+                f"File backup {field_name} is invalid"
+            )
+
+        candidate = Path(value_path).resolve()
+
+        try:
+            relative_path = candidate.relative_to(root)
+        except ValueError as exc:
+            raise BackupServiceError(
+                f"File backup {field_name} escapes full backup directory"
+            ) from exc
+
+        result[field_name] = relative_path.as_posix()
+
+    return result
+
+
 def _get_database_url(
     database_url: str | None,
 ) -> str:
@@ -140,8 +182,9 @@ def _write_full_backup_metadata(
         "database": _result_to_mapping(
             database_result
         ),
-        "files": _result_to_mapping(
-            file_result
+        "files": _file_result_to_mapping(
+            file_result,
+            backup_directory=backup_directory,
         ),
     }
 
@@ -312,8 +355,9 @@ def create_full_backup(
                 )
             ),
             "files": (
-                _result_to_mapping(
-                    file_result
+                _file_result_to_mapping(
+                    file_result,
+                    backup_directory=backup_directory,
                 )
             ),
             "metadata_path": str(

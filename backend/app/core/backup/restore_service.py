@@ -634,6 +634,13 @@ def _load_manifest(
     backup_root: Path,
     file_metadata: Mapping[str, Any],
 ) -> tuple[Path, dict[str, Any]]:
+    encrypted_value = file_metadata.get("encrypted", False)
+    if not isinstance(encrypted_value, bool):
+        raise RestoreError(
+            "File backup encryption marker must be a boolean"
+        )
+    encrypted = encrypted_value
+
     manifest_path_value = (
         file_metadata.get(
             "manifest_path"
@@ -715,21 +722,47 @@ def _load_manifest(
             "Backup manifest checksum mismatch"
         )
 
-    try:
-        with manifest_path.open(
-            "r",
-            encoding="utf-8",
-        ) as handle:
-            manifest = json.load(
-                handle
-            )
-    except (
-        OSError,
-        json.JSONDecodeError,
-    ) as exc:
-        raise RestoreError(
-            f"Unable to read backup manifest: {exc}"
-        ) from exc
+    if encrypted:
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="clinic-file-manifest-restore-"
+            ) as temporary_root:
+                plaintext_manifest_path = (
+                    Path(temporary_root) / "manifest.json"
+                )
+                decrypt_backup_artifact(
+                    manifest_path,
+                    plaintext_manifest_path,
+                )
+                with plaintext_manifest_path.open(
+                    "r",
+                    encoding="utf-8",
+                ) as handle:
+                    manifest = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RestoreError(
+                "Unable to read decrypted file backup manifest"
+            ) from exc
+        except Exception as exc:
+            raise RestoreError(
+                "Unable to decrypt encrypted file backup manifest"
+            ) from exc
+    else:
+        try:
+            with manifest_path.open(
+                "r",
+                encoding="utf-8",
+            ) as handle:
+                manifest = json.load(
+                    handle
+                )
+        except (
+            OSError,
+            json.JSONDecodeError,
+        ) as exc:
+            raise RestoreError(
+                f"Unable to read backup manifest: {exc}"
+            ) from exc
 
     if not isinstance(
         manifest,
@@ -762,6 +795,46 @@ def _load_manifest(
     )
 
 
+def _resolve_file_backup_root(
+    backup_root: Path,
+    file_metadata: Mapping[str, Any],
+    *,
+    encrypted: bool,
+) -> Path | None:
+    if not encrypted:
+        return None
+
+    value = file_metadata.get("backup_path")
+    if not isinstance(value, str) or not value.strip():
+        raise RestoreError(
+            "Encrypted file backup path is missing"
+        )
+
+    candidate = Path(value)
+    if candidate.is_absolute():
+        file_root = candidate.resolve()
+    else:
+        file_root = _resolve_backup_file(
+            backup_root,
+            value,
+            field_name="File backup path",
+        )
+
+    try:
+        file_root.relative_to(backup_root.resolve())
+    except ValueError as exc:
+        raise RestoreError(
+            "File backup path escapes backup directory"
+        ) from exc
+
+    if not file_root.is_dir():
+        raise RestoreError(
+            "Encrypted file backup directory does not exist"
+        )
+
+    return file_root
+
+
 def _validate_storage_target(
     storage_root: str | Path,
 ) -> Path:
@@ -784,6 +857,8 @@ def _copy_manifest_files_to_stage(
     backup_root: Path,
     manifest: Mapping[str, Any],
     staging_root: Path,
+    file_backup_root: Path | None = None,
+    encrypted: bool = False,
 ) -> tuple[int, int]:
     entries = manifest.get(
         "files"
@@ -817,8 +892,13 @@ def _copy_manifest_files_to_stage(
             field_name="Storage key",
         )
 
+        artifact_root = (
+            file_backup_root
+            if encrypted and file_backup_root is not None
+            else backup_root
+        )
         backup_file = _resolve_backup_file(
-            backup_root,
+            artifact_root,
             entry.get(
                 "backup_path"
             ),
@@ -862,23 +942,20 @@ def _copy_manifest_files_to_stage(
                 "Invalid file checksum in backup manifest"
             )
 
-        actual_size = (
-            backup_file.stat().st_size
-        )
+        # Encrypted artifact size/hash describe plaintext, not ciphertext.
+        # For legacy files retain the original pre-copy integrity checks.
+        if not encrypted:
+            actual_size = backup_file.stat().st_size
+            if actual_size != expected_size:
+                raise RestoreError(
+                    "Backup file size mismatch"
+                )
 
-        if actual_size != expected_size:
-            raise RestoreError(
-                "Backup file size mismatch"
-            )
-
-        actual_sha256 = _calculate_sha256(
-            backup_file
-        )
-
-        if actual_sha256 != expected_sha256:
-            raise RestoreError(
-                "Backup file checksum mismatch"
-            )
+            actual_sha256 = _calculate_sha256(backup_file)
+            if actual_sha256 != expected_sha256:
+                raise RestoreError(
+                    "Backup file checksum mismatch"
+                )
 
         destination = (
             staging_root
@@ -899,15 +976,27 @@ def _copy_manifest_files_to_stage(
             exist_ok=True,
         )
 
-        try:
-            shutil.copy2(
-                backup_file,
-                destination,
-            )
-        except OSError as exc:
-            raise RestoreError(
-                f"Unable to restore file {storage_key}: {exc}"
-            ) from exc
+        if encrypted:
+            try:
+                decrypt_backup_artifact(
+                    backup_file,
+                    destination,
+                )
+            except Exception as exc:
+                destination.unlink(missing_ok=True)
+                raise RestoreError(
+                    f"Unable to decrypt restored file {storage_key}"
+                ) from exc
+        else:
+            try:
+                shutil.copy2(
+                    backup_file,
+                    destination,
+                )
+            except OSError as exc:
+                raise RestoreError(
+                    f"Unable to restore file {storage_key}: {exc}"
+                ) from exc
 
         restored_size = (
             destination.stat().st_size
@@ -1194,6 +1283,18 @@ def restore_full_backup(
         file_metadata,
     )
 
+    encrypted_files = file_metadata.get("encrypted", False)
+    if not isinstance(encrypted_files, bool):
+        raise RestoreError(
+            "File backup encryption marker must be a boolean"
+        )
+
+    file_backup_root = _resolve_file_backup_root(
+        backup_root,
+        file_metadata,
+        encrypted=encrypted_files,
+    )
+
     target_storage = _validate_storage_target(
         storage_root
     )
@@ -1213,6 +1314,8 @@ def restore_full_backup(
                 backup_root=backup_root,
                 manifest=manifest,
                 staging_root=staging_root,
+                file_backup_root=file_backup_root,
+                encrypted=encrypted_files,
             )
         )
 

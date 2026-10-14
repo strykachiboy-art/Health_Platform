@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,9 @@ class FakeFileBackupResult:
     file_count: int = 2
     total_size_bytes: int = 256
     manifest_sha256: str = "files-sha"
+    files: tuple[dict[str, object], ...] = ()
+    backup_path: str | None = None
+    manifest_path: str | None = None
 
 
 def test_create_full_backup_requires_database_and_file_success(
@@ -584,3 +588,96 @@ def test_create_full_backup_creates_unique_backup_directories(
     assert Path(
         second["backup_path"]
     ).exists()
+def test_create_full_backup_does_not_persist_file_entry_details(
+    app,
+    tmp_path,
+):
+    private_filename = "private-patient-photo.png"
+    private_storage_key = f"profile_images/{private_filename}"
+    private_physical_path = "C:/private/clinic-storage/" + private_filename
+
+    def fake_database_backup(**kwargs):
+        output = Path(kwargs["output_path"])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"synthetic-database")
+        return FakeDatabaseBackupResult()
+
+    def fake_file_backup(**kwargs):
+        Path(kwargs["output_path"]).mkdir(parents=True, exist_ok=True)
+        return FakeFileBackupResult(
+            files=(
+                {
+                    "storage_key": private_storage_key,
+                    "physical_path": private_physical_path,
+                    "backup_path": "files/opaque-test-name.enc",
+                    "sha256": "a" * 64,
+                    "size_bytes": 12,
+                    "modified_at": "2026-10-14T00:00:00+00:00",
+                    "clinic_id": 7,
+                    "entity_type": "User",
+                    "entity_id": 42,
+                },
+            )
+        )
+
+    with app.app_context():
+        result = create_full_backup(
+            database_url="postgresql://backup",
+            backup_root=tmp_path,
+            storage_root=tmp_path / "storage",
+            database_backup_callable=fake_database_backup,
+            file_backup_callable=fake_file_backup,
+        )
+
+    metadata_text = Path(result["metadata_path"]).read_text(
+        encoding="utf-8"
+    )
+
+    assert private_filename not in metadata_text
+    assert private_storage_key not in metadata_text
+    assert private_physical_path not in metadata_text
+    assert '"storage_key"' not in metadata_text
+    assert '"physical_path"' not in metadata_text
+
+    # Runtime metadata used by verification must also omit the listing.
+    assert "files" not in result["files"]
+    assert result["files"]["file_count"] == 2
+    assert result["files"]["manifest_sha256"] == "files-sha"
+def test_create_full_backup_stores_file_paths_relative_to_backup_root(
+    app,
+    tmp_path,
+):
+    def fake_database_backup(**kwargs):
+        output = Path(kwargs["output_path"])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"synthetic-database")
+        return FakeDatabaseBackupResult()
+
+    def fake_file_backup(**kwargs):
+        output = Path(kwargs["output_path"])
+        output.mkdir(parents=True, exist_ok=True)
+
+        return FakeFileBackupResult(
+            backup_path=str(output),
+            manifest_path=str(output / "manifest.json.enc"),
+        )
+
+    with app.app_context():
+        result = create_full_backup(
+            database_url="postgresql://backup",
+            backup_root=tmp_path,
+            storage_root=tmp_path / "storage",
+            database_backup_callable=fake_database_backup,
+            file_backup_callable=fake_file_backup,
+        )
+
+    assert result["files"]["backup_path"] == "files"
+    assert result["files"]["manifest_path"] == "files/manifest.json.enc"
+    assert not Path(result["files"]["backup_path"]).is_absolute()
+    assert not Path(result["files"]["manifest_path"]).is_absolute()
+
+    metadata = json.loads(
+        Path(result["metadata_path"]).read_text(encoding="utf-8")
+    )
+    assert metadata["files"]["backup_path"] == "files"
+    assert metadata["files"]["manifest_path"] == "files/manifest.json.enc"

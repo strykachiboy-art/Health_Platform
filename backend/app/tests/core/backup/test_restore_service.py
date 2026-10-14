@@ -3,10 +3,15 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+
+from app.core.backup.backup_service import create_full_backup
+from app.core.backup.file_backup import backup_files
 
 from app.core.backup.backup_encryption import (
     encrypt_backup_artifact,
@@ -1165,3 +1170,187 @@ def test_restore_full_backup_cleans_decrypted_artifact_on_pg_restore_failure(
             ].parent
         ).glob("*")
     )
+def _replace_file_backup_with_encrypted_artifacts(
+    app,
+    tmp_path,
+    backup_root: Path,
+    metadata: dict,
+    file_payload: bytes,
+) -> None:
+    file_output = backup_root / "files"
+    shutil.rmtree(file_output)
+
+    storage_root = tmp_path / "encrypted-source-storage"
+    source = storage_root / "profile_images" / "photo.jpg"
+    _write_file(source, file_payload)
+
+    with app.app_context():
+        result = backup_files(
+            storage_root=storage_root,
+            output_path=file_output,
+        )
+
+    metadata["files"] = {
+        "success": result.success,
+        "backup_path": result.backup_path,
+        "manifest_path": result.manifest_path,
+        "manifest_sha256": result.manifest_sha256,
+        "file_count": result.file_count,
+        "total_size_bytes": result.total_size_bytes,
+        "created_at": result.created_at,
+        "encrypted": result.encrypted,
+    }
+
+    metadata_path = backup_root / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            metadata,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_restore_full_backup_restores_encrypted_files(
+    app,
+    tmp_path,
+    monkeypatch,
+):
+    backup_root, metadata = _build_backup(tmp_path)
+    payload = b"encrypted-clinical-file-content"
+    _replace_file_backup_with_encrypted_artifacts(
+        app,
+        tmp_path,
+        backup_root,
+        metadata,
+        payload,
+    )
+
+    artifact_root = Path(metadata["files"]["backup_path"])
+    manifest_artifact = Path(metadata["files"]["manifest_path"])
+    encrypted_artifacts = list(artifact_root.rglob("*.enc"))
+
+    assert manifest_artifact.is_file()
+    assert encrypted_artifacts
+    assert all(payload not in path.read_bytes() for path in encrypted_artifacts)
+
+    monkeypatch.setattr(
+        "app.core.backup.restore_service.shutil.which",
+        lambda value: "pg_restore",
+    )
+    monkeypatch.setattr(
+        "app.core.backup.restore_service.subprocess.run",
+        lambda *args, **kwargs: Mock(
+            returncode=0,
+            stderr="",
+            stdout="",
+        ),
+    )
+
+    storage_root = tmp_path / "encrypted-restored-storage"
+    with app.app_context():
+        result = restore_full_backup(
+            backup_path=backup_root,
+            database_url=(
+                "postgresql://backup_user:secret-password"
+                "@localhost:5432/clinic_system"
+            ),
+            storage_root=storage_root,
+        )
+
+    assert result.success is True
+    assert result.files.success is True
+    assert result.files.file_count == 1
+    assert (
+        storage_root / "profile_images" / "photo.jpg"
+    ).read_bytes() == payload
+
+    # The staged plaintext copy is moved to the destination; temporary
+    # decryption files should not be left beside the backup artifacts.
+    assert not list(artifact_root.rglob("*.partial"))
+def test_create_verify_and_restore_full_backup_with_portable_encrypted_files(
+    app,
+    tmp_path,
+    monkeypatch,
+):
+    payload = b"synthetic-private-clinical-attachment"
+    source_root = tmp_path / "source-storage"
+    source_file = source_root / "profile_images" / "private-photo.jpg"
+    _write_file(source_file, payload)
+
+    def fake_database_backup(**kwargs):
+        output = Path(kwargs["output_path"])
+        database_payload = b"synthetic-database-dump"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(database_payload)
+
+        return SimpleNamespace(
+            success=True,
+            database_name="clinic_system",
+            database_host="localhost",
+            database_port=5432,
+            backup_path=str(output),
+            backup_size_bytes=len(database_payload),
+            backup_sha256=_sha256(database_payload),
+            format="custom",
+            encrypted=False,
+        )
+
+    with app.app_context():
+        created = create_full_backup(
+            database_url="postgresql://backup_user@localhost/clinic_system",
+            backup_root=tmp_path / "backups",
+            storage_root=source_root,
+            database_backup_callable=fake_database_backup,
+        )
+
+    assert created["success"] is True
+    assert created["files"]["encrypted"] is True
+    assert created["files"]["backup_path"] == "files"
+    assert created["files"]["manifest_path"] == "files/manifest.json.enc"
+
+    backup_root = Path(created["backup_path"])
+    metadata_path = backup_root / "metadata.json"
+    persisted = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    assert persisted["files"]["backup_path"] == "files"
+    assert persisted["files"]["manifest_path"] == "files/manifest.json.enc"
+    assert "files" not in persisted["files"]
+
+    artifacts = [item for item in backup_root.rglob("*") if item.is_file()]
+    combined_bytes = b"".join(item.read_bytes() for item in artifacts)
+
+    assert b"private-photo.jpg" not in combined_bytes
+    assert payload not in combined_bytes
+    assert '"physical_path"' not in metadata_path.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(
+        "app.core.backup.restore_service.shutil.which",
+        lambda value: "pg_restore",
+    )
+    monkeypatch.setattr(
+        "app.core.backup.restore_service.subprocess.run",
+        lambda *args, **kwargs: Mock(
+            returncode=0,
+            stderr="",
+            stdout="",
+        ),
+    )
+
+    restored_storage = tmp_path / "restored-storage"
+    with app.app_context():
+        restored = restore_full_backup(
+            backup_path=backup_root,
+            database_url="postgresql://backup_user@localhost/clinic_system",
+            storage_root=restored_storage,
+        )
+
+    assert restored.success is True
+    assert restored.files.success is True
+    assert restored.files.file_count == 1
+    assert (
+        restored_storage / "profile_images" / "private-photo.jpg"
+    ).read_bytes() == payload
+    assert not list(backup_root.rglob("*.partial"))
