@@ -217,6 +217,26 @@ def _ensure_status(
         )
 
 
+def _validate_existing_appointment_patient_active(appointment):
+    """
+    Require an active patient before advancing a scheduled appointment.
+    Preserve tenant ownership checks for the existing appointment.
+    """
+    patient = get_patient(appointment.patient_id)
+
+    if patient.clinic_id != appointment.clinic_id:
+        raise ConflictError(
+            f"Patient {appointment.patient_id} does not belong "
+            f"to clinic {appointment.clinic_id}"
+        )
+
+    if not patient.is_active:
+        raise ValidationError(
+            f"Patient {appointment.patient_id} is inactive"
+        )
+
+    return patient
+
 def _validate_appointment_participants(
     clinic_id,
     patient_id,
@@ -252,6 +272,11 @@ def _validate_appointment_participants(
         raise ConflictError(
             f"Patient {patient_id} does not belong to "
             f"clinic {clinic_id}"
+        )
+
+    if not patient.is_active:
+        raise ValidationError(
+            f"Patient {patient_id} is inactive"
         )
 
     return clinic, patient, staff
@@ -582,6 +607,10 @@ def reschedule_appointment(
         new_end,
     )
 
+    _validate_existing_appointment_patient_active(
+        appointment
+    )
+
     _ensure_no_schedule_conflict(
         patient_id=appointment.patient_id,
         staff_id=appointment.staff_id,
@@ -656,6 +685,10 @@ def confirm_appointment(
     _ensure_status(
         appointment,
         AppointmentStatus.SCHEDULED,
+    )
+
+    _validate_existing_appointment_patient_active(
+        appointment
     )
 
     old_status = appointment.status.value

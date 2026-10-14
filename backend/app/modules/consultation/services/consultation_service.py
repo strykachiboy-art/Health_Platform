@@ -195,6 +195,11 @@ def _validate_consultation_participants(
             f"to clinic {clinic_id}"
         )
 
+    if not patient.is_active:
+        raise ValidationError(
+            f"Patient {patient_id} is inactive"
+        )
+
     return clinic, patient, staff
 
 

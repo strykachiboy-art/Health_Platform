@@ -1689,22 +1689,36 @@ def test_list_prescriptions_active_only(
     assert result["total"] == 1
 
 
-def test_list_prescriptions_rejects_inactive_patient(
+def test_list_prescriptions_allows_inactive_patient_history(
     prescription_service,
     active_clinic,
     patient,
+    make_authenticated_staff,
+    make_prescription,
 ):
     patient.clinic_id = active_clinic.id
+    patient.is_active = True
+
+    staff, _ = _make_doctor(
+        make_authenticated_staff,
+        active_clinic,
+    )
+    prescription = make_prescription(
+        active_clinic,
+        patient,
+        staff,
+        status=PrescriptionStatus.COMPLETED,
+    )
+
     patient.is_active = False
 
-    with pytest.raises(
-        ValidationError,
-        match="inactive",
-    ):
-        prescription_service.list_prescriptions_for_patient(
-            patient_id=patient.id,
-            clinic_id=active_clinic.id,
-        )
+    result = prescription_service.list_prescriptions_for_patient(
+        patient_id=patient.id,
+        clinic_id=active_clinic.id,
+    )
+
+    ids = {item.id for item in result["items"]}
+    assert prescription.id in ids
 
 
 def test_list_prescriptions_rejects_other_clinic_patient(

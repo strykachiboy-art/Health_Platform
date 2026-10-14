@@ -205,6 +205,7 @@ def _get_drug(
 def _validate_patient_for_clinic(
     patient_id: int,
     clinic_id: int,
+    require_active: bool = True,
 ) -> Patient:
     patient = _get_patient(
         patient_id
@@ -216,7 +217,7 @@ def _validate_patient_for_clinic(
             f"to clinic {clinic_id}"
         )
 
-    if not patient.is_active:
+    if require_active and not patient.is_active:
         raise ValidationError(
             f"Patient {patient_id} is inactive"
         )
@@ -755,6 +756,7 @@ def list_prescriptions_for_patient(
     _validate_patient_for_clinic(
         patient_id=patient_id,
         clinic_id=clinic_id,
+        require_active=False,
     )
 
     filters = [
