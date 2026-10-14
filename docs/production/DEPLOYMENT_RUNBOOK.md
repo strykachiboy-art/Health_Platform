@@ -73,6 +73,8 @@ The approved TLS procedure is documented in:
 
 `docs/security/SECURITY_OPERATIONS.md`
 
+Forwarded client information is trusted only when explicitly enabled through `TRUSTED_PROXY_HOPS`. The default is `0`. Set it to `1` only when a single trusted reverse proxy is the only client path to the backend and that proxy overwrites `X-Forwarded-For` with the connecting client address and sets `X-Forwarded-Proto`. The Phase 6 overlay uses this one-hop setting while removing the backend host-port publication. Do not enable proxy trust in a topology that permits untrusted direct backend access.
+
 Production deployment must verify:
 
 - HTTPS

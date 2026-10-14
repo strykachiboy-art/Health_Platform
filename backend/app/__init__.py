@@ -32,6 +32,9 @@ from app.core.observability.tracing import (
 from app.core.security.http_security import (
     register_security_headers,
 )
+from app.core.security.trusted_proxy import (
+    configure_trusted_proxy,
+)
 
 
 _API_VERSION_PATH_PATTERN = re.compile(
@@ -184,6 +187,8 @@ def create_app(config_name=None):
     register_error_handlers(app)
     register_api_version_boundary(app)
     register_blueprints(app)
+
+    configure_trusted_proxy(app)
 
     return app
 
