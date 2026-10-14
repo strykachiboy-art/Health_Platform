@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from app import extensions
+from app.core.backup.backup_encryption import (
+    validate_backup_encryption_configuration,
+)
 
 
 def _utcnow() -> str:
@@ -55,13 +58,35 @@ def _check_redis() -> dict[str, object]:
     }
 
 
+def _check_backup_encryption() -> dict[str, object]:
+    started_at = time.perf_counter()
+
+    try:
+        validate_backup_encryption_configuration()
+        healthy = True
+    except Exception:
+        # Do not expose key material or detailed configuration failures
+        # through readiness status.
+        healthy = False
+
+    return {
+        "required": True,
+        "healthy": healthy,
+        "latency_ms": (
+            time.perf_counter() - started_at
+        ) * 1000.0,
+    }
+
+
 def collect_readiness() -> dict[str, object]:
     database = _check_database()
     redis = _check_redis()
+    backup_encryption = _check_backup_encryption()
 
     ready = bool(
         database["healthy"]
         and redis["healthy"]
+        and backup_encryption["healthy"]
     )
 
     return {
@@ -69,4 +94,5 @@ def collect_readiness() -> dict[str, object]:
         "ready": ready,
         "database": database,
         "redis": redis,
+        "backup_encryption": backup_encryption,
     }

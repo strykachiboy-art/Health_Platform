@@ -77,6 +77,14 @@ def create_app(config_name=None):
             "CORS_ALLOWED_ORIGINS"
         )
 
+        backup_encryption_key = os.environ.get(
+            "BACKUP_ENCRYPTION_KEY"
+        )
+        backup_encryption_key_version = os.environ.get(
+            "BACKUP_ENCRYPTION_KEY_VERSION",
+            "1",
+        )
+
         if (
             not secret_key
             or not secret_key.strip()
@@ -131,6 +139,14 @@ def create_app(config_name=None):
                 "Production CORS_ALLOWED_ORIGINS is not configured"
             )
 
+        if (
+            not backup_encryption_key
+            or not backup_encryption_key.strip()
+        ):
+            raise RuntimeError(
+                "Production BACKUP_ENCRYPTION_KEY is not configured"
+            )
+
         app.config["SECRET_KEY"] = secret_key
         app.config["JWT_SECRET_KEY"] = jwt_secret_key
         app.config["SQLALCHEMY_DATABASE_URI"] = database_url
@@ -139,6 +155,17 @@ def create_app(config_name=None):
         app.config["CELERY_RESULT_BACKEND"] = redis_url
         app.config["RATELIMIT_STORAGE_URI"] = redis_url
         app.config["CORS_ALLOWED_ORIGINS"] = cors_origins
+        app.config["BACKUP_ENCRYPTION_KEY"] = backup_encryption_key
+        app.config["BACKUP_ENCRYPTION_KEY_VERSION"] = (
+            backup_encryption_key_version
+        )
+
+        with app.app_context():
+            from app.core.backup.backup_encryption import (
+                validate_backup_encryption_configuration,
+            )
+
+            validate_backup_encryption_configuration()
 
     init_extensions(app)
 

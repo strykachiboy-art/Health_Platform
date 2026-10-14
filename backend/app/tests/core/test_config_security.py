@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import importlib
 
 import pytest
@@ -80,4 +81,73 @@ def test_production_rejects_missing_required_secret(
             r"is not configured"
         ),
     ):
+        create_app("production")
+
+def _set_valid_production_environment(monkeypatch):
+    import base64
+
+    integration_key = base64.urlsafe_b64encode(b'i' * 32).decode('ascii')
+    monkeypatch.setenv('INTEGRATION_ENCRYPTION_KEY', integration_key)
+    monkeypatch.setattr(
+        app_config.ProductionConfig,
+        'INTEGRATION_ENCRYPTION_KEY',
+        integration_key,
+    )
+
+    monkeypatch.setenv("SECRET_KEY", "test-production-secret")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-production-jwt-secret")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://clinic:password@localhost:5432/clinic_system",
+    )
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://clinic.example")
+    monkeypatch.setenv(
+        "BACKUP_ENCRYPTION_KEY",
+        base64.urlsafe_b64encode(b"b" * 32).decode("ascii"),
+    )
+    monkeypatch.setenv("BACKUP_ENCRYPTION_KEY_VERSION", "1")
+
+
+@pytest.mark.parametrize(
+    "backup_key, version, expected_message",
+    [
+        (
+            None,
+            "1",
+            "Production BACKUP_ENCRYPTION_KEY is not configured",
+        ),
+        (
+            "ab",
+            "1",
+            "BACKUP_ENCRYPTION_KEY must be valid URL-safe base64",
+        ),
+        (
+            "c2hvcnQ=",
+            "1",
+            "BACKUP_ENCRYPTION_KEY must decode to exactly 32 bytes",
+        ),
+        (
+            "YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmI=",
+            "0",
+            "BACKUP_ENCRYPTION_KEY_VERSION must be between 1 and 65535",
+        ),
+    ],
+)
+def test_production_rejects_invalid_backup_encryption_configuration(
+    monkeypatch,
+    backup_key,
+    version,
+    expected_message,
+):
+    _set_valid_production_environment(monkeypatch)
+
+    if backup_key is None:
+        monkeypatch.delenv("BACKUP_ENCRYPTION_KEY", raising=False)
+    else:
+        monkeypatch.setenv("BACKUP_ENCRYPTION_KEY", backup_key)
+
+    monkeypatch.setenv("BACKUP_ENCRYPTION_KEY_VERSION", version)
+
+    with pytest.raises(RuntimeError, match=expected_message):
         create_app("production")
