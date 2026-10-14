@@ -9,6 +9,7 @@ from sqlalchemy import and_, func, or_, select
 from app.extensions import db
 
 from app.core.auth.user.models.user_model import User
+from app.core.auth.user.services.token_service import revoke_user_tokens
 from app.core.audit.services.audit_service import create_audit_log
 from app.core.enums.audit_enums import AuditAction
 from app.core.enums.role_enums import Role
@@ -580,6 +581,15 @@ def change_staff_status(
     )
 
     staff.status = new_status
+
+    if (
+        staff.user_id is not None
+        and new_status in (
+            StaffStatus.SUSPENDED,
+            StaffStatus.TERMINATED,
+        )
+    ):
+        revoke_user_tokens(staff.user_id)
 
     create_audit_log(
         action=AuditAction.STATUS_CHANGE,

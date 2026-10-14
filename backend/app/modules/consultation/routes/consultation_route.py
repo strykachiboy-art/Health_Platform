@@ -11,7 +11,7 @@ from app.core.enums.consultation_enums import (
 )
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
-from app.core.utils.decorators import role_required
+from app.core.utils.decorators import active_staff_required, role_required
 from app.extensions import db
 
 from app.modules.consultation.schemas.consultation_schema import (
@@ -381,6 +381,7 @@ def _paginated_response(items, pagination, serializer):
 
 @consultation_bp.post("/")
 @role_required(*CONSULTATION_WRITE_ROLES)
+@active_staff_required
 def start():
     raw_payload = request.get_json(silent=True) or {}
     raw_payload.pop("clinic_id", None)
@@ -427,6 +428,7 @@ def start():
 
 @consultation_bp.get("/<int:consultation_id>")
 @role_required(*CONSULTATION_READ_ROLES)
+@active_staff_required
 def get(consultation_id: int):
     clinic_id, error = _get_authenticated_clinic_id()
 
@@ -446,6 +448,7 @@ def get(consultation_id: int):
 
 @consultation_bp.patch("/<int:consultation_id>")
 @role_required(*CONSULTATION_WRITE_ROLES)
+@active_staff_required
 def update(consultation_id: int):
     raw_payload = request.get_json(silent=True) or {}
 
@@ -480,6 +483,7 @@ def update(consultation_id: int):
 
 @consultation_bp.post("/<int:consultation_id>/complete")
 @role_required(*CONSULTATION_WRITE_ROLES)
+@active_staff_required
 def complete(consultation_id: int):
     raw_payload = request.get_json(silent=True) or {}
 
@@ -512,6 +516,7 @@ def complete(consultation_id: int):
 
 @consultation_bp.post("/<int:consultation_id>/cancel")
 @role_required(*CONSULTATION_WRITE_ROLES)
+@active_staff_required
 def cancel(consultation_id: int):
     payload = _payload(
         ConsultationCancelSchema
@@ -541,6 +546,7 @@ def cancel(consultation_id: int):
 
 @consultation_bp.get("/patient/<int:patient_id>")
 @role_required(*CONSULTATION_READ_ROLES)
+@active_staff_required
 def patient_consultations(patient_id: int):
     page, per_page, error = _pagination_params()
 
@@ -574,6 +580,7 @@ def patient_consultations(patient_id: int):
 
 @consultation_bp.get("/my-patients")
 @role_required(*CONSULTATION_READ_ROLES)
+@active_staff_required
 def my_patients():
     user = _get_current_user()
 
@@ -623,6 +630,7 @@ def my_patients():
 
 @consultation_bp.get("/staff/<int:staff_id>")
 @role_required(*CONSULTATION_READ_ROLES)
+@active_staff_required
 def staff_consultations(staff_id: int):
     status = _query_status()
 
@@ -662,6 +670,7 @@ def staff_consultations(staff_id: int):
 
 @consultation_bp.post("/templates")
 @role_required(*CONSULTATION_TEMPLATE_ROLES)
+@active_staff_required
 def create_template():
     payload = _payload(
         ConsultationTemplateCreateSchema
@@ -688,6 +697,7 @@ def create_template():
 
 @consultation_bp.get("/templates")
 @role_required(*CONSULTATION_READ_ROLES)
+@active_staff_required
 def active_templates():
     raw_clinic_id = _parse_optional_clinic_id()
 

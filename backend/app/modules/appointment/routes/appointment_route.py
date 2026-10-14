@@ -11,7 +11,7 @@ from app.extensions import db
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import DomainError, ValidationError
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import active_staff_required, get_current_clinic_id, role_required
 
 from app.modules.appointment.schemas.appointment_schema import (
     AppointmentCancelSchema,
@@ -260,6 +260,7 @@ def _serialize_page(pagination):
 
 @appointment_bp.post("/")
 @role_required(*APPOINTMENT_ROLES)
+@active_staff_required
 def create():
     payload = _payload(
         AppointmentCreateSchema
@@ -337,6 +338,7 @@ def create():
     "/<int:appointment_id>/reschedule"
 )
 @role_required(*APPOINTMENT_ROLES)
+@active_staff_required
 def reschedule(
     appointment_id: int,
 ):
@@ -384,6 +386,7 @@ def reschedule(
     "/<int:appointment_id>/confirm"
 )
 @role_required(*APPOINTMENT_ROLES)
+@active_staff_required
 def confirm(
     appointment_id: int,
 ):
@@ -422,6 +425,7 @@ def confirm(
     "/<int:appointment_id>/cancel"
 )
 @role_required(*APPOINTMENT_ROLES)
+@active_staff_required
 def cancel(
     appointment_id: int,
 ):
@@ -468,6 +472,7 @@ def cancel(
     "/<int:appointment_id>/complete"
 )
 @role_required(*APPOINTMENT_ROLES)
+@active_staff_required
 def complete(
     appointment_id: int,
 ):
@@ -514,6 +519,7 @@ def complete(
     "/<int:appointment_id>/no-show"
 )
 @role_required(*APPOINTMENT_ROLES)
+@active_staff_required
 def no_show(
     appointment_id: int,
 ):
@@ -552,6 +558,7 @@ def no_show(
     "/patient/<int:patient_id>"
 )
 @role_required(*APPOINTMENT_ROLES)
+@active_staff_required
 def patient_appointments(
     patient_id: int,
 ):
@@ -594,6 +601,7 @@ def patient_appointments(
     "/staff/<int:staff_id>"
 )
 @role_required(*APPOINTMENT_ROLES)
+@active_staff_required
 def staff_appointments(
     staff_id: int,
 ):

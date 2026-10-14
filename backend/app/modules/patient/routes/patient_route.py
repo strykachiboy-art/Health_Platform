@@ -13,7 +13,7 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import active_staff_required, get_current_clinic_id, role_required
 
 from app.modules.patient.models.patient_model import Patient
 from app.modules.staff.models.staff_model import Staff
@@ -314,6 +314,7 @@ def _serialize_vitals_page(page):
     Role.ADMIN,
     Role.RECEPTIONIST,
 )
+@active_staff_required
 def create_patient_route():
     try:
         data = _validate_payload(
@@ -355,6 +356,7 @@ def create_patient_route():
     Role.PARAMEDIC,
     Role.EMT,
 )
+@active_staff_required
 def list_patients_route():
     try:
         query = _validate_query(
@@ -396,6 +398,7 @@ def list_patients_route():
     Role.PARAMEDIC,
     Role.EMT,
 )
+@active_staff_required
 def get_patient_route(
     patient_id: int,
 ):
@@ -424,6 +427,7 @@ def get_patient_route(
     Role.ADMIN,
     Role.RECEPTIONIST,
 )
+@active_staff_required
 def update_patient_route(
     patient_id: int,
 ):
@@ -465,6 +469,7 @@ def update_patient_route(
     Role.ADMIN,
     Role.RECEPTIONIST,
 )
+@active_staff_required
 def set_patient_status_route(
     patient_id: int,
 ):
@@ -506,6 +511,7 @@ def set_patient_status_route(
     Role.NURSE,
     Role.RECEPTIONIST,
 )
+@active_staff_required
 def list_family_members_route(
     patient_id: int,
 ):
@@ -543,6 +549,7 @@ def list_family_members_route(
     Role.ADMIN,
     Role.RECEPTIONIST,
 )
+@active_staff_required
 def add_family_member_route(
     patient_id: int,
 ):
@@ -586,6 +593,7 @@ def add_family_member_route(
     Role.ADMIN,
     Role.RECEPTIONIST,
 )
+@active_staff_required
 def update_family_member_route(
     patient_id: int,
     family_member_id: int,
@@ -636,6 +644,7 @@ def update_family_member_route(
     Role.ADMIN,
     Role.RECEPTIONIST,
 )
+@active_staff_required
 def remove_family_member_route(
     patient_id: int,
     family_member_id: int,
@@ -677,6 +686,7 @@ def remove_family_member_route(
     Role.RECEPTIONIST,
     Role.ACCOUNTANT,
 )
+@active_staff_required
 def list_insurances_route(
     patient_id: int,
 ):
@@ -714,6 +724,7 @@ def list_insurances_route(
     Role.ADMIN,
     Role.RECEPTIONIST,
 )
+@active_staff_required
 def add_insurance_route(
     patient_id: int,
 ):
@@ -757,6 +768,7 @@ def add_insurance_route(
     Role.ADMIN,
     Role.RECEPTIONIST,
 )
+@active_staff_required
 def update_insurance_route(
     patient_id: int,
     insurance_id: int,
@@ -806,6 +818,7 @@ def update_insurance_route(
     Role.DOCTOR,
     Role.NURSE,
 )
+@active_staff_required
 def get_vitals_history_route(
     patient_id: int,
 ):
@@ -844,6 +857,7 @@ def get_vitals_history_route(
     Role.DOCTOR,
     Role.NURSE,
 )
+@active_staff_required
 def get_latest_vitals_route(
     patient_id: int,
 ):
@@ -881,6 +895,7 @@ def get_latest_vitals_route(
     Role.DOCTOR,
     Role.NURSE,
 )
+@active_staff_required
 def record_vitals_route(
     patient_id: int,
 ):
