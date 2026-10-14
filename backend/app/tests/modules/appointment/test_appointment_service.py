@@ -1011,7 +1011,7 @@ def test_create_appointment_success(
     patient = type(
         "Patient",
         (),
-        {"clinic_id": 10},
+        {"clinic_id": 10, "is_active": True},
     )()
 
     staff = type(
@@ -1125,6 +1125,65 @@ def test_create_appointment_success(
     assert result.notes == "Initial visit"
 
 
+def test_create_appointment_rejects_inactive_patient(
+    app,
+    monkeypatch,
+):
+    clinic = type("Clinic", (), {"id": 10})()
+    patient = type(
+        "Patient",
+        (),
+        {"clinic_id": 10, "is_active": False},
+    )()
+    staff = type("Staff", (), {"id": 30})()
+
+    monkeypatch.setattr(
+        appointment_service, "_lock_clinic", lambda clinic_id: clinic
+    )
+    monkeypatch.setattr(
+        appointment_service, "ensure_clinic_active", lambda clinic_id: None
+    )
+    monkeypatch.setattr(
+        appointment_service, "get_clinic", lambda clinic_id: clinic
+    )
+    monkeypatch.setattr(
+        appointment_service, "get_patient", lambda patient_id: patient
+    )
+    monkeypatch.setattr(
+        appointment_service,
+        "get_staff",
+        lambda staff_id, clinic_id: staff,
+    )
+    monkeypatch.setattr(
+        appointment_service, "_ensure_no_schedule_conflict",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        appointment_service, "create_audit_log", lambda **kwargs: None
+    )
+
+    created = {}
+    session = appointment_service.db.session
+
+    def fake_add(appointment):
+        created["appointment"] = appointment
+
+    def fake_flush():
+        created["appointment"].id = 101
+
+    monkeypatch.setattr(session, "add", fake_add)
+    monkeypatch.setattr(session, "flush", fake_flush)
+
+    with pytest.raises(ValidationError, match="inactive"):
+        appointment_service.create_appointment(
+            clinic_id=10,
+            patient_id=20,
+            staff_id=30,
+            scheduled_start=datetime(2026, 9, 8, 10, 0),
+            scheduled_end=datetime(2026, 9, 8, 10, 30),
+        )
+
+
 def test_create_appointment_accepts_string_appointment_type(
     app,
     monkeypatch,
@@ -1138,7 +1197,7 @@ def test_create_appointment_accepts_string_appointment_type(
     patient = type(
         "Patient",
         (),
-        {"clinic_id": 10},
+        {"clinic_id": 10, "is_active": True},
     )()
 
     staff = type(
@@ -1373,7 +1432,7 @@ def test_create_appointment_rejects_patient_schedule_conflict(
     patient = type(
         "Patient",
         (),
-        {"clinic_id": 10},
+        {"clinic_id": 10, "is_active": True},
     )()
 
     staff = type(
@@ -1458,6 +1517,15 @@ def test_reschedule_appointment_success(
         "_get_appointment",
         lambda **kwargs: appointment,
     )
+    monkeypatch.setattr(
+        appointment_service,
+        "get_patient",
+        lambda patient_id: type(
+            "Patient",
+            (),
+            {"id": 20, "clinic_id": 10, "is_active": True},
+        )(),
+    )
 
     monkeypatch.setattr(
         appointment_service,
@@ -1506,6 +1574,41 @@ def test_reschedule_appointment_success(
     assert result.scheduled_start == new_start
     assert result.scheduled_end == new_end
     assert result.reminder_sent is False
+
+
+def test_reschedule_appointment_rejects_inactive_patient(
+    app,
+    monkeypatch,
+):
+    appointment = make_appointment(
+        appointment_id=5,
+        status=AppointmentStatus.SCHEDULED,
+    )
+    patient = type(
+        "Patient",
+        (),
+        {"id": 20, "clinic_id": 10, "is_active": False},
+    )()
+
+    monkeypatch.setattr(
+        appointment_service,
+        "_get_appointment",
+        lambda **kwargs: appointment,
+    )
+    monkeypatch.setattr(
+        appointment_service, "ensure_clinic_active", lambda clinic_id: None
+    )
+    monkeypatch.setattr(
+        appointment_service, "get_patient", lambda patient_id: patient
+    )
+
+    with pytest.raises(ValidationError, match="inactive"):
+        appointment_service.reschedule_appointment(
+            appointment_id=5,
+            new_start=datetime(2026, 9, 9, 11, 0),
+            new_end=datetime(2026, 9, 9, 11, 30),
+            clinic_id=10,
+        )
 
 
 def test_reschedule_appointment_rejects_invalid_status(
@@ -1617,6 +1720,15 @@ def test_confirm_appointment_success(
         "_get_appointment",
         lambda **kwargs: appointment,
     )
+    monkeypatch.setattr(
+        appointment_service,
+        "get_patient",
+        lambda patient_id: type(
+            "Patient",
+            (),
+            {"id": 20, "clinic_id": 10, "is_active": True},
+        )(),
+    )
 
     monkeypatch.setattr(
         appointment_service,
@@ -1637,6 +1749,39 @@ def test_confirm_appointment_success(
 
     assert result is appointment
     assert result.status == AppointmentStatus.CONFIRMED
+
+
+def test_confirm_appointment_rejects_inactive_patient(
+    app,
+    monkeypatch,
+):
+    appointment = make_appointment(
+        appointment_id=6,
+        status=AppointmentStatus.SCHEDULED,
+    )
+    patient = type(
+        "Patient",
+        (),
+        {"id": 20, "clinic_id": 10, "is_active": False},
+    )()
+
+    monkeypatch.setattr(
+        appointment_service,
+        "_get_appointment",
+        lambda **kwargs: appointment,
+    )
+    monkeypatch.setattr(
+        appointment_service, "ensure_clinic_active", lambda clinic_id: None
+    )
+    monkeypatch.setattr(
+        appointment_service, "get_patient", lambda patient_id: patient
+    )
+
+    with pytest.raises(ValidationError, match="inactive"):
+        appointment_service.confirm_appointment(
+            appointment_id=6,
+            clinic_id=10,
+        )
 
 
 def test_confirm_appointment_rejects_non_scheduled_status(
@@ -1980,7 +2125,7 @@ def test_get_appointments_for_patient_success(
     patient = type(
         "Patient",
         (),
-        {"clinic_id": 10},
+        {"clinic_id": 10, "is_active": False},
     )()
 
     appointments = [
@@ -2048,7 +2193,7 @@ def test_get_appointments_for_patient_supports_pagination(
     patient = type(
         "Patient",
         (),
-        {"clinic_id": 10},
+        {"clinic_id": 10, "is_active": True},
     )()
 
     pagination = make_pagination(
@@ -2139,7 +2284,7 @@ def test_get_appointments_for_patient_rejects_invalid_pagination(
     patient = type(
         "Patient",
         (),
-        {"clinic_id": 10},
+        {"clinic_id": 10, "is_active": True},
     )()
 
     monkeypatch.setattr(
@@ -2639,7 +2784,7 @@ def test_create_appointment_idempotency_binds_created_appointment(
     patient = type(
         "Patient",
         (),
-        {"clinic_id": 10},
+        {"clinic_id": 10, "is_active": True},
     )()
 
     staff = type(

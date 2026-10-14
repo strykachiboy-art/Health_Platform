@@ -699,6 +699,22 @@ class TestStartConsultation:
         assert result.started_at is not None
         no_audit.assert_called_once()
 
+    def test_inactive_patient_cannot_start_consultation(
+        self,
+        clinic,
+        patient,
+        staff,
+    ):
+        patient.is_active = False
+
+        with pytest.raises(ValidationError, match="inactive"):
+            consultation_service.start_consultation(
+                clinic_id=clinic.id,
+                patient_id=patient.id,
+                staff_id=staff.id,
+            )
+
+
     def test_starts_with_requested_consultation_type(
         self,
         clinic,

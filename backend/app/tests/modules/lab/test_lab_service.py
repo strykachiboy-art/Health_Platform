@@ -54,10 +54,11 @@ def staff_obj(
     )
 
 
-def patient_obj(*, id=1, clinic_id=1):
+def patient_obj(*, id=1, clinic_id=1, is_active=True):
     return SimpleNamespace(
         id=id,
         clinic_id=clinic_id,
+        is_active=is_active,
     )
 
 
@@ -1659,6 +1660,7 @@ def test_list_orders_for_patient_returns_pagination(
     patient = patient_obj(
         id=7,
         clinic_id=2,
+        is_active=False,
     )
 
     order = order_obj(
@@ -2010,6 +2012,35 @@ def test_create_lab_order_rejects_foreign_clinic_test(
         ValidationError,
         match="do not belong",
     ):
+        lab_service.create_lab_order(
+            clinic_id=1,
+            patient_id=1,
+            ordered_by_id=1,
+            test_ids=[9],
+        )
+
+
+def test_create_lab_order_rejects_inactive_patient(
+    lab_service,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        lab_service,
+        "ensure_clinic_active",
+        Mock(),
+    )
+    monkeypatch.setattr(
+        lab_service,
+        "_get_patient",
+        Mock(return_value=patient_obj(is_active=False)),
+    )
+    monkeypatch.setattr(
+        lab_service,
+        "_get_staff",
+        Mock(return_value=staff_obj()),
+    )
+
+    with pytest.raises(ValidationError, match="inactive"):
         lab_service.create_lab_order(
             clinic_id=1,
             patient_id=1,

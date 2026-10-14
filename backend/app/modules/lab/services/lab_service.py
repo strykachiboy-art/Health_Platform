@@ -276,6 +276,11 @@ def _validate_patient_clinic(
             f"to clinic {clinic_id}"
         )
 
+    if not patient.is_active:
+        raise ValidationError(
+            f"Patient {patient.id} is inactive"
+        )
+
 
 def _validate_staff_clinic(
     staff: Staff,
