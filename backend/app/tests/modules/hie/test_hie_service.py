@@ -2648,6 +2648,11 @@ def test_update_hie_integration_success(
         "_get_integration",
         Mock(return_value=integration),
     )
+    monkeypatch.setattr(
+        hie_service,
+        "is_provider_registered",
+        Mock(return_value=True),
+    )
 
     result = hie_service.update_hie_integration(
         clinic_id=9,
@@ -2667,6 +2672,77 @@ def test_update_hie_integration_success(
     assert result.facility_id == "FAC-NEW"
 
 
+def test_update_hie_integration_rejects_activation_without_registered_provider(
+    monkeypatch,
+    no_transaction,
+):
+    integration = make_integration(
+        integration_id=21,
+        clinic_id=9,
+        provider="future-provider",
+        status=HIEIntegrationStatus.PENDING,
+    )
+
+    monkeypatch.setattr(
+        hie_service,
+        "_get_integration",
+        Mock(return_value=integration),
+    )
+    monkeypatch.setattr(
+        hie_service,
+        "is_provider_registered",
+        Mock(return_value=False),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="HIE provider implementation is not registered",
+    ):
+        hie_service.update_hie_integration(
+            clinic_id=9,
+            integration_id=21,
+            status=HIEIntegrationStatus.ACTIVE,
+        )
+
+    assert integration.status is HIEIntegrationStatus.PENDING
+
+
+def test_update_hie_integration_rejects_unregistered_provider_change_when_active(
+    monkeypatch,
+    no_transaction,
+):
+    integration = make_integration(
+        integration_id=22,
+        clinic_id=9,
+        provider="provider-a",
+        status=HIEIntegrationStatus.ACTIVE,
+    )
+
+    monkeypatch.setattr(
+        hie_service,
+        "_get_integration",
+        Mock(return_value=integration),
+    )
+    monkeypatch.setattr(
+        hie_service,
+        "is_provider_registered",
+        Mock(return_value=False),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="HIE provider implementation is not registered",
+    ):
+        hie_service.update_hie_integration(
+            clinic_id=9,
+            integration_id=22,
+            provider="provider-b",
+        )
+
+    assert integration.provider == "provider-a"
+    assert integration.status is HIEIntegrationStatus.ACTIVE
+
+
 def test_update_hie_integration_accepts_future_provider_name(
     monkeypatch,
     no_transaction,
@@ -2675,6 +2751,7 @@ def test_update_hie_integration_accepts_future_provider_name(
         integration_id=20,
         clinic_id=9,
         provider="provider-a",
+        status=HIEIntegrationStatus.PENDING,
     )
 
     monkeypatch.setattr(
