@@ -1,15 +1,62 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
+
+from app.core.backup.backup_encryption import decrypt_backup_artifact
 
 from app.core.backup.file_backup import (
     FileBackupError,
     backup_files,
 )
+
+
+@pytest.fixture(autouse=True)
+def _backup_encryption_context(app):
+    app.config["BACKUP_ENCRYPTION_KEY"] = (
+        base64.urlsafe_b64encode(b"b" * 32).decode("ascii")
+    )
+    app.config["BACKUP_ENCRYPTION_KEY_VERSION"] = "1"
+    app.config["INTEGRATION_ENCRYPTION_KEY"] = (
+        base64.urlsafe_b64encode(b"i" * 32).decode("ascii")
+    )
+    with app.app_context():
+        yield
+
+
+def _read_manifest(output: Path, tmp_path: Path) -> dict:
+    destination = tmp_path / f"manifest-{uuid4().hex}.json"
+    try:
+        decrypt_backup_artifact(
+            output / "manifest.json.enc",
+            destination,
+        )
+        return json.loads(destination.read_text(encoding="utf-8"))
+    finally:
+        destination.unlink(missing_ok=True)
+
+
+def _read_backup_file(
+    output: Path,
+    entry,
+    tmp_path: Path,
+    *,
+    index: int = 0,
+) -> bytes:
+    destination = tmp_path / f"restored-{index}-{uuid4().hex}.bin"
+    try:
+        decrypt_backup_artifact(
+            output / Path(entry.backup_path),
+            destination,
+        )
+        return destination.read_bytes()
+    finally:
+        destination.unlink(missing_ok=True)
 
 
 def test_backup_files_handles_empty_storage(
@@ -36,17 +83,10 @@ def test_backup_files_handles_empty_storage(
     assert output.exists()
     assert (
         output
-        / "manifest.json"
+        / "manifest.json.enc"
     ).exists()
 
-    manifest = json.loads(
-        (
-            output
-            / "manifest.json"
-        ).read_text(
-            encoding="utf-8"
-        )
-    )
+    manifest = _read_manifest(output, tmp_path)
 
     assert manifest["version"] == 1
     assert manifest["file_count"] == 0
@@ -114,19 +154,19 @@ def test_backup_files_copies_single_file_and_records_checksum(
     assert entry.size_bytes == (
         len(payload)
     )
-    assert entry.backup_path == (
-        "files/profile_images/patient-1/image.jpg"
-    )
+    assert entry.backup_path.startswith("files/")
+    assert entry.backup_path.endswith(".enc")
+    assert "profile_images" not in entry.backup_path
 
-    copied = (
-        output
-        / "files"
-        / "profile_images"
-        / "patient-1"
-        / "image.jpg"
-    )
+    copied = output / Path(entry.backup_path)
+    ciphertext = copied.read_bytes()
 
-    assert copied.read_bytes() == payload
+    assert payload not in ciphertext
+    assert _read_backup_file(
+        output,
+        entry,
+        tmp_path,
+    ) == payload
 
 
 def test_backup_files_preserves_multiple_storage_keys_and_order(
@@ -177,16 +217,15 @@ def test_backup_files_preserves_multiple_storage_keys_and_order(
         files
     )
 
-    for storage_key, payload in files.items():
-        copied = (
-            output
-            / "files"
-            / Path(storage_key)
-        )
-
-        assert copied.read_bytes() == (
-            payload
-        )
+    for index, entry in enumerate(result.files):
+        assert _read_backup_file(
+            output,
+            entry,
+            tmp_path,
+            index=index,
+        ) == files[entry.storage_key]
+        assert entry.backup_path.endswith(".enc")
+        assert entry.storage_key not in entry.backup_path
 
 
 def test_backup_files_generates_machine_readable_manifest(
@@ -226,16 +265,10 @@ def test_backup_files_generates_machine_readable_manifest(
         },
     )
 
-    manifest_path = (
-        output
-        / "manifest.json"
-    )
+    manifest_path = output / "manifest.json.enc"
+    manifest = _read_manifest(output, tmp_path)
 
-    manifest = json.loads(
-        manifest_path.read_text(
-            encoding="utf-8"
-        )
-    )
+    assert b"profile_images/photo.png" not in manifest_path.read_bytes()
 
     assert manifest["version"] == 1
     assert manifest["file_count"] == 1
@@ -309,7 +342,7 @@ def test_backup_files_rejects_existing_output(
         )
 
 
-def test_backup_files_cleans_partial_output_on_copy_failure(
+def test_backup_files_cleans_partial_output_on_encryption_failure(
     tmp_path,
     monkeypatch,
 ):
@@ -339,23 +372,23 @@ def test_backup_files_cleans_partial_output_on_copy_failure(
 
     from app.core.backup import file_backup
 
-    def fail_copy(
+    def fail_encryption(
         source_path,
         destination_path,
     ):
         raise FileBackupError(
-            "synthetic copy failure"
+            "synthetic encryption failure"
         )
 
     monkeypatch.setattr(
         file_backup,
-        "_copy_and_verify_file",
-        fail_copy,
+        "_encrypt_and_verify_file",
+        fail_encryption,
     )
 
     with pytest.raises(
         FileBackupError,
-        match="synthetic copy failure",
+        match="synthetic encryption failure",
     ):
         backup_files(
             storage_root=storage,
@@ -399,10 +432,12 @@ def test_backup_files_detects_checksum_mismatch(
 
     from app.core.backup import file_backup
 
+    checksums = iter(["a" * 64, "b" * 64])
+
     monkeypatch.setattr(
         file_backup,
         "_calculate_sha256",
-        lambda path: "corrupted-checksum",
+        lambda path: next(checksums),
     )
 
     with pytest.raises(

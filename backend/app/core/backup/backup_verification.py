@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
+
+from app.core.backup.backup_encryption import decrypt_backup_artifact
 
 
 HASH_CHUNK_SIZE = 1024 * 1024
@@ -500,6 +503,48 @@ def verify_file_backup(
             "File backup metadata must be an object"
         )
 
+    encrypted_value = file_metadata.get("encrypted", False)
+    if not isinstance(encrypted_value, bool):
+        raise BackupVerificationError(
+            "File backup encryption marker must be a boolean"
+        )
+    encrypted = encrypted_value
+
+    file_backup_root = root
+    if encrypted:
+        backup_path_value = file_metadata.get("backup_path")
+        if (
+            not isinstance(backup_path_value, str)
+            or not backup_path_value.strip()
+        ):
+            raise BackupVerificationError(
+                "Encrypted file backup path is missing"
+            )
+
+        candidate = Path(backup_path_value)
+        if candidate.is_absolute():
+            file_backup_root = candidate.resolve()
+        else:
+            file_backup_root = (
+                root
+                / _validate_safe_relative_path(
+                    backup_path_value,
+                    field_name="File backup path",
+                )
+            ).resolve()
+
+        try:
+            file_backup_root.relative_to(root)
+        except ValueError as exc:
+            raise BackupVerificationError(
+                "File backup path escapes backup directory"
+            ) from exc
+
+        if not file_backup_root.is_dir():
+            raise BackupVerificationError(
+                "Encrypted file backup directory does not exist"
+            )
+
     manifest_path_value = file_metadata.get(
         "manifest_path"
     )
@@ -568,10 +613,33 @@ def verify_file_backup(
             "Backup manifest checksum mismatch"
         )
 
-    manifest = _read_json_object(
-        manifest_path,
-        description="Backup manifest",
-    )
+    if encrypted:
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="clinic-file-manifest-verify-"
+            ) as temporary_root:
+                plaintext_manifest_path = (
+                    Path(temporary_root) / "manifest.json"
+                )
+                decrypt_backup_artifact(
+                    manifest_path,
+                    plaintext_manifest_path,
+                )
+                manifest = _read_json_object(
+                    plaintext_manifest_path,
+                    description="Decrypted backup manifest",
+                )
+        except BackupVerificationError:
+            raise
+        except Exception as exc:
+            raise BackupVerificationError(
+                "Unable to decrypt encrypted file manifest"
+            ) from exc
+    else:
+        manifest = _read_json_object(
+            manifest_path,
+            description="Backup manifest",
+        )
 
     (
         file_count,
@@ -615,7 +683,7 @@ def verify_file_backup(
 
         backup_file = (
             _resolve_relative_backup_file(
-                root,
+                file_backup_root,
                 backup_path_value,
                 field_name=(
                     "Manifest backup path"
@@ -648,28 +716,48 @@ def verify_file_backup(
             ),
         )
 
-        try:
-            actual_size = (
-                backup_file.stat().st_size
+        if encrypted:
+            try:
+                with tempfile.TemporaryDirectory(
+                    prefix="clinic-file-artifact-verify-"
+                ) as temporary_root:
+                    plaintext_path = (
+                        Path(temporary_root) / "artifact"
+                    )
+                    decrypt_backup_artifact(
+                        backup_file,
+                        plaintext_path,
+                    )
+                    actual_size = plaintext_path.stat().st_size
+                    actual_sha256 = _calculate_sha256(
+                        plaintext_path
+                    )
+            except BackupVerificationError:
+                raise
+            except Exception as exc:
+                raise BackupVerificationError(
+                    "Unable to decrypt encrypted file artifact"
+                ) from exc
+        else:
+            try:
+                actual_size = (
+                    backup_file.stat().st_size
+                )
+            except OSError as exc:
+                raise BackupVerificationError(
+                    "Unable to inspect backed-up file"
+                ) from exc
+
+            actual_sha256 = _calculate_sha256(
+                backup_file
             )
-        except OSError as exc:
-            raise BackupVerificationError(
-                "Unable to inspect backed-up file"
-            ) from exc
 
         if actual_size != expected_size:
             raise BackupVerificationError(
                 "Backed-up file size mismatch"
             )
 
-        actual_sha256 = _calculate_sha256(
-            backup_file
-        )
-
-        if (
-            actual_sha256
-            != expected_sha256
-        ):
+        if actual_sha256 != expected_sha256:
             raise BackupVerificationError(
                 "Backed-up file checksum mismatch"
             )

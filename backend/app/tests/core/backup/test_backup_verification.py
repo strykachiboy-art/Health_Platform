@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
+from app.core.backup.file_backup import backup_files
 from app.core.backup.backup_verification import (
     BackupVerificationError,
     verify_database_backup,
@@ -974,4 +976,105 @@ def test_verify_full_backup_rejects_missing_backup_directory(
             ),
             database_metadata={},
             file_metadata={},
+        )
+def _build_encrypted_file_backup(app, tmp_path):
+    app.config["BACKUP_ENCRYPTION_KEY"] = (
+        base64.urlsafe_b64encode(b"b" * 32).decode("ascii")
+    )
+    app.config["BACKUP_ENCRYPTION_KEY_VERSION"] = "1"
+    app.config["INTEGRATION_ENCRYPTION_KEY"] = (
+        base64.urlsafe_b64encode(b"i" * 32).decode("ascii")
+    )
+
+    storage = tmp_path / "source-storage"
+    source = storage / "profile_images" / "private-photo.png"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"synthetic-private-clinical-file-payload")
+    backup_root = tmp_path / "encrypted-full-backup"
+    output = backup_root / "files"
+
+    with app.app_context():
+        result = backup_files(
+            storage_root=storage,
+            output_path=output,
+        )
+
+    metadata = {
+        "success": result.success,
+        "backup_path": result.backup_path,
+        "manifest_path": result.manifest_path,
+        "manifest_sha256": result.manifest_sha256,
+        "file_count": result.file_count,
+        "total_size_bytes": result.total_size_bytes,
+        "encrypted": result.encrypted,
+    }
+    return backup_root, metadata, result
+
+
+def test_verify_file_backup_accepts_encrypted_artifacts(
+    app,
+    tmp_path,
+):
+    output, metadata, backup = _build_encrypted_file_backup(
+        app,
+        tmp_path,
+    )
+
+    with app.app_context():
+        result = verify_file_backup(
+            backup_root=output,
+            file_metadata=metadata,
+        )
+
+    assert result.valid is True
+    assert result.file_count == 1
+    assert result.total_size_bytes == len(
+        b"synthetic-private-clinical-file-payload"
+    )
+    assert result.manifest_sha256 == metadata["manifest_sha256"]
+    assert backup.encrypted is True
+
+
+def test_verify_file_backup_rejects_tampered_encrypted_artifact(
+    app,
+    tmp_path,
+):
+    output, metadata, backup = _build_encrypted_file_backup(
+        app,
+        tmp_path,
+    )
+
+    artifact = (
+        Path(backup.backup_path)
+        / Path(backup.files[0].backup_path)
+    )
+    corrupted = bytearray(artifact.read_bytes())
+    corrupted[-1] ^= 1
+    artifact.write_bytes(corrupted)
+
+    with app.app_context():
+        with pytest.raises(
+            BackupVerificationError,
+            match="Unable to decrypt encrypted file artifact",
+        ):
+            verify_file_backup(
+                backup_root=output,
+                file_metadata=metadata,
+            )
+
+
+def test_verify_file_backup_rejects_non_boolean_encryption_marker(
+    tmp_path,
+):
+    with pytest.raises(
+        BackupVerificationError,
+        match="encryption marker must be a boolean",
+    ):
+        verify_file_backup(
+            backup_root=tmp_path,
+            file_metadata={
+                "manifest_path": "files/manifest.json",
+                "manifest_sha256": "a" * 64,
+                "encrypted": "true",
+            },
         )
