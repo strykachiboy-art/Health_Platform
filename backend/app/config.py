@@ -148,6 +148,8 @@ class Config:
 
     SECURITY_HSTS_ENABLED = False
 
+    TRUSTED_PROXY_HOPS = 0
+
     # ------------------------------------------------------------------
     # Authentication Abuse Protection
     # ------------------------------------------------------------------
@@ -248,6 +250,10 @@ class ProductionConfig(Config):
     SECURITY_HEADERS_ENABLED = True
 
     SECURITY_HSTS_ENABLED = True
+
+    TRUSTED_PROXY_HOPS = os.environ.get(
+        "TRUSTED_PROXY_HOPS", "0"
+    )
 
     DEBUG = False
 
