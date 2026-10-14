@@ -6,7 +6,14 @@ from flask_jwt_extended import get_jwt_identity
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import (
+    emergency_aware_role_required,
+    get_current_clinic_id,
+    role_required,
+)
+from app.core.emergency_access.services.emergency_access_service import (
+    assert_emergency_access,
+)
 from app.extensions import db
 from app.modules.prescription.schemas.prescription_schema import (
     DrugInteractionCheckSchema,
@@ -298,7 +305,7 @@ def create_prescription_route():
 @prescription_bp.get(
     "/<int:prescription_id>"
 )
-@role_required(
+@emergency_aware_role_required(
     *PRESCRIPTION_VIEW_ROLES
 )
 def get_prescription_route(
@@ -315,6 +322,39 @@ def get_prescription_route(
         clinic_id=clinic_id,
     )
 
+    emergency_access_header = request.headers.get(
+        "X-Emergency-Access-ID"
+    )
+    if emergency_access_header is not None:
+        try:
+            emergency_access_id = int(
+                emergency_access_header
+            )
+        except (TypeError, ValueError):
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        if emergency_access_id <= 0:
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        if not assert_emergency_access(
+            actor_id=_get_current_user().id,
+            patient_id=prescription.patient_id,
+            resource_type="prescription",
+            resource_id=prescription.id,
+            action="read",
+            emergency_access_id=emergency_access_id,
+        ):
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
     return jsonify(
         {
             "success": True,
@@ -328,7 +368,7 @@ def get_prescription_route(
 @prescription_bp.get(
     "/patients/<int:patient_id>"
 )
-@role_required(
+@emergency_aware_role_required(
     *PRESCRIPTION_VIEW_ROLES
 )
 def list_patient_prescriptions_route(
@@ -339,6 +379,37 @@ def list_patient_prescriptions_route(
     query = PrescriptionListQuerySchema.model_validate(
         request.args.to_dict()
     )
+
+    emergency_access_header = request.headers.get(
+        "X-Emergency-Access-ID"
+    )
+    if emergency_access_header is not None:
+        try:
+            emergency_access_id = int(emergency_access_header)
+        except (TypeError, ValueError):
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        if emergency_access_id <= 0:
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        if not assert_emergency_access(
+            actor_id=_get_current_user().id,
+            patient_id=patient_id,
+            resource_type="prescription_list",
+            resource_id=patient_id,
+            action="read",
+            emergency_access_id=emergency_access_id,
+        ):
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
 
     result = list_prescriptions_for_patient(
         patient_id=patient_id,

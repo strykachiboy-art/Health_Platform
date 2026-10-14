@@ -22,7 +22,11 @@ from app.core.exceptions import (
 )
 from app.core.utils.decorators import transactional
 from app.extensions import db
+from app.modules.consultation.models.consultation_model import Consultation
+from app.modules.lab.models.lab_model import LabOrder
+from app.modules.pharmacy.models.pharmacy_model import DispenseRecord
 from app.modules.patient.models.patient_model import Patient
+from app.modules.prescription.models.prescription_model import Prescription
 from app.modules.staff.models.staff_model import Staff
 
 
@@ -1076,6 +1080,7 @@ def assert_emergency_access(
     resource_type: str,
     resource_id: int,
     action: str,
+    emergency_access_id: int | None = None,
 ) -> bool:
     actor_id = _validate_positive_id(
         actor_id,
@@ -1091,6 +1096,11 @@ def assert_emergency_access(
         resource_id,
         "Resource ID",
     )
+    if emergency_access_id is not None:
+        emergency_access_id = _validate_positive_id(
+            emergency_access_id,
+            "Emergency access ID",
+        )
 
     resource_type = _normalize_required_string(
         resource_type,
@@ -1160,24 +1170,26 @@ def assert_emergency_access(
 
     now = _utcnow()
 
-    grant = db.session.execute(
-        db.select(EmergencyAccessGrant)
-        .where(
-            EmergencyAccessGrant.patient_id
-            == patient_id,
-            EmergencyAccessGrant.requester_user_id
-            == actor_id,
-            EmergencyAccessGrant.clinic_id
-            == clinic_id,
-            EmergencyAccessGrant.status
-            == EmergencyAccessStatus.ACTIVE,
-            EmergencyAccessGrant.expires_at > now,
+    grant_statement = db.select(
+        EmergencyAccessGrant
+    ).where(
+        EmergencyAccessGrant.patient_id == patient_id,
+        EmergencyAccessGrant.requester_user_id == actor_id,
+        EmergencyAccessGrant.clinic_id == clinic_id,
+        EmergencyAccessGrant.status == EmergencyAccessStatus.ACTIVE,
+        EmergencyAccessGrant.expires_at > now,
+    )
+
+    if emergency_access_id is not None:
+        grant_statement = grant_statement.where(
+            EmergencyAccessGrant.id == emergency_access_id,
         )
-        .order_by(
+
+    grant = db.session.execute(
+        grant_statement.order_by(
             EmergencyAccessGrant.granted_at.desc(),
             EmergencyAccessGrant.id.desc(),
-        )
-        .limit(1)
+        ).limit(1)
     ).scalar_one_or_none()
 
     if grant is None:
@@ -1194,6 +1206,78 @@ def assert_emergency_access(
     if resource_type == "patient":
         if resource_id != patient_id:
             return False
+
+    elif resource_type == "consultation":
+        resource = db.session.get(
+            Consultation,
+            resource_id,
+        )
+
+        if (
+            resource is None
+            or resource.clinic_id != clinic_id
+            or resource.patient_id != patient_id
+        ):
+            return False
+
+    elif resource_type == "lab_order":
+        resource = db.session.get(
+            LabOrder,
+            resource_id,
+        )
+
+        if (
+            resource is None
+            or resource.clinic_id != clinic_id
+            or resource.patient_id != patient_id
+        ):
+            return False
+
+    elif resource_type == "prescription":
+        resource = db.session.get(
+            Prescription,
+            resource_id,
+        )
+
+        if (
+            resource is None
+            or resource.clinic_id != clinic_id
+            or resource.patient_id != patient_id
+        ):
+            return False
+
+    elif resource_type == "dispense_record":
+        resource = db.session.get(
+            DispenseRecord,
+            resource_id,
+        )
+        prescription = (
+            resource.prescription
+            if resource is not None
+            else None
+        )
+
+        if (
+            resource is None
+            or prescription is None
+            or prescription.clinic_id != clinic_id
+            or prescription.patient_id != patient_id
+        ):
+            return False
+
+    elif resource_type in {
+        "lab_order_list",
+        "prescription_list",
+    }:
+        # Collection scopes refer to the patient ID, not an individual
+        # lab order or prescription. Patient and clinic were validated above.
+        if resource_id != patient_id:
+            return False
+
+    else:
+        # Fail closed for resource types without explicit
+        # ownership validation in this authorization helper.
+        return False
 
     create_audit_log(
         action=AuditAction.VIEW,

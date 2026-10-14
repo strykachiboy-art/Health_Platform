@@ -1140,15 +1140,23 @@ class TestExpireEmergencyAccess:
 
 
 class TestAssertEmergencyAccess:
+
     def test_allows_exact_scope(
         self,
+        clinic,
         emergency_active_grant,
         emergency_staff,
         emergency_patient,
         emergency_audit_mock,
+        make_consultation,
     ):
+        consultation = make_consultation(
+            clinic=clinic,
+            patient=emergency_patient,
+            staff=emergency_staff,
+        )
         emergency_active_grant.scope = [
-            "consultation:123:read",
+            f"consultation:{consultation.id}:read",
         ]
 
         result = (
@@ -1156,35 +1164,35 @@ class TestAssertEmergencyAccess:
                 actor_id=emergency_staff.user.id,
                 patient_id=emergency_patient.id,
                 resource_type="consultation",
-                resource_id=123,
+                resource_id=consultation.id,
                 action="read",
             )
         )
 
         assert result is True
-
         emergency_audit_mock.assert_called_once()
 
         call = emergency_audit_mock.call_args.kwargs
-
         assert call["action"] == AuditAction.VIEW
-        assert (
-            call["new_value"]["resource_type"]
-            == "consultation"
-        )
-        assert (
-            call["new_value"]["resource_id"]
-            == 123
-        )
+        assert call["new_value"]["resource_type"] == "consultation"
+        assert call["new_value"]["resource_id"] == consultation.id
+
 
     def test_allows_resource_wildcard_action(
         self,
+        clinic,
         emergency_active_grant,
         emergency_staff,
         emergency_patient,
+        make_consultation,
     ):
+        consultation = make_consultation(
+            clinic=clinic,
+            patient=emergency_patient,
+            staff=emergency_staff,
+        )
         emergency_active_grant.scope = [
-            "consultation:123:*",
+            f"consultation:{consultation.id}:*",
         ]
 
         assert (
@@ -1192,18 +1200,26 @@ class TestAssertEmergencyAccess:
                 actor_id=emergency_staff.user.id,
                 patient_id=emergency_patient.id,
                 resource_type="consultation",
-                resource_id=123,
+                resource_id=consultation.id,
                 action="write",
             )
             is True
         )
 
+
     def test_allows_resource_type_action(
         self,
+        clinic,
         emergency_active_grant,
         emergency_staff,
         emergency_patient,
+        make_consultation,
     ):
+        consultation = make_consultation(
+            clinic=clinic,
+            patient=emergency_patient,
+            staff=emergency_staff,
+        )
         emergency_active_grant.scope = [
             "consultation:read",
         ]
@@ -1213,7 +1229,7 @@ class TestAssertEmergencyAccess:
                 actor_id=emergency_staff.user.id,
                 patient_id=emergency_patient.id,
                 resource_type="consultation",
-                resource_id=456,
+                resource_id=consultation.id,
                 action="read",
             )
             is True
@@ -1465,3 +1481,383 @@ class TestAssertEmergencyAccess:
                 resource_id=1,
                 action=action,
             )
+
+    def test_denies_consultation_resource_belonging_to_another_patient(
+        self,
+        clinic,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+        make_patient,
+        make_consultation,
+    ):
+        emergency_active_grant.scope = [
+            "consultation:read",
+        ]
+
+        other_patient = make_patient(
+            clinic,
+            first_name="Other",
+            last_name="Emergency Target",
+        )
+
+        consultation = make_consultation(
+            clinic=clinic,
+            patient=other_patient,
+            staff=emergency_staff,
+        )
+
+        result = (
+            emergency_access_service.assert_emergency_access(
+                actor_id=emergency_staff.user.id,
+                patient_id=emergency_patient.id,
+                resource_type="consultation",
+                resource_id=consultation.id,
+                action="read",
+            )
+        )
+
+        assert result is False
+
+    def test_denies_nonexistent_consultation_resource(
+        self,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+    ):
+        emergency_active_grant.scope = [
+            "consultation:read",
+        ]
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="consultation",
+            resource_id=999999,
+            action="read",
+        )
+
+        assert result is False
+
+    def test_denies_unsupported_resource_type(
+        self,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+    ):
+        emergency_active_grant.scope = [
+            "unsupported_record:read",
+        ]
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="unsupported_record",
+            resource_id=1,
+            action="read",
+        )
+
+        assert result is False
+
+
+    def test_denies_lab_order_resource_belonging_to_another_patient(
+        self,
+        clinic,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+        make_patient,
+        make_lab_test,
+        make_lab_order,
+    ):
+        emergency_active_grant.scope = [
+            "lab_order:read",
+        ]
+
+        other_patient = make_patient(
+            clinic,
+            first_name="Other",
+            last_name="Lab Order Patient",
+        )
+        lab_test = make_lab_test(
+            clinic=clinic,
+            name="Emergency Ownership CBC",
+        )
+        lab_order = make_lab_order(
+            clinic=clinic,
+            patient=other_patient,
+            staff=emergency_staff,
+            tests=[lab_test],
+        )
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="lab_order",
+            resource_id=lab_order.id,
+            action="read",
+        )
+
+        assert result is False
+
+    def test_denies_lab_order_resource_from_another_clinic(
+        self,
+        make_clinic,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+        make_lab_test,
+        make_lab_order,
+    ):
+        emergency_active_grant.scope = [
+            "lab_order:read",
+        ]
+
+        other_clinic = make_clinic()
+        lab_test = make_lab_test(
+            clinic=other_clinic,
+            name="Emergency Cross-Clinic CBC",
+        )
+
+        # Deliberately construct a mismatched resource association:
+        # preserve the authorized patient ID so this test isolates
+        # the resource clinic ownership check.
+        lab_order = make_lab_order(
+            clinic=other_clinic,
+            patient=emergency_patient,
+            staff=emergency_staff,
+            tests=[lab_test],
+        )
+
+        assert lab_order.patient_id == emergency_patient.id
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="lab_order",
+            resource_id=lab_order.id,
+            action="read",
+        )
+
+        assert result is False
+
+    def test_denies_nonexistent_lab_order_resource(
+        self,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+    ):
+        emergency_active_grant.scope = [
+            "lab_order:read",
+        ]
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="lab_order",
+            resource_id=999999,
+            action="read",
+        )
+
+        assert result is False
+
+    def test_denies_prescription_resource_belonging_to_another_patient(
+        self,
+        clinic,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+        make_patient,
+        make_prescription,
+    ):
+        emergency_active_grant.scope = [
+            "prescription:read",
+        ]
+
+        other_patient = make_patient(
+            clinic,
+            first_name="Other",
+            last_name="Emergency Prescription Patient",
+        )
+        prescription = make_prescription(
+            clinic=clinic,
+            patient=other_patient,
+            staff=emergency_staff,
+        )
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="prescription",
+            resource_id=prescription.id,
+            action="read",
+        )
+
+        assert result is False
+
+    def test_denies_prescription_resource_from_another_clinic(
+        self,
+        make_clinic,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+        make_prescription,
+    ):
+        emergency_active_grant.scope = [
+            "prescription:read",
+        ]
+
+        other_clinic = make_clinic(
+            name="Emergency Prescription Other Clinic",
+        )
+        prescription = make_prescription(
+            clinic=other_clinic,
+            patient=emergency_patient,
+            staff=emergency_staff,
+        )
+
+        # Keep the authorized patient ID unchanged to isolate
+        # the resource clinic ownership check.
+        assert prescription.patient_id == emergency_patient.id
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="prescription",
+            resource_id=prescription.id,
+            action="read",
+        )
+
+        assert result is False
+
+    def test_denies_nonexistent_prescription_resource(
+        self,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+    ):
+        emergency_active_grant.scope = [
+            "prescription:read",
+        ]
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="prescription",
+            resource_id=999999,
+            action="read",
+        )
+
+        assert result is False
+
+    def test_denies_dispense_record_resource_belonging_to_another_patient(
+        self,
+        db,
+        clinic,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+        make_patient,
+        make_prescription,
+    ):
+        from app.modules.pharmacy.models.pharmacy_model import (
+            DispenseRecord,
+        )
+
+        emergency_active_grant.scope = [
+            "dispense_record:read",
+        ]
+
+        other_patient = make_patient(
+            clinic,
+            first_name="Other",
+            last_name="Dispense Record Patient",
+        )
+        prescription = make_prescription(
+            clinic=clinic,
+            patient=other_patient,
+            staff=emergency_staff,
+        )
+        record = DispenseRecord(
+            prescription_id=prescription.id,
+            dispensed_by_id=emergency_staff.id,
+        )
+        db.session.add(record)
+        db.session.flush()
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="dispense_record",
+            resource_id=record.id,
+            action="read",
+        )
+
+        assert result is False
+
+    def test_denies_dispense_record_resource_from_another_clinic(
+        self,
+        db,
+        make_clinic,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+        make_prescription,
+    ):
+        from app.modules.pharmacy.models.pharmacy_model import (
+            DispenseRecord,
+        )
+
+        emergency_active_grant.scope = [
+            "dispense_record:read",
+        ]
+
+        other_clinic = make_clinic(
+            name="Emergency Dispense Other Clinic",
+        )
+        prescription = make_prescription(
+            clinic=other_clinic,
+            patient=emergency_patient,
+            staff=emergency_staff,
+        )
+        record = DispenseRecord(
+            prescription_id=prescription.id,
+            dispensed_by_id=emergency_staff.id,
+        )
+        db.session.add(record)
+        db.session.flush()
+
+        # Keep patient_id identical to the authorized patient so this
+        # specifically exercises the linked prescription's clinic check.
+        assert prescription.patient_id == emergency_patient.id
+        assert prescription.clinic_id == other_clinic.id
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="dispense_record",
+            resource_id=record.id,
+            action="read",
+        )
+
+        assert result is False
+
+    def test_denies_nonexistent_dispense_record_resource(
+        self,
+        emergency_active_grant,
+        emergency_staff,
+        emergency_patient,
+    ):
+        emergency_active_grant.scope = [
+            "dispense_record:read",
+        ]
+
+        result = emergency_access_service.assert_emergency_access(
+            actor_id=emergency_staff.user.id,
+            patient_id=emergency_patient.id,
+            resource_type="dispense_record",
+            resource_id=999999,
+            action="read",
+        )
+
+        assert result is False

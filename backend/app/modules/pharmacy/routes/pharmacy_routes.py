@@ -9,7 +9,14 @@ from app.extensions import db
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import (
+    emergency_aware_role_required,
+    get_current_clinic_id,
+    role_required,
+)
+from app.core.emergency_access.services.emergency_access_service import (
+    assert_emergency_access,
+)
 
 from app.modules.pharmacy.schemas.pharmacy_schema import (
     DispenseRecordCancelSchema,
@@ -47,6 +54,7 @@ from app.modules.pharmacy.services.pharmacy_service import (
     update_drug,
 )
 
+from app.modules.prescription.models.prescription_model import Prescription
 from app.modules.staff.models.staff_model import Staff
 
 
@@ -565,7 +573,7 @@ def create_dispense_record_route():
 @pharmacy_bp.get(
     "/dispense/<int:dispense_record_id>"
 )
-@role_required(
+@emergency_aware_role_required(
     Role.ADMIN,
     Role.PHARMACIST,
 )
@@ -578,6 +586,46 @@ def get_dispense_record_route(
         dispense_record_id=dispense_record_id,
         clinic_id=clinic_id,
     )
+
+    emergency_access_header = request.headers.get(
+        "X-Emergency-Access-ID"
+    )
+    if emergency_access_header is not None:
+        try:
+            emergency_access_id = int(
+                emergency_access_header
+            )
+        except (TypeError, ValueError):
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        if emergency_access_id <= 0:
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        linked_prescription = record.prescription
+        if linked_prescription is None:
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        if not assert_emergency_access(
+            actor_id=_get_current_user().id,
+            patient_id=linked_prescription.patient_id,
+            resource_type="dispense_record",
+            resource_id=record.id,
+            action="read",
+            emergency_access_id=emergency_access_id,
+        ):
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
 
     return jsonify(
         {
@@ -593,7 +641,7 @@ def get_dispense_record_route(
 @pharmacy_bp.get(
     "/prescriptions/<int:prescription_id>/dispense-records"
 )
-@role_required(
+@emergency_aware_role_required(
     Role.ADMIN,
     Role.PHARMACIST,
 )
@@ -661,6 +709,52 @@ def list_dispense_records_route(
                 sorted(unknown_keys)
             )
         )
+
+    emergency_access_header = request.headers.get(
+        "X-Emergency-Access-ID"
+    )
+    if emergency_access_header is not None:
+        try:
+            emergency_access_id = int(
+                emergency_access_header
+            )
+        except (TypeError, ValueError):
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        if emergency_access_id <= 0:
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        prescription = db.session.get(
+            Prescription,
+            prescription_id,
+        )
+        if (
+            prescription is None
+            or prescription.clinic_id != clinic_id
+        ):
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
+
+        if not assert_emergency_access(
+            actor_id=_get_current_user().id,
+            patient_id=prescription.patient_id,
+            resource_type="prescription",
+            resource_id=prescription.id,
+            action="read",
+            emergency_access_id=emergency_access_id,
+        ):
+            return jsonify({
+                "success": False,
+                "message": "Emergency access is not authorized",
+            }), 403
 
     result = list_dispense_records_for_prescription(
         prescription_id=prescription_id,
