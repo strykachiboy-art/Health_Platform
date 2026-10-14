@@ -285,6 +285,7 @@ def _get_or_create_pending_payment(
     payment = Payment(
         invoice_id=invoice.id,
         amount=amount,
+        currency=currency,
         method=method,
         status=PaymentStatus.PENDING,
         gateway=gateway,
@@ -438,43 +439,72 @@ def _validate_provider_result(
             "the wrong transaction ID"
         )
 
-    provider_amount = result.get(
-        "amount"
-    )
+    provider_amount = result.get("amount")
 
-    if provider_amount is not None:
-        try:
-            provider_amount = Decimal(
-                str(provider_amount)
-            )
-        except (
-            InvalidOperation,
-            TypeError,
-            ValueError,
-        ) as exc:
-            raise GatewayUnknownOutcomeError(
-                "Provider returned an invalid payment amount"
-            ) from exc
-
-        expected_amount = Decimal(
-            payment.amount
+    if provider_amount is None:
+        raise ConflictError(
+            "Provider verification amount is missing"
         )
 
-        accepted_amounts = {
-            expected_amount,
-        }
+    try:
+        provider_amount = Decimal(str(provider_amount))
+    except (
+        InvalidOperation,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ConflictError(
+            "Provider verification amount is invalid"
+        ) from exc
 
-        if payment.gateway == PaymentGateway.PAYSTACK:
-            accepted_amounts.add(
-                expected_amount
-                * Decimal("100")
-            )
+    if not provider_amount.is_finite():
+        raise ConflictError(
+            "Provider verification amount is invalid"
+        )
 
-        if provider_amount not in accepted_amounts:
-            raise ConflictError(
-                "Provider verification amount "
-                "does not match the pending payment"
-            )
+    expected_amount = Decimal(str(payment.amount))
+
+    if provider_amount != expected_amount:
+        raise ConflictError(
+            "Provider verification amount does not match the pending payment"
+        )
+
+    provider_currency = result.get("currency")
+
+    if (
+        not isinstance(provider_currency, str)
+        or not provider_currency.strip()
+    ):
+        raise ConflictError(
+            "Provider verification currency is missing"
+        )
+
+    provider_currency = provider_currency.strip().upper()
+
+    if len(provider_currency) != 3 or not provider_currency.isalpha():
+        raise ConflictError(
+            "Provider verification currency is invalid"
+        )
+
+    expected_currency = getattr(payment, "currency", None)
+
+    if (
+        not isinstance(expected_currency, str)
+        or not expected_currency.strip()
+    ):
+        raise ConflictError(
+            "Pending payment currency is unknown; cannot verify provider currency"
+        )
+
+    expected_currency = expected_currency.strip().upper()
+
+    if provider_currency != expected_currency:
+        raise ConflictError(
+            "Provider verification currency does not match the pending payment"
+        )
+
+    result["amount"] = provider_amount
+    result["currency"] = provider_currency
 
     return result
 
@@ -988,6 +1018,13 @@ def orchestrate_payment(
             payment,
             "pending",
             "Provider outcome requires reconciliation",
+        )
+
+    # Initialization must not finalize a payment from an unverified success-shaped response.
+    if _is_successful_provider_result(result):
+        result = _validate_provider_result(
+            payment,
+            result,
         )
 
     transaction_id = result.get(

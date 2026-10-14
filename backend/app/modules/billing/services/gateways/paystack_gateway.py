@@ -81,6 +81,34 @@ class PaystackGateway(PaymentGatewayBase):
         return int(smallest_unit)
 
     @staticmethod
+    def _from_smallest_unit(amount: Any) -> Decimal | None:
+        """Normalize Paystack minor-unit amounts to major currency units."""
+        if amount is None:
+            return None
+
+        try:
+            amount = Decimal(str(amount))
+        except (
+            InvalidOperation,
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ValueError(
+                "Invalid Paystack provider amount"
+            ) from exc
+
+        if (
+            not amount.is_finite()
+            or amount < 0
+            or amount != amount.to_integral_value()
+        ):
+            raise ValueError(
+                "Invalid Paystack provider amount"
+            )
+
+        return amount / Decimal("100")
+
+    @staticmethod
     def _normalize_currency(
         currency: str,
     ) -> str:
@@ -93,6 +121,17 @@ class PaystackGateway(PaymentGatewayBase):
             )
 
         return currency.strip().upper()
+
+    @staticmethod
+    def _normalize_optional_currency(currency: Any) -> str:
+        """Normalize optional webhook currency without accepting malformed types."""
+        if currency is None:
+            return ""
+        if not isinstance(currency, str):
+            raise ValueError("Currency is invalid")
+        if not currency.strip():
+            return ""
+        return PaystackGateway._normalize_currency(currency)
 
     @staticmethod
     def _normalize_email(
@@ -321,10 +360,9 @@ class PaystackGateway(PaymentGatewayBase):
                 else None
             ),
             "status": transaction_status,
-            "amount": data.get("amount"),
-            "currency": (
-                data.get("currency") or ""
-            ).upper(),
+            "amount": self._from_smallest_unit(data.get("amount")),
+            "currency": self._normalize_currency(data.get("currency")),
+
             "paid": (
                 transaction_status == "success"
             ),
@@ -433,13 +471,11 @@ class PaystackGateway(PaymentGatewayBase):
             "reference": event_data.get(
                 "reference"
             ),
-            "amount": event_data.get(
-                "amount"
+            "amount": self._from_smallest_unit(
+                event_data.get("amount")
             ),
-            "currency": (
-                event_data.get("currency")
-                or ""
-            ).upper(),
+            "currency": self._normalize_optional_currency(event_data.get("currency")),
+
         }
 
         transaction_status = (

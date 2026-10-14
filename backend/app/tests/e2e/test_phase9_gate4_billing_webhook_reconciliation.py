@@ -62,10 +62,12 @@ def _make_pending_payment(
     db,
     invoice,
     reference,
+    currency="NGN",
 ):
     payment = Payment(
         invoice_id=invoice.id,
         amount=Decimal("100.00"),
+        currency=currency,
         method=PaymentMethod.CARD,
         status=PaymentStatus.PENDING,
         gateway=PaymentGateway.PAYSTACK,
@@ -104,7 +106,7 @@ def test_phase9_gate4_billing_webhook_success_and_duplicate_delivery(
             "event_type": "charge.success",
             "transaction_id": "TX-E2E-001",
             "reference": "E2E-WEBHOOK-001",
-            "amount": 10000,
+            "amount": 100,
             "currency": "NGN",
             "status": "successful",
         }
@@ -287,7 +289,7 @@ def test_phase9_gate4_billing_webhook_is_tenant_scoped(
             "event_type": "charge.success",
             "transaction_id": "TX-E2E-FOREIGN-1",
             "reference": "E2E-WEBHOOK-FOREIGN",
-            "amount": 10000,
+            "amount": 100,
             "currency": "NGN",
             "status": "successful",
         }

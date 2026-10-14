@@ -55,7 +55,8 @@ class Gate12Slice3ChaosGateway:
             "transaction_id": "TX-G12-S3-001",
             "status": "successful",
             "paid": True,
-            "amount": 10000,
+            "amount": 100,
+            "currency": "NGN",
         }
 
 

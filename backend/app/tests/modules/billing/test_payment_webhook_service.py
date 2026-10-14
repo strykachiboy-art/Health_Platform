@@ -36,7 +36,7 @@ class FakeWebhookGateway:
             "event_type": "charge.success",
             "transaction_id": "TX-1",
             "reference": "WEBHOOK-1",
-            "amount": 10000,
+            "amount": 100,
             "currency": "NGN",
             "status": "successful",
         }
@@ -98,10 +98,12 @@ def _make_pending_payment(
     reference="WEBHOOK-1",
     amount=Decimal("100.00"),
     gateway=PaymentGateway.PAYSTACK,
+    currency="NGN",
 ):
     payment = Payment(
         invoice_id=invoice.id,
         amount=amount,
+        currency=currency,
         method=PaymentMethod.CARD,
         status=PaymentStatus.PENDING,
         gateway=gateway,
@@ -290,7 +292,7 @@ def test_failed_webhook_marks_pending_payment_failed(
             "event_type": "charge.failed",
             "transaction_id": "TX-FAIL-1",
             "reference": "WEBHOOK-FAIL-1",
-            "amount": 10000,
+            "amount": 100,
             "currency": "NGN",
             "status": "failed",
             "failure_reason": "Bank declined",
@@ -425,7 +427,7 @@ def test_webhook_cannot_cross_clinic_boundary(
             "event_type": "charge.success",
             "transaction_id": "TX-FOREIGN-1",
             "reference": "FOREIGN-WEBHOOK-1",
-            "amount": 10000,
+            "amount": 100,
             "currency": "NGN",
             "status": "successful",
         }
@@ -499,7 +501,7 @@ def test_webhook_amount_mismatch_is_rejected(
             "event_type": "charge.success",
             "transaction_id": "TX-AMOUNT-1",
             "reference": "WEBHOOK-AMOUNT-1",
-            "amount": 9000,
+            "amount": 90,
             "currency": "NGN",
             "status": "successful",
         }
