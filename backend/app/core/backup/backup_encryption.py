@@ -87,6 +87,12 @@ def _get_key_version() -> int:
     return version
 
 
+def validate_backup_encryption_configuration() -> None:
+    """Validate the configured key and version without exposing secret material."""
+    _get_key()
+    _get_key_version()
+
+
 def _derive_nonce(base_nonce: bytes, chunk_index: int) -> bytes:
     """base_nonce + chunk_index as a 96-bit big-endian counter (mod 2**96).
 
