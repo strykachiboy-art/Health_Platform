@@ -91,22 +91,10 @@ void main() {
         jitterRatio: 0,
       );
 
-      expect(
-        policy.delayAfterFailure(1),
-        const Duration(seconds: 1),
-      );
-      expect(
-        policy.delayAfterFailure(2),
-        const Duration(seconds: 2),
-      );
-      expect(
-        policy.delayAfterFailure(3),
-        const Duration(seconds: 3),
-      );
-      expect(
-        policy.delayAfterFailure(4),
-        const Duration(seconds: 3),
-      );
+      expect(policy.delayAfterFailure(1), const Duration(seconds: 1));
+      expect(policy.delayAfterFailure(2), const Duration(seconds: 2));
+      expect(policy.delayAfterFailure(3), const Duration(seconds: 3));
+      expect(policy.delayAfterFailure(4), const Duration(seconds: 3));
     });
 
     test('applies injectable jitter and still respects the cap', () {
@@ -132,18 +120,10 @@ void main() {
     });
 
     test('rejects invalid policies and delay inputs', () {
+      expect(() => OperationRetryPolicy(maxAttempts: 0), throwsArgumentError);
+      expect(() => OperationRetryPolicy(maxAttempts: 11), throwsArgumentError);
       expect(
-        () => OperationRetryPolicy(maxAttempts: 0),
-        throwsArgumentError,
-      );
-      expect(
-        () => OperationRetryPolicy(maxAttempts: 11),
-        throwsArgumentError,
-      );
-      expect(
-        () => OperationRetryPolicy(
-          baseDelay: Duration.zero,
-        ),
+        () => OperationRetryPolicy(baseDelay: Duration.zero),
         throwsArgumentError,
       );
       expect(
@@ -159,15 +139,9 @@ void main() {
       );
 
       final policy = OperationRetryPolicy();
+      expect(() => policy.delayAfterFailure(0), throwsArgumentError);
       expect(
-        () => policy.delayAfterFailure(0),
-        throwsArgumentError,
-      );
-      expect(
-        () => policy.delayAfterFailure(
-          1,
-          jitterSample: 1.1,
-        ),
+        () => policy.delayAfterFailure(1, jitterSample: 1.1),
         throwsArgumentError,
       );
     });
@@ -302,59 +276,65 @@ void main() {
   });
 
   group('OperationLifecycleState transitions', () {
-    test('queued and retry-scheduled states permit only controlled delivery', () {
-      expect(
-        OperationLifecycleState.queued.canTransitionTo(
-          OperationLifecycleState.inFlight,
-        ),
-        isTrue,
-      );
-      expect(
-        OperationLifecycleState.queued.canTransitionTo(
-          OperationLifecycleState.cancelled,
-        ),
-        isTrue,
-      );
-      expect(
-        OperationLifecycleState.queued.canTransitionTo(
-          OperationLifecycleState.acknowledged,
-        ),
-        isFalse,
-      );
-      expect(
-        OperationLifecycleState.retryScheduled.canTransitionTo(
-          OperationLifecycleState.inFlight,
-        ),
-        isTrue,
-      );
-      expect(
-        OperationLifecycleState.retryScheduled.canTransitionTo(
-          OperationLifecycleState.acknowledged,
-        ),
-        isFalse,
-      );
-    });
+    test(
+      'queued and retry-scheduled states permit only controlled delivery',
+      () {
+        expect(
+          OperationLifecycleState.queued.canTransitionTo(
+            OperationLifecycleState.inFlight,
+          ),
+          isTrue,
+        );
+        expect(
+          OperationLifecycleState.queued.canTransitionTo(
+            OperationLifecycleState.cancelled,
+          ),
+          isTrue,
+        );
+        expect(
+          OperationLifecycleState.queued.canTransitionTo(
+            OperationLifecycleState.acknowledged,
+          ),
+          isFalse,
+        );
+        expect(
+          OperationLifecycleState.retryScheduled.canTransitionTo(
+            OperationLifecycleState.inFlight,
+          ),
+          isTrue,
+        );
+        expect(
+          OperationLifecycleState.retryScheduled.canTransitionTo(
+            OperationLifecycleState.acknowledged,
+          ),
+          isFalse,
+        );
+      },
+    );
 
-    test('reconciliation must return through queued before another attempt', () {
-      expect(
-        OperationLifecycleState.reconciliationRequired.canTransitionTo(
-          OperationLifecycleState.queued,
-        ),
-        isTrue,
-      );
-      expect(
-        OperationLifecycleState.reconciliationRequired.canTransitionTo(
-          OperationLifecycleState.inFlight,
-        ),
-        isFalse,
-      );
-      expect(
-        OperationLifecycleState.reconciliationRequired.canTransitionTo(
-          OperationLifecycleState.acknowledged,
-        ),
-        isTrue,
-      );
-    });
+    test(
+      'reconciliation must return through queued before another attempt',
+      () {
+        expect(
+          OperationLifecycleState.reconciliationRequired.canTransitionTo(
+            OperationLifecycleState.queued,
+          ),
+          isTrue,
+        );
+        expect(
+          OperationLifecycleState.reconciliationRequired.canTransitionTo(
+            OperationLifecycleState.inFlight,
+          ),
+          isFalse,
+        );
+        expect(
+          OperationLifecycleState.reconciliationRequired.canTransitionTo(
+            OperationLifecycleState.acknowledged,
+          ),
+          isTrue,
+        );
+      },
+    );
 
     test('acknowledged, rejected, and cancelled states are terminal', () {
       final terminalStates = [
