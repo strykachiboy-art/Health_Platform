@@ -10,6 +10,7 @@ import pytest
 
 from app.core.backup.backup_encryption import (
     encrypt_backup_artifact,
+    read_backup_artifact_key_version,
 )
 from app.core.backup.restore_service import (
     RestoreError,
@@ -278,6 +279,106 @@ def test_backup_key_recovery_restores_after_primary_key_loss(
     assert not Path(
         observed["command"][-1]
     ).exists()
+
+    assert (
+        storage_root
+        / "profile_images"
+        / "photo.jpg"
+    ).read_bytes() == b"clinical-file"
+
+
+def test_backup_key_recovery_restores_historical_key_after_rotation(
+    app,
+    tmp_path,
+    monkeypatch,
+):
+    backup_root = _build_encrypted_backup(tmp_path)
+    artifact_path = backup_root / "database.dump"
+
+    stored_version = read_backup_artifact_key_version(artifact_path)
+    assert stored_version == 1
+
+    # This map represents an externally managed recovery-key inventory.
+    recovery_key_inventory = {
+        str(stored_version): _backup_key(),
+    }
+
+    # Simulate rotation: the active key/version can no longer decrypt v1.
+    app.config["BACKUP_ENCRYPTION_KEY"] = (
+        base64.urlsafe_b64encode(
+            b"c" * 32
+        ).decode("ascii")
+    )
+    app.config["BACKUP_ENCRYPTION_KEY_VERSION"] = "2"
+
+    def fail_restore(*args, **kwargs):
+        raise AssertionError(
+            "pg_restore must not run before the historical key is restored"
+        )
+
+    monkeypatch.setattr(
+        "app.core.backup.restore_service.shutil.which",
+        lambda value: "pg_restore",
+    )
+    monkeypatch.setattr(
+        "app.core.backup.restore_service.subprocess.run",
+        fail_restore,
+    )
+
+    with pytest.raises(
+        RestoreError,
+        match="Unable to decrypt database backup",
+    ):
+        restore_full_backup(
+            backup_path=backup_root,
+            database_url=(
+                "postgresql://backup@localhost/"
+                "clinic_system"
+            ),
+            storage_root=tmp_path / "failed-after-rotation",
+        )
+
+    # Recover the key selected by the version hint. Authenticated decryption
+    # still remains mandatory before restore may proceed.
+    app.config["BACKUP_ENCRYPTION_KEY"] = (
+        recovery_key_inventory[str(stored_version)]
+    )
+    app.config["BACKUP_ENCRYPTION_KEY_VERSION"] = str(stored_version)
+
+    observed = {
+        "command": None,
+    }
+
+    def fake_restore(command, **kwargs):
+        observed["command"] = command
+        return Mock(
+            returncode=0,
+            stderr="",
+            stdout="",
+        )
+
+    monkeypatch.setattr(
+        "app.core.backup.restore_service.subprocess.run",
+        fake_restore,
+    )
+
+    storage_root = tmp_path / "restored-after-rotation"
+
+    with app.app_context():
+        result = restore_full_backup(
+            backup_path=backup_root,
+            database_url=(
+                "postgresql://backup@localhost/"
+                "clinic_system"
+            ),
+            storage_root=storage_root,
+        )
+
+    assert result.success is True
+    assert result.database.success is True
+    assert result.files.success is True
+    assert result.files.file_count == 1
+    assert observed["command"] is not None
 
     assert (
         storage_root
