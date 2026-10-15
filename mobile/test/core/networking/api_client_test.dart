@@ -34,6 +34,25 @@ void main() {
       expect(result, {'success': true, 'status': 'ok'});
     });
 
+    test('forwards a caller-supplied PATCH idempotency key', () async {
+      final mock = MockClient((request) async {
+        expect(request.method, 'PATCH');
+        expect(request.headers['idempotency-key'], 'mobile-patch-operation-001');
+        expect(jsonDecode(request.body), {'sample_value': 'updated'});
+        return http.Response('{"success":true,"data":{}}', 200);
+      });
+      addTearDown(mock.close);
+
+      final api = ApiClient(config: testConfig(), client: mock);
+      addTearDown(api.close);
+
+      await api.patchJson(
+        'test/idempotency-transport',
+        body: const <String, dynamic>{'sample_value': 'updated'},
+        idempotencyKey: 'mobile-patch-operation-001',
+      );
+    });
+
     test(
       'PATCH sends authenticated JSON and decodes an object response',
       () async {
