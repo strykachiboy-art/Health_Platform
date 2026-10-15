@@ -81,6 +81,28 @@ The database backup flow is:
 The checksum verifies artifact integrity. It does not replace authenticated
 encryption.
 
+### Backup-key rotation and historical recovery
+
+`BACKUP_ENCRYPTION_KEY` and `BACKUP_ENCRYPTION_KEY_VERSION` identify the
+single active backup key/version pair configured in a process. The backup
+implementation does not automatically try historical keys.
+
+The deployment must retain historical backup keys in an approved external
+secret-management boundary, mapped by key version. The artifact header
+version can help operators locate a candidate key, but the header is not
+authenticated by the inspection helper and must not be treated as proof of
+artifact integrity. Successful AES-GCM authentication during normal
+decryption remains mandatory.
+
+For recovery, configure the exact historical key and matching version in an
+isolated recovery process and restore only to dedicated database and storage
+targets. Decryption failure remains fail-closed; no key guessing or plaintext
+fallback is permitted. Keep historical keys until all backups that require
+them have expired or have been migrated with verified restores.
+
+The external key inventory, custody, rotation schedule, and production
+recovery execution are infrastructure responsibilities.
+
 ## Encrypted Restore
 
 For an encrypted database artifact the restore flow is:

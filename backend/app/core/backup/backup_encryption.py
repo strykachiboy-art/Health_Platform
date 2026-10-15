@@ -187,6 +187,26 @@ def _read_header(source):
     return key_version, nonce, chunk_size
 
 
+def read_backup_artifact_key_version(source: str | Path) -> int:
+    """Read the header version as an unauthenticated recovery hint.
+
+    This does not authenticate the artifact. Decryption with the
+    candidate key remains mandatory before any restore can proceed.
+    """
+    source = Path(source)
+
+    if not source.is_file():
+        raise FileNotFoundError(source)
+
+    with source.open("rb") as stream:
+        key_version, _, _ = _read_header(stream)
+
+    if not 1 <= key_version <= 65535:
+        raise ValueError("Invalid backup artifact key version.")
+
+    return key_version
+
+
 def _discard(path: Path) -> None:
     try:
         path.unlink()

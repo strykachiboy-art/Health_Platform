@@ -27,6 +27,51 @@ The application does not put the backup encryption key in:
 - the database backup artifact
 - restore reports
 
+## Backup Key Rotation and Historical Restore
+
+`BACKUP_ENCRYPTION_KEY` and `BACKUP_ENCRYPTION_KEY_VERSION` form one
+active key/version pair per application process. The current implementation
+does not automatically maintain or try a historical backup-key ring.
+
+Maintain an external, access-controlled inventory mapping each backup key
+version to its corresponding secret. The inventory must live outside backup
+metadata, database dumps, restore reports, and source control.
+
+The header version can be inspected with the read-only helper:
+
+```powershell
+$env:PYTHONPATH="$PWD\testing;$PWD\backend"
+python -c "from app.core.backup.backup_encryption import read_backup_artifact_key_version; print(read_backup_artifact_key_version(r'<path-to-database.dump>'))"
+```
+
+The header version is an **untrusted lookup hint**, not proof that the
+artifact is authentic or that a candidate key is correct. The normal
+decryption path must still authenticate the encrypted content successfully.
+
+### Historical restore procedure
+
+1. Verify the backup metadata and the expected ciphertext checksum.
+2. Read the artifact's key-version hint and look up that version in the
+   approved external recovery-key inventory.
+3. Use an isolated recovery process with that historical key and matching
+   version configured.
+4. Restore to dedicated, empty database and storage targets. Keep the source
+   and target databases and storage separate.
+5. Require authenticated decryption to complete before `pg_restore` runs.
+   Preserve the fail-closed behavior; never fall back to plaintext restore.
+6. Verify the restored database and files before considering recovery complete.
+
+Do not change the production application's active key merely to recover an
+older backup. Do not run production schedulers or workers in the isolated
+recovery environment unless the drill explicitly requires them.
+
+Retire a historical backup key only after every backup that requires it has
+expired under the approved retention policy or has been migrated, and the
+required restore verification has passed.
+
+Key custody, the external version-to-secret inventory, access controls, and
+rotation scheduling remain deployment/infrastructure responsibilities.
+
 ## Restore Flow
 
 For an encrypted database artifact:
