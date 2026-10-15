@@ -9,6 +9,7 @@ class ApiException implements Exception {
     this.cause,
     this.validationErrors = const <String, String>{},
     this.serverMessage,
+    this.serverCode,
   });
 
   final ApiFailureKind kind;
@@ -21,6 +22,7 @@ class ApiException implements Exception {
   /// are deliberately not retained here.
   final Map<String, String> validationErrors;
   final String? serverMessage;
+  final String? serverCode;
 
   @override
   String toString() {

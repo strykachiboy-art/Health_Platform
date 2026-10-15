@@ -928,7 +928,7 @@ def test_ensure_no_schedule_conflict_rejects_patient_conflict(
     with pytest.raises(
         ConflictError,
         match="Patient 20 already has an appointment",
-    ):
+    ) as exc:
         appointment_service._ensure_no_schedule_conflict(
             patient_id=20,
             staff_id=30,
@@ -948,6 +948,7 @@ def test_ensure_no_schedule_conflict_rejects_patient_conflict(
             ),
         )
 
+    assert exc.value.code == "APPOINTMENT_PATIENT_SCHEDULE_CONFLICT"
 
 def test_ensure_no_schedule_conflict_rejects_staff_conflict(
     monkeypatch,
@@ -972,7 +973,7 @@ def test_ensure_no_schedule_conflict_rejects_staff_conflict(
     with pytest.raises(
         ConflictError,
         match="Staff 30 already has an appointment",
-    ):
+    ) as exc:
         appointment_service._ensure_no_schedule_conflict(
             patient_id=20,
             staff_id=30,
@@ -992,6 +993,8 @@ def test_ensure_no_schedule_conflict_rejects_staff_conflict(
             ),
         )
 
+
+    assert exc.value.code == "APPOINTMENT_STAFF_SCHEDULE_CONFLICT"
 
 # ============================================================================
 # create_appointment

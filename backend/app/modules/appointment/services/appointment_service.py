@@ -376,7 +376,8 @@ def _ensure_no_schedule_conflict(
         raise ConflictError(
             f"Patient {patient_id} already has an appointment "
             f"overlapping this time period "
-            f"(appointment {patient_conflict.id})"
+            f"(appointment {patient_conflict.id})",
+            code="APPOINTMENT_PATIENT_SCHEDULE_CONFLICT",
         )
 
     staff_conflict = _find_staff_overlap(
@@ -391,7 +392,8 @@ def _ensure_no_schedule_conflict(
         raise ConflictError(
             f"Staff {staff_id} already has an appointment "
             f"overlapping this time period "
-            f"(appointment {staff_conflict.id})"
+            f"(appointment {staff_conflict.id})",
+            code="APPOINTMENT_STAFF_SCHEDULE_CONFLICT",
         )
 
 
@@ -466,7 +468,8 @@ def create_appointment(
             ):
                 raise ConflictError(
                     "Idempotency record does not reference "
-                    "a completed appointment"
+                    "a completed appointment",
+                    code="IDEMPOTENCY_RECORD_UNRESOLVED",
                 )
 
             existing_appointment = db.session.get(
@@ -476,12 +479,14 @@ def create_appointment(
 
             if existing_appointment is None:
                 raise ConflictError(
-                    "Idempotency record references a missing appointment"
+                    "Idempotency record references a missing appointment",
+                    code="IDEMPOTENCY_RECORD_UNRESOLVED",
                 )
 
             if existing_appointment.clinic_id != clinic_id:
                 raise ConflictError(
-                    "Idempotency record references another clinic"
+                    "Idempotency record references another clinic",
+                    code="IDEMPOTENCY_RECORD_UNRESOLVED",
                 )
 
             return existing_appointment

@@ -840,7 +840,8 @@ def test_create_appointment_domain_error(
 
     def raise_conflict(**kwargs):
         raise ConflictError(
-            "Appointment overlaps an existing appointment"
+            "Appointment overlaps an existing appointment",
+            code="APPOINTMENT_PATIENT_SCHEDULE_CONFLICT",
         )
 
     monkeypatch.setattr(
@@ -872,6 +873,7 @@ def test_create_appointment_domain_error(
     assert body["error"] == (
         "Appointment overlaps an existing appointment"
     )
+    assert body["code"] == "APPOINTMENT_PATIENT_SCHEDULE_CONFLICT"
 
 
 def test_create_appointment_invalid_payload_does_not_call_service(

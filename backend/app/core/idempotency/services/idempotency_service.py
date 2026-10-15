@@ -180,13 +180,15 @@ def reserve_idempotency_operation(
 
         if existing is None:
             raise ConflictError(
-                "Idempotency operation could not be reconciled"
+                "Idempotency operation could not be reconciled",
+                code="IDEMPOTENCY_OUTCOME_UNRESOLVED",
             )
 
         if existing.request_hash != request_hash:
             raise ConflictError(
                 "Idempotency-Key was already used "
-                "with a different request payload"
+                "with a different request payload",
+                code="IDEMPOTENCY_KEY_PAYLOAD_MISMATCH",
             )
 
         return existing, False

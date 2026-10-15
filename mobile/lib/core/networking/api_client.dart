@@ -142,8 +142,7 @@ class ApiClient {
       );
     }
 
-    final normalizedIdempotencyKey =
-        _normalizeIdempotencyKey(idempotencyKey);
+    final normalizedIdempotencyKey = _normalizeIdempotencyKey(idempotencyKey);
 
     if (!const <String>{'GET', 'POST', 'PATCH'}.contains(method) ||
         (method == 'GET' && body != null) ||
@@ -223,6 +222,7 @@ class ApiClient {
         statusCode: response.statusCode,
         validationErrors: _parseValidationErrors(response.body),
         serverMessage: _parseServerMessage(response.body),
+        serverCode: _parseServerCode(response.body),
       );
     }
 
@@ -297,6 +297,27 @@ class ApiClient {
       final value = decoded['error'] ?? decoded['message'];
       if (value is! String || value.trim().isEmpty) return null;
       return value.trim();
+    } on FormatException {
+      return null;
+    }
+  }
+
+  String? _parseServerCode(String body) {
+    if (body.isEmpty) return null;
+
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is! Map<String, dynamic>) return null;
+
+      final value = decoded['code'];
+      if (value is! String) return null;
+
+      final normalized = value.trim();
+      if (!RegExp(r'^[A-Z][A-Z0-9_]{0,63}$').hasMatch(normalized)) {
+        return null;
+      }
+
+      return normalized;
     } on FormatException {
       return null;
     }
