@@ -65,31 +65,66 @@ class ApiClient {
   /// If [bearerToken] is supplied, it is sent as an Authorization Bearer
   /// token. Token acquisition, persistence, and refresh belong to the auth
   /// session layer, not to this transport class.
+  ///
+  /// [idempotencyKey] must be reused for repeated attempts of the same
+  /// logical operation and supplied only for endpoints whose backend
+  /// contract supports idempotency. It does not make unsupported endpoints
+  /// safe to retry.
   Future<Map<String, dynamic>> postJson(
     String path, {
     required Map<String, dynamic> body,
     String? bearerToken,
+    String? idempotencyKey,
   }) {
     return _requestJson(
       method: 'POST',
       path: path,
       body: body,
       bearerToken: bearerToken,
+      idempotencyKey: idempotencyKey,
     );
   }
 
   /// Performs a JSON PATCH request and requires a JSON object response.
+  ///
+  /// [idempotencyKey] is only appropriate for endpoints whose backend
+  /// contract supports idempotency. Reuse it for repeated attempts of the
+  /// same logical operation; it does not make unsupported endpoints safe
+  /// to retry.
   Future<Map<String, dynamic>> patchJson(
     String path, {
     required Map<String, dynamic> body,
     String? bearerToken,
+    String? idempotencyKey,
   }) {
     return _requestJson(
       method: 'PATCH',
       path: path,
       body: body,
       bearerToken: bearerToken,
+      idempotencyKey: idempotencyKey,
     );
+  }
+
+  static String? _normalizeIdempotencyKey(String? value) {
+    if (value == null) return null;
+
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(
+        value,
+        'idempotencyKey',
+        'Must be non-empty when provided.',
+      );
+    }
+    if (normalized.length > 255) {
+      throw ArgumentError.value(
+        value,
+        'idempotencyKey',
+        'Must not exceed 255 characters.',
+      );
+    }
+    return normalized;
   }
 
   Future<Map<String, dynamic>> _requestJson({
@@ -97,6 +132,7 @@ class ApiClient {
     required String path,
     Map<String, dynamic>? body,
     String? bearerToken,
+    String? idempotencyKey,
   }) async {
     if (bearerToken != null && bearerToken.trim().isEmpty) {
       throw ArgumentError.value(
@@ -105,6 +141,9 @@ class ApiClient {
         'Must be non-empty when provided.',
       );
     }
+
+    final normalizedIdempotencyKey =
+        _normalizeIdempotencyKey(idempotencyKey);
 
     if (!const <String>{'GET', 'POST', 'PATCH'}.contains(method) ||
         (method == 'GET' && body != null) ||
@@ -121,6 +160,10 @@ class ApiClient {
 
     if (bearerToken != null) {
       headers['Authorization'] = 'Bearer $bearerToken';
+    }
+
+    if (normalizedIdempotencyKey != null) {
+      headers['Idempotency-Key'] = normalizedIdempotencyKey;
     }
 
     final requestId = ++_requestSequence;

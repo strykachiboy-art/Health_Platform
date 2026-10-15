@@ -28,6 +28,7 @@ void main() {
         expect(request.headers['accept'], 'application/json');
         expect(request.headers['content-type'], contains('application/json'));
         expect(request.headers.containsKey('authorization'), isFalse);
+        expect(request.headers.containsKey('idempotency-key'), isFalse);
         expect(jsonDecode(request.body), {
           'email': 'clinician@example.test',
           'password': 'example-password',
@@ -64,6 +65,53 @@ void main() {
       expect(result['data'], isA<Map<String, dynamic>>());
       expect(result['data']['user_id'], 42);
       expect(result['data']['role'], 'DOCTOR');
+    });
+
+    test('forwards a caller-supplied POST idempotency key after trimming', () async {
+      final mock = MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.headers['idempotency-key'], 'mobile-operation-001');
+        expect(jsonDecode(request.body), {'sample_value': 'created'});
+        return http.Response('{"success":true,"data":{}}', 200);
+      });
+      addTearDown(mock.close);
+
+      final api = ApiClient(config: testConfig(), client: mock);
+      addTearDown(api.close);
+
+      await api.postJson(
+        'test/idempotency-transport',
+        body: const <String, dynamic>{'sample_value': 'created'},
+        idempotencyKey: '  mobile-operation-001  ',
+      );
+    });
+
+    test('rejects blank and oversized POST idempotency keys before sending', () async {
+      final mock = MockClient((request) async {
+        fail('Invalid idempotency keys must not reach the HTTP client.');
+      });
+      addTearDown(mock.close);
+
+      final api = ApiClient(config: testConfig(), client: mock);
+      addTearDown(api.close);
+
+      await expectLater(
+        api.postJson(
+          'test/idempotency-transport',
+          body: const <String, dynamic>{},
+          idempotencyKey: '   ',
+        ),
+        throwsArgumentError,
+      );
+
+      await expectLater(
+        api.postJson(
+          'test/idempotency-transport',
+          body: const <String, dynamic>{},
+          idempotencyKey: List<String>.filled(256, 'x').join(),
+        ),
+        throwsArgumentError,
+      );
     });
 
     test('adds bearer authorization when a token is supplied', () async {
