@@ -1,0 +1,108 @@
+name: CI Test Gates
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-focused:
+    name: Backend focused regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      PYTHONPATH: backend:testing
+      TEST_REDIS_URL: "redis://127.0.0.1:56379/15"
+      REDIS_URL: "redis://127.0.0.1:56379/15"
+
+    services:
+      redis:
+        image: redis:8
+        ports:
+          - "56379:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.lock
+
+      - name: Install locked backend dependencies
+        run: python -m pip install -r backend/requirements.lock
+
+      - name: Generate disposable test encryption keys
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from cryptography.fernet import Fernet
+
+          values = {
+              "INTEGRATION_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
+              "BACKUP_ENCRYPTION_KEY": Fernet.generate_key().decode("ascii"),
+          }
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              for name, value in values.items():
+                  env_file.write(f"{name}={value}\n")
+          PY
+
+      - name: Run clinical module and encryption regression
+        run: >-
+          python -m pytest
+          backend/app/tests/modules/appointment
+          backend/app/tests/modules/consultation
+          backend/app/tests/modules/lab
+          backend/app/tests/modules/prescription
+          backend/app/tests/core/security/test_encryption_key_version.py
+          -q
+
+  flutter:
+    name: Flutter analyzer and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.47.0"
+          cache: true
+          pub-cache: true
+
+      - name: Show Flutter and Dart versions
+        run: flutter --version
+
+      - name: Resolve locked dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analyze Flutter and Dart source
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        run: flutter test
