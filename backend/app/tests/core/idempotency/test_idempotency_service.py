@@ -103,7 +103,7 @@ def test_rejects_same_key_with_different_payload(
     with pytest.raises(
         ConflictError,
         match="Idempotency-Key was already used with a different request payload",
-    ):
+    ) as exc:
         reserve_idempotency_operation(
             clinic_id=clinic.id,
             user_id=user.id,
@@ -115,3 +115,5 @@ def test_rejects_same_key_with_different_payload(
                 "consultation_type": "general",
             },
         )
+
+    assert exc.value.code == "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH"

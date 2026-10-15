@@ -37,7 +37,10 @@ void main() {
     test('forwards a caller-supplied PATCH idempotency key', () async {
       final mock = MockClient((request) async {
         expect(request.method, 'PATCH');
-        expect(request.headers['idempotency-key'], 'mobile-patch-operation-001');
+        expect(
+          request.headers['idempotency-key'],
+          'mobile-patch-operation-001',
+        );
         expect(jsonDecode(request.body), {'sample_value': 'updated'});
         return http.Response('{"success":true,"data":{}}', 200);
       });
@@ -466,6 +469,54 @@ void main() {
         });
       },
     );
+
+    test('parses a stable server code from an HTTP error', () async {
+      final mock = MockClient(
+        (request) async => http.Response(
+          '{"success":false,"error":"Schedule conflict","code":"APPOINTMENT_PATIENT_SCHEDULE_CONFLICT"}',
+          409,
+        ),
+      );
+      addTearDown(mock.close);
+
+      final api = ApiClient(config: testConfig(), client: mock);
+      addTearDown(api.close);
+
+      await expectLater(
+        api.getJson('api/v1/appointments'),
+        throwsA(
+          isA<ApiException>().having(
+            (error) => error.serverCode,
+            'serverCode',
+            'APPOINTMENT_PATIENT_SCHEDULE_CONFLICT',
+          ),
+        ),
+      );
+    });
+
+    test('ignores malformed server conflict codes', () async {
+      final mock = MockClient(
+        (request) async => http.Response(
+          '{"success":false,"error":"Conflict","code":"appointment-conflict"}',
+          409,
+        ),
+      );
+      addTearDown(mock.close);
+
+      final api = ApiClient(config: testConfig(), client: mock);
+      addTearDown(api.close);
+
+      await expectLater(
+        api.getJson('api/v1/appointments'),
+        throwsA(
+          isA<ApiException>().having(
+            (error) => error.serverCode,
+            'serverCode',
+            isNull,
+          ),
+        ),
+      );
+    });
 
     test(
       'HTTP validation metadata is parsed without retaining raw body',

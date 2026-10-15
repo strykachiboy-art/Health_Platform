@@ -99,6 +99,7 @@ void main() {
   runApp(
     AppointmentCreateQueueScope(
       producer: appointmentCreateQueueProducer,
+      reconcileOperation: replayWorker.reconcileAppointmentCreate,
       child: ClinicSystemProApp(
         healthDataSource: healthDataSource,
         patientDataSource: patientDataSource,

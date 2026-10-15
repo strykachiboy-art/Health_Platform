@@ -262,10 +262,18 @@ class AppointmentCreateQueueScope extends InheritedWidget {
   const AppointmentCreateQueueScope({
     super.key,
     required this.producer,
+    required this.reconcileOperation,
     required super.child,
   });
 
   final AppointmentCreateQueueProducer producer;
+
+  final OperationReconciliationRunner reconcileOperation;
+
+  /// Makes an explicit reconciliation attempt for a pending operation.
+  Future<OperationReconciliationResult> reconcile(String operationId) {
+    return reconcileOperation(operationId);
+  }
 
   static AppointmentCreateQueueScope of(BuildContext context) {
     final scope = context
@@ -282,6 +290,7 @@ class AppointmentCreateQueueScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(AppointmentCreateQueueScope oldWidget) {
-    return !identical(producer, oldWidget.producer);
+    return !identical(producer, oldWidget.producer) ||
+        reconcileOperation != oldWidget.reconcileOperation;
   }
 }

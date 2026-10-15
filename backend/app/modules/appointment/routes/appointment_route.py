@@ -321,12 +321,13 @@ def create():
         ), 201
 
     except DomainError as exc:
-        return jsonify(
-            {
-                "success": False,
-                "error": str(exc),
-            }
-        ), exc.status_code
+        body = {
+            "success": False,
+            "error": str(exc),
+        }
+        if exc.code is not None:
+            body["code"] = exc.code
+        return jsonify(body), exc.status_code
 
 
 # ============================================================================
@@ -369,12 +370,13 @@ def reschedule(
         ), 200
 
     except DomainError as exc:
-        return jsonify(
-            {
-                "success": False,
-                "error": str(exc),
-            }
-        ), exc.status_code
+        body = {
+            "success": False,
+            "error": str(exc),
+        }
+        if exc.code is not None:
+            body["code"] = exc.code
+        return jsonify(body), exc.status_code
 
 
 # ============================================================================
@@ -408,12 +410,13 @@ def confirm(
         ), 200
 
     except DomainError as exc:
-        return jsonify(
-            {
-                "success": False,
-                "error": str(exc),
-            }
-        ), exc.status_code
+        body = {
+            "success": False,
+            "error": str(exc),
+        }
+        if exc.code is not None:
+            body["code"] = exc.code
+        return jsonify(body), exc.status_code
 
 
 # ============================================================================
@@ -455,12 +458,13 @@ def cancel(
         ), 200
 
     except DomainError as exc:
-        return jsonify(
-            {
-                "success": False,
-                "error": str(exc),
-            }
-        ), exc.status_code
+        body = {
+            "success": False,
+            "error": str(exc),
+        }
+        if exc.code is not None:
+            body["code"] = exc.code
+        return jsonify(body), exc.status_code
 
 
 # ============================================================================
@@ -502,12 +506,13 @@ def complete(
         ), 200
 
     except DomainError as exc:
-        return jsonify(
-            {
-                "success": False,
-                "error": str(exc),
-            }
-        ), exc.status_code
+        body = {
+            "success": False,
+            "error": str(exc),
+        }
+        if exc.code is not None:
+            body["code"] = exc.code
+        return jsonify(body), exc.status_code
 
 
 # ============================================================================
@@ -541,12 +546,13 @@ def no_show(
         ), 200
 
     except DomainError as exc:
-        return jsonify(
-            {
-                "success": False,
-                "error": str(exc),
-            }
-        ), exc.status_code
+        body = {
+            "success": False,
+            "error": str(exc),
+        }
+        if exc.code is not None:
+            body["code"] = exc.code
+        return jsonify(body), exc.status_code
 
 
 # ============================================================================
@@ -584,12 +590,13 @@ def patient_appointments(
         ), 200
 
     except DomainError as exc:
-        return jsonify(
-            {
-                "success": False,
-                "error": str(exc),
-            }
-        ), exc.status_code
+        body = {
+            "success": False,
+            "error": str(exc),
+        }
+        if exc.code is not None:
+            body["code"] = exc.code
+        return jsonify(body), exc.status_code
 
 
 # ============================================================================
@@ -635,9 +642,10 @@ def staff_appointments(
         ), 200
 
     except DomainError as exc:
-        return jsonify(
-            {
-                "success": False,
-                "error": str(exc),
-            }
-        ), exc.status_code
+        body = {
+            "success": False,
+            "error": str(exc),
+        }
+        if exc.code is not None:
+            body["code"] = exc.code
+        return jsonify(body), exc.status_code
