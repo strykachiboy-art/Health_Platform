@@ -4,6 +4,7 @@ import '../../features/auth/data/models/auth_token_response.dart';
 import 'operation_lifecycle.dart';
 import 'operation_payload_crypto.dart';
 import 'operation_queue_store.dart';
+import '../storage/app_database.dart';
 
 typedef OperationReplaySessionLoader = Future<AuthTokenResponse?> Function();
 
@@ -81,11 +82,60 @@ class OperationReplayRunResult {
       .length;
 }
 
+enum OperationReconciliationDisposition {
+  acknowledged,
+  invalidOperationId,
+  sessionUnavailable,
+  clinicContextUnavailable,
+  contextMismatch,
+  sessionChangedBeforeSend,
+  operationNotFound,
+  unsupportedOperation,
+  notReconciliationRequired,
+  payloadUnavailableOrInvalid,
+  storageUnavailable,
+  alreadyRunning,
+  unresolved,
+  acknowledgementPersistenceUncertain,
+}
+
+class OperationReconciliationResult {
+  const OperationReconciliationResult({
+    required this.operationId,
+    required this.disposition,
+    this.category,
+  });
+
+  final String operationId;
+  final OperationReconciliationDisposition disposition;
+
+  /// Fixed, non-sensitive diagnostic category.
+  final String? category;
+
+  bool get isAcknowledged =>
+      disposition == OperationReconciliationDisposition.acknowledged;
+}
+
+typedef OperationReconciliationRunner =
+    Future<OperationReconciliationResult> Function(String operationId);
+
 /// Replays only appointment creation, the mutation whose backend stable-key
 /// idempotency contract has been verified.
 ///
 /// The caller supplies the current session when each run begins. Bearer
 /// tokens are not persisted in the operation queue.
+class _OperationReconciliationEntry {
+  const _OperationReconciliationEntry(this.entry);
+
+  final OperationQueueEntryData entry;
+}
+
+class _OperationReconciliationStop {
+  const _OperationReconciliationStop(this.result);
+
+  final OperationReconciliationResult result;
+}
+
 class OperationReplayWorker {
   factory OperationReplayWorker({
     required OperationQueueStore queueStore,
@@ -145,6 +195,8 @@ class OperationReplayWorker {
   final OperationReplaySessionLoader _loadSession;
   final OperationReplayAppointmentSender _sendAppointmentCreate;
   final DateTime Function() _clock;
+
+  final Set<String> _activeReconciliations = <String>{};
 
   Future<OperationReplayRunResult> runOnce() async {
     final results = <OperationReplayItemResult>[];
@@ -382,6 +434,260 @@ class OperationReplayWorker {
     );
 
     return OperationReplayRunResult(items: results, nextRetryAt: nextRetryAt);
+  }
+
+  /// Makes one explicit, user-requested reconciliation attempt.
+  ///
+  /// It sends only the original, authenticated encrypted payload with the
+  /// original idempotency key. Failed or uncertain outcomes leave the
+  /// operation in reconciliationRequired for a later reviewed attempt.
+  Future<OperationReconciliationResult> reconcileAppointmentCreate(
+    String operationId,
+  ) async {
+    final id = operationId.trim();
+
+    OperationReconciliationResult result(
+      OperationReconciliationDisposition disposition, {
+      String? category,
+      String? resultId,
+    }) {
+      return OperationReconciliationResult(
+        operationId: resultId ?? id,
+        disposition: disposition,
+        category: category,
+      );
+    }
+
+    if (id.isEmpty || id.length > 128 || id != operationId) {
+      return result(
+        OperationReconciliationDisposition.invalidOperationId,
+        category: 'invalidOperationId',
+        resultId: '',
+      );
+    }
+
+    if (!_activeReconciliations.add(id)) {
+      return result(
+        OperationReconciliationDisposition.alreadyRunning,
+        category: 'alreadyRunning',
+      );
+    }
+
+    try {
+      AuthTokenResponse? session;
+      try {
+        session = await _loadSession();
+      } catch (_) {
+        return result(
+          OperationReconciliationDisposition.sessionUnavailable,
+          category: 'sessionUnavailable',
+        );
+      }
+
+      if (session == null ||
+          session.accessToken.trim().isEmpty ||
+          session.userId <= 0) {
+        return result(
+          OperationReconciliationDisposition.sessionUnavailable,
+          category: 'sessionUnavailable',
+        );
+      }
+
+      final clinicId = session.clinicContextId;
+      if (clinicId == null || clinicId <= 0) {
+        return result(
+          OperationReconciliationDisposition.clinicContextUnavailable,
+          category: 'clinicContextUnavailable',
+        );
+      }
+
+      final context = OperationPayloadContext(
+        userId: session.userId.toString(),
+        clinicContextId: clinicId.toString(),
+      );
+
+      final entry = await _findForReconciliation(id, result);
+      if (entry is _OperationReconciliationStop) {
+        return entry.result;
+      }
+      final initialEntry = (entry as _OperationReconciliationEntry).entry;
+
+      if (initialEntry.ownerUserId != context.userId ||
+          initialEntry.clinicContextId != context.clinicContextId) {
+        return result(
+          OperationReconciliationDisposition.contextMismatch,
+          category: 'contextMismatch',
+        );
+      }
+
+      if (initialEntry.operationType != appointmentCreateType) {
+        return result(
+          OperationReconciliationDisposition.unsupportedOperation,
+          category: 'unsupportedOperation',
+        );
+      }
+
+      if (initialEntry.lifecycleState !=
+          OperationLifecycleState.reconciliationRequired.name) {
+        if (initialEntry.lifecycleState ==
+            OperationLifecycleState.acknowledged.name) {
+          return result(OperationReconciliationDisposition.acknowledged);
+        }
+        return result(
+          OperationReconciliationDisposition.notReconciliationRequired,
+          category: 'notReconciliationRequired',
+        );
+      }
+
+      Map<String, dynamic> payload;
+      try {
+        payload = await _queueStore.loadPayload(
+          operationId: id,
+          context: context,
+        );
+        _validateAppointmentPayload(payload);
+      } catch (_) {
+        return result(
+          OperationReconciliationDisposition.payloadUnavailableOrInvalid,
+          category: 'payloadUnavailableOrInvalid',
+        );
+      }
+
+      // Revalidate the authenticated context immediately before any request.
+      AuthTokenResponse? sendSession;
+      try {
+        sendSession = await _loadSession();
+      } catch (_) {
+        sendSession = null;
+      }
+
+      if (!_sessionMatchesContext(sendSession, context)) {
+        return result(
+          OperationReconciliationDisposition.sessionChangedBeforeSend,
+          category: 'sessionChangedBeforeSend',
+        );
+      }
+
+      // Re-read state to catch changes while decrypting and validating.
+      final currentResult = await _findForReconciliation(id, result);
+      if (currentResult is _OperationReconciliationStop) {
+        return currentResult.result;
+      }
+      final current = (currentResult as _OperationReconciliationEntry).entry;
+
+      if (current.ownerUserId != context.userId ||
+          current.clinicContextId != context.clinicContextId) {
+        return result(
+          OperationReconciliationDisposition.contextMismatch,
+          category: 'contextMismatch',
+        );
+      }
+
+      if (current.lifecycleState == OperationLifecycleState.acknowledged.name) {
+        return result(OperationReconciliationDisposition.acknowledged);
+      }
+
+      if (current.operationType != appointmentCreateType) {
+        return result(
+          OperationReconciliationDisposition.unsupportedOperation,
+          category: 'unsupportedOperation',
+        );
+      }
+
+      if (current.lifecycleState !=
+          OperationLifecycleState.reconciliationRequired.name) {
+        return result(
+          OperationReconciliationDisposition.notReconciliationRequired,
+          category: 'notReconciliationRequired',
+        );
+      }
+
+      if (current.idempotencyKey != initialEntry.idempotencyKey) {
+        return result(
+          OperationReconciliationDisposition.unresolved,
+          category: 'operationIdentityChanged',
+        );
+      }
+
+      try {
+        await _sendAppointmentCreate(
+          path: appointmentCreatePath,
+          body: payload,
+          bearerToken: sendSession!.accessToken,
+          idempotencyKey: initialEntry.idempotencyKey,
+        );
+      } on ApiException catch (exception) {
+        return result(
+          OperationReconciliationDisposition.unresolved,
+          category: _failureCategory(_classifyApiFailure(exception)),
+        );
+      } catch (_) {
+        return result(
+          OperationReconciliationDisposition.unresolved,
+          category: 'outcomeUnknown',
+        );
+      }
+
+      try {
+        await _queueStore.transition(
+          operationId: id,
+          expectedState: OperationLifecycleState.reconciliationRequired,
+          nextState: OperationLifecycleState.acknowledged,
+          now: _clock().toUtc(),
+        );
+        return result(OperationReconciliationDisposition.acknowledged);
+      } catch (_) {
+        // Another explicit reconciliation may have persisted the same
+        // acknowledgement. Read the durable state before reporting success.
+        try {
+          final latest = await _queueStore.findByOperationId(id);
+          if (latest?.lifecycleState ==
+              OperationLifecycleState.acknowledged.name) {
+            return result(OperationReconciliationDisposition.acknowledged);
+          }
+        } catch (_) {
+          // The acknowledgement status remains uncertain.
+        }
+
+        return result(
+          OperationReconciliationDisposition
+              .acknowledgementPersistenceUncertain,
+          category: 'acknowledgementPersistenceUncertain',
+        );
+      }
+    } finally {
+      _activeReconciliations.remove(id);
+    }
+  }
+
+  Future<Object> _findForReconciliation(
+    String id,
+    OperationReconciliationResult Function(
+      OperationReconciliationDisposition disposition, {
+      String? category,
+      String? resultId,
+    })
+    result,
+  ) async {
+    try {
+      final entry = await _queueStore.findByOperationId(id);
+      if (entry == null) {
+        return _OperationReconciliationStop(
+          result(
+            OperationReconciliationDisposition.operationNotFound,
+            category: 'operationNotFound',
+          ),
+        );
+      }
+      return _OperationReconciliationEntry(entry);
+    } catch (_) {
+      return _OperationReconciliationStop(
+        result(
+          OperationReconciliationDisposition.storageUnavailable,
+          category: 'storageUnavailable',
+        ),
+      );
+    }
   }
 
   static bool _sessionMatchesContext(

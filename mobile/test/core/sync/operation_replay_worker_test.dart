@@ -98,6 +98,33 @@ void main() {
     expect(result, OperationQueueEnqueueResult.inserted);
   }
 
+  Future<void> markForReconciliationRequired({
+    String operationId = 'appointment-1',
+  }) async {
+    await queueStore.transition(
+      operationId: operationId,
+      expectedState: OperationLifecycleState.queued,
+      nextState: OperationLifecycleState.inFlight,
+      context: _context,
+      now: _now,
+    );
+
+    await queueStore.recordFailure(
+      operationId: operationId,
+      failure: OperationAttemptFailure.serverConflict,
+      now: _now,
+      replayContract:
+          OperationReplayContract.endpointSupportsStableIdempotencyKey,
+      jitterSample: 0.5,
+    );
+
+    final entry = await queueStore.findByOperationId(operationId);
+    expect(
+      entry?.lifecycleState,
+      OperationLifecycleState.reconciliationRequired.name,
+    );
+  }
+
   ApiException httpFailure(int statusCode) {
     return ApiException(
       kind: ApiFailureKind.httpStatus,
@@ -107,6 +134,139 @@ void main() {
     );
   }
 
+  test('explicit reconciliation reuses the original key and payload', () async {
+    await enqueue();
+    await markForReconciliationRequired();
+
+    final requests = <Map<String, dynamic>>[];
+
+    final result = await worker(
+      sender:
+          ({
+            required String path,
+            required Map<String, dynamic> body,
+            required String bearerToken,
+            required String idempotencyKey,
+          }) async {
+            requests.add(<String, dynamic>{
+              'path': path,
+              'body': body,
+              'bearerToken': bearerToken,
+              'idempotencyKey': idempotencyKey,
+            });
+            return <String, dynamic>{'success': true};
+          },
+    ).reconcileAppointmentCreate('appointment-1');
+
+    expect(result.disposition, OperationReconciliationDisposition.acknowledged);
+    expect(requests, hasLength(1));
+    expect(
+      requests.single['path'],
+      OperationReplayWorker.appointmentCreatePath,
+    );
+    expect(requests.single['body'], _appointmentPayload);
+    expect(requests.single['bearerToken'], _session.accessToken);
+    expect(requests.single['idempotencyKey'], 'appointment-1-key');
+
+    final entry = await queueStore.findByOperationId('appointment-1');
+    expect(entry?.lifecycleState, OperationLifecycleState.acknowledged.name);
+  });
+
+  test('continuing HTTP 409 leaves reconciliation unresolved', () async {
+    await enqueue();
+    await markForReconciliationRequired();
+
+    var calls = 0;
+    final result = await worker(
+      sender:
+          ({
+            required String path,
+            required Map<String, dynamic> body,
+            required String bearerToken,
+            required String idempotencyKey,
+          }) async {
+            calls++;
+            throw httpFailure(409);
+          },
+    ).reconcileAppointmentCreate('appointment-1');
+
+    expect(result.disposition, OperationReconciliationDisposition.unresolved);
+    expect(result.category, 'serverConflict');
+    expect(calls, 1);
+
+    final entry = await queueStore.findByOperationId('appointment-1');
+    expect(
+      entry?.lifecycleState,
+      OperationLifecycleState.reconciliationRequired.name,
+    );
+  });
+
+  test('reconciliation refuses a different authenticated owner', () async {
+    await enqueue();
+    await markForReconciliationRequired();
+
+    const otherSession = AuthTokenResponse(
+      accessToken: 'x.y.z',
+      refreshToken: 'r.s.t',
+      userId: 8,
+      role: 'RECEPTIONIST',
+      clinicContextId: 3,
+    );
+
+    var calls = 0;
+    final result = await worker(
+      session: otherSession,
+      sender:
+          ({
+            required String path,
+            required Map<String, dynamic> body,
+            required String bearerToken,
+            required String idempotencyKey,
+          }) async {
+            calls++;
+            return <String, dynamic>{'success': true};
+          },
+    ).reconcileAppointmentCreate('appointment-1');
+
+    expect(
+      result.disposition,
+      OperationReconciliationDisposition.contextMismatch,
+    );
+    expect(calls, 0);
+
+    final entry = await queueStore.findByOperationId('appointment-1');
+    expect(
+      entry?.lifecycleState,
+      OperationLifecycleState.reconciliationRequired.name,
+    );
+  });
+
+  test('reconciliation cannot send an ordinary queued operation', () async {
+    await enqueue();
+
+    var calls = 0;
+    final result = await worker(
+      sender:
+          ({
+            required String path,
+            required Map<String, dynamic> body,
+            required String bearerToken,
+            required String idempotencyKey,
+          }) async {
+            calls++;
+            return <String, dynamic>{'success': true};
+          },
+    ).reconcileAppointmentCreate('appointment-1');
+
+    expect(
+      result.disposition,
+      OperationReconciliationDisposition.notReconciliationRequired,
+    );
+    expect(calls, 0);
+
+    final entry = await queueStore.findByOperationId('appointment-1');
+    expect(entry?.lifecycleState, OperationLifecycleState.queued.name);
+  });
   test('sends appointment with original body and idempotency key', () async {
     await enqueue();
 

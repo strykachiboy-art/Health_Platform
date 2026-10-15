@@ -269,6 +269,12 @@ void main() {
           textDirection: TextDirection.ltr,
           child: AppointmentCreateQueueScope(
             producer: producer,
+            reconcileOperation: (operationId) async =>
+                OperationReconciliationResult(
+                  operationId: operationId,
+                  disposition: OperationReconciliationDisposition
+                      .notReconciliationRequired,
+                ),
             child: Builder(
               builder: (context) {
                 final resolved = AppointmentCreateQueueScope.of(context)
