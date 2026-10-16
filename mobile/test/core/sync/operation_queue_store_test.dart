@@ -698,4 +698,161 @@ void main() {
       }
     },
   );
+
+  group('purgeExpiredTerminalOperations', () {
+    test('purges expired terminal entries and their encrypted payloads', () async {
+      final cutoff = _now.subtract(const Duration(days: 10));
+      final expiredAt = cutoff.subtract(const Duration(seconds: 1));
+
+      Future<void> createTerminal(
+        String id,
+        OperationLifecycleState terminal,
+        DateTime timestamp,
+      ) async {
+        await _enqueueEncrypted(
+          store,
+          _identity(operationId: id),
+          now: timestamp,
+        );
+
+        if (terminal == OperationLifecycleState.cancelled) {
+          await store.transition(
+            operationId: id,
+            expectedState: OperationLifecycleState.queued,
+            nextState: OperationLifecycleState.cancelled,
+            now: timestamp,
+          );
+          return;
+        }
+
+        await store.transition(
+          operationId: id,
+          expectedState: OperationLifecycleState.queued,
+          nextState: OperationLifecycleState.inFlight,
+          context: _testContext(),
+          now: timestamp,
+        );
+
+        if (terminal == OperationLifecycleState.rejected) {
+          await store.transition(
+            operationId: id,
+            expectedState: OperationLifecycleState.inFlight,
+            nextState: OperationLifecycleState.rejected,
+            failure: OperationAttemptFailure.definitiveRejectionWithoutEffect,
+            now: timestamp,
+          );
+        } else {
+          await store.transition(
+            operationId: id,
+            expectedState: OperationLifecycleState.inFlight,
+            nextState: terminal,
+            now: timestamp,
+          );
+        }
+      }
+
+      await createTerminal(
+        'expired-ack',
+        OperationLifecycleState.acknowledged,
+        expiredAt,
+      );
+      await createTerminal(
+        'expired-rejected',
+        OperationLifecycleState.rejected,
+        expiredAt,
+      );
+      await createTerminal(
+        'expired-cancelled',
+        OperationLifecycleState.cancelled,
+        expiredAt,
+      );
+      await createTerminal(
+        'cutoff-ack',
+        OperationLifecycleState.acknowledged,
+        cutoff,
+      );
+
+      final removed = await store.purgeExpiredTerminalOperations(
+        olderThan: cutoff,
+      );
+
+      expect(removed, 3);
+      final entries = await database.select(database.operationQueueEntry).get();
+      expect(entries.map((row) => row.operationId).toSet(), {'cutoff-ack'});
+
+      final payloads =
+          await database.select(database.operationQueuePayload).get();
+      expect(payloads.map((row) => row.operationId).toSet(), {'cutoff-ack'});
+    });
+
+    test('preserves every nonterminal state regardless of age', () async {
+      final oldAt = _now.subtract(const Duration(days: 30));
+      final cutoff = _now.subtract(const Duration(days: 10));
+
+      Future<void> startInFlight(String id) async {
+        await _enqueueEncrypted(
+          store,
+          _identity(operationId: id),
+          now: oldAt,
+        );
+        await store.transition(
+          operationId: id,
+          expectedState: OperationLifecycleState.queued,
+          nextState: OperationLifecycleState.inFlight,
+          context: _testContext(),
+          now: oldAt,
+        );
+      }
+
+      await _enqueueEncrypted(
+        store,
+        _identity(operationId: 'keep-queued'),
+        now: oldAt,
+      );
+      await startInFlight('keep-in-flight');
+
+      await startInFlight('keep-retry');
+      await store.recordFailure(
+        operationId: 'keep-retry',
+        failure: OperationAttemptFailure.confirmedTransientNoEffect,
+        now: oldAt,
+      );
+
+      await startInFlight('keep-reconciliation');
+      await store.recordFailure(
+        operationId: 'keep-reconciliation',
+        failure: OperationAttemptFailure.outcomeUnknown,
+        now: oldAt,
+      );
+
+      await startInFlight('keep-intervention');
+      await store.recordFailure(
+        operationId: 'keep-intervention',
+        failure: OperationAttemptFailure.sessionExpired,
+        now: oldAt,
+      );
+
+      final removed = await store.purgeExpiredTerminalOperations(
+        olderThan: cutoff,
+      );
+
+      expect(removed, 0);
+      final entries = await database.select(database.operationQueueEntry).get();
+      expect(entries, hasLength(5));
+      expect(
+        entries.map((row) => row.lifecycleState).toSet(),
+        {
+          OperationLifecycleState.queued.name,
+          OperationLifecycleState.inFlight.name,
+          OperationLifecycleState.retryScheduled.name,
+          OperationLifecycleState.reconciliationRequired.name,
+          OperationLifecycleState.userInterventionRequired.name,
+        },
+      );
+      final payloads =
+          await database.select(database.operationQueuePayload).get();
+      expect(payloads, hasLength(5));
+    });
+  });
+
 }

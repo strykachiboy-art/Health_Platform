@@ -635,6 +635,47 @@ class OperationQueueStore {
     return jsonEncode(normalize(payload));
   }
 
+  /// Deletes terminal operations older than an explicit retention cutoff.
+  ///
+  /// Retention policy belongs to the caller. Active or unresolved operations
+  /// are never removed by this method. Payload and entry deletion are atomic.
+  Future<int> purgeExpiredTerminalOperations({
+    required DateTime olderThan,
+  }) async {
+    final cutoff = olderThan.toUtc();
+    final terminalStates = <String>{
+      OperationLifecycleState.acknowledged.name,
+      OperationLifecycleState.rejected.name,
+      OperationLifecycleState.cancelled.name,
+    };
+    final entryTable = _database.operationQueueEntry;
+    final payloadTable = _database.operationQueuePayload;
+
+    return _database.transaction(() async {
+      final expired = await (_database.select(entryTable)
+            ..where(
+              (row) =>
+                  row.lifecycleState.isIn(terminalStates) &
+                  row.updatedAt.isSmallerThanValue(cutoff),
+            ))
+          .get();
+
+      if (expired.isEmpty) return 0;
+
+      final operationIds = expired
+          .map((row) => row.operationId)
+          .toList(growable: false);
+
+      await (_database.delete(payloadTable)
+            ..where((row) => row.operationId.isIn(operationIds)))
+          .go();
+
+      return (_database.delete(entryTable)
+            ..where((row) => row.operationId.isIn(operationIds)))
+          .go();
+    });
+  }
+
   /// Applies the failure policy and persists its resulting state and backoff.
   ///
   /// This method does not perform a network request or a retry. A delivery
