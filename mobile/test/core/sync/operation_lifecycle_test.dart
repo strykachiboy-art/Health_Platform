@@ -255,6 +255,53 @@ void main() {
       );
     });
 
+    test(
+      'routes known scheduling and idempotency conflicts to user intervention',
+      () {
+        const failures = <OperationAttemptFailure>[
+          OperationAttemptFailure.appointmentPatientScheduleConflict,
+          OperationAttemptFailure.appointmentStaffScheduleConflict,
+          OperationAttemptFailure.idempotencyKeyPayloadMismatch,
+          OperationAttemptFailure.idempotencyRecordUnresolved,
+        ];
+
+        for (final failure in failures) {
+          final decision = decideOperationFailure(
+            failure: failure,
+            attemptsCompleted: 1,
+            retryPolicy: policy,
+          );
+
+          expect(
+            decision.nextState,
+            OperationLifecycleState.userInterventionRequired,
+            reason: failure.name,
+          );
+          expect(
+            decision.requiresUserIntervention,
+            isTrue,
+            reason: failure.name,
+          );
+          expect(decision.mayRetryAutomatically, isFalse);
+        }
+      },
+    );
+
+    test('keeps unresolved idempotency outcomes in reconciliation', () {
+      final decision = decideOperationFailure(
+        failure: OperationAttemptFailure.idempotencyOutcomeUnresolved,
+        attemptsCompleted: 1,
+        retryPolicy: policy,
+      );
+
+      expect(
+        decision.nextState,
+        OperationLifecycleState.reconciliationRequired,
+      );
+      expect(decision.requiresReconciliation, isTrue);
+      expect(decision.mayRetryAutomatically, isFalse);
+    });
+
     test('rejects invalid attempt counts', () {
       expect(
         () => decideOperationFailure(
