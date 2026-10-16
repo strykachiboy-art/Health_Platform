@@ -439,9 +439,10 @@ class OperationReplayWorker {
 
   /// Makes one explicit, user-requested reconciliation attempt.
   ///
-  /// It sends only the original, authenticated encrypted payload with the
-  /// original idempotency key. Failed or uncertain outcomes leave the
-  /// operation in reconciliationRequired for a later reviewed attempt.
+  /// It sends only the original authenticated encrypted payload and original
+  /// idempotency key. Unresolved outcomes remain in reconciliationRequired;
+  /// recognized conflicts requiring a human decision transition to
+  /// userInterventionRequired only after the durable state is confirmed.
   Future<OperationReconciliationResult> reconcileAppointmentCreate(
     String operationId,
   ) async {

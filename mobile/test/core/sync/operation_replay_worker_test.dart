@@ -47,9 +47,183 @@ class _MemorySecureStorage implements SecureKeyValueStorage {
   }
 }
 
+enum _QueueStoreFault {
+  none,
+  conflictWriteBeforePersist,
+  conflictWriteAfterPersist,
+  conflictRaceToAcknowledged,
+  conflictWriteAndReadbackFail,
+  acknowledgementWriteBeforePersist,
+  acknowledgementWriteAfterPersist,
+  acknowledgementWriteAndReadbackFail,
+}
+
+class _ConflictTransitionFaultStore extends OperationQueueStore {
+  _ConflictTransitionFaultStore(super.database, {required super.payloadCrypto});
+
+  _QueueStoreFault fault = _QueueStoreFault.none;
+  bool failReadback = false;
+  bool _targetTransitionAttempted = false;
+
+  @override
+  Future<OperationQueueEntryData?> findByOperationId(String operationId) async {
+    if (failReadback && _targetTransitionAttempted) {
+      throw StateError('Injected durable-state readback failure.');
+    }
+    return super.findByOperationId(operationId);
+  }
+
+  Future<OperationQueueEntryData> _forwardTransition({
+    required String operationId,
+    required OperationLifecycleState expectedState,
+    required OperationLifecycleState nextState,
+    required DateTime now,
+    OperationPayloadContext? context,
+    OperationAttemptFailure? failure,
+    DateTime? nextAttemptAt,
+    bool reconciliationConfirmed = false,
+    bool sessionRevalidated = false,
+    OperationReplayContract replayContract =
+        OperationReplayContract.notVerified,
+    double jitterSample = 0.5,
+  }) {
+    return super.transition(
+      operationId: operationId,
+      expectedState: expectedState,
+      nextState: nextState,
+      now: now,
+      context: context,
+      failure: failure,
+      nextAttemptAt: nextAttemptAt,
+      reconciliationConfirmed: reconciliationConfirmed,
+      sessionRevalidated: sessionRevalidated,
+      replayContract: replayContract,
+      jitterSample: jitterSample,
+    );
+  }
+
+  @override
+  Future<OperationQueueEntryData> transition({
+    required String operationId,
+    required OperationLifecycleState expectedState,
+    required OperationLifecycleState nextState,
+    required DateTime now,
+    OperationPayloadContext? context,
+    OperationAttemptFailure? failure,
+    DateTime? nextAttemptAt,
+    bool reconciliationConfirmed = false,
+    bool sessionRevalidated = false,
+    OperationReplayContract replayContract =
+        OperationReplayContract.notVerified,
+    double jitterSample = 0.5,
+  }) async {
+    final isConflictTransition =
+        expectedState == OperationLifecycleState.reconciliationRequired &&
+        nextState == OperationLifecycleState.userInterventionRequired;
+
+    final isAcknowledgementTransition =
+        expectedState == OperationLifecycleState.reconciliationRequired &&
+        nextState == OperationLifecycleState.acknowledged;
+
+    if (isConflictTransition) {
+      switch (fault) {
+        case _QueueStoreFault.conflictWriteBeforePersist:
+          _targetTransitionAttempted = true;
+          throw StateError('Injected conflict-transition write failure.');
+
+        case _QueueStoreFault.conflictWriteAfterPersist:
+          _targetTransitionAttempted = true;
+          await _forwardTransition(
+            operationId: operationId,
+            expectedState: expectedState,
+            nextState: nextState,
+            now: now,
+            context: context,
+            failure: failure,
+            nextAttemptAt: nextAttemptAt,
+            reconciliationConfirmed: reconciliationConfirmed,
+            sessionRevalidated: sessionRevalidated,
+            replayContract: replayContract,
+            jitterSample: jitterSample,
+          );
+          throw StateError('Injected exception after durable conflict write.');
+
+        case _QueueStoreFault.conflictRaceToAcknowledged:
+          _targetTransitionAttempted = true;
+          await _forwardTransition(
+            operationId: operationId,
+            expectedState: expectedState,
+            nextState: OperationLifecycleState.acknowledged,
+            now: now,
+          );
+          throw StateError('Injected concurrent acknowledgement race.');
+
+        case _QueueStoreFault.conflictWriteAndReadbackFail:
+          _targetTransitionAttempted = true;
+          failReadback = true;
+          throw StateError('Injected conflict write and readback failure.');
+
+        default:
+          break;
+      }
+    }
+
+    if (isAcknowledgementTransition) {
+      switch (fault) {
+        case _QueueStoreFault.acknowledgementWriteBeforePersist:
+          _targetTransitionAttempted = true;
+          throw StateError('Injected acknowledgement write failure.');
+
+        case _QueueStoreFault.acknowledgementWriteAfterPersist:
+          _targetTransitionAttempted = true;
+          await _forwardTransition(
+            operationId: operationId,
+            expectedState: expectedState,
+            nextState: nextState,
+            now: now,
+            context: context,
+            failure: failure,
+            nextAttemptAt: nextAttemptAt,
+            reconciliationConfirmed: reconciliationConfirmed,
+            sessionRevalidated: sessionRevalidated,
+            replayContract: replayContract,
+            jitterSample: jitterSample,
+          );
+          throw StateError(
+            'Injected exception after durable acknowledgement write.',
+          );
+
+        case _QueueStoreFault.acknowledgementWriteAndReadbackFail:
+          _targetTransitionAttempted = true;
+          failReadback = true;
+          throw StateError(
+            'Injected acknowledgement write and readback failure.',
+          );
+
+        default:
+          break;
+      }
+    }
+
+    return _forwardTransition(
+      operationId: operationId,
+      expectedState: expectedState,
+      nextState: nextState,
+      now: now,
+      context: context,
+      failure: failure,
+      nextAttemptAt: nextAttemptAt,
+      reconciliationConfirmed: reconciliationConfirmed,
+      sessionRevalidated: sessionRevalidated,
+      replayContract: replayContract,
+      jitterSample: jitterSample,
+    );
+  }
+}
+
 void main() {
   late AppDatabase database;
-  late OperationQueueStore queueStore;
+  late _ConflictTransitionFaultStore queueStore;
 
   setUp(() {
     database = AppDatabase(NativeDatabase.memory());
@@ -58,7 +232,7 @@ void main() {
       secureStorage: _MemorySecureStorage(),
     );
 
-    queueStore = OperationQueueStore(database, payloadCrypto: crypto);
+    queueStore = _ConflictTransitionFaultStore(database, payloadCrypto: crypto);
   });
 
   tearDown(() async {
@@ -133,6 +307,23 @@ void main() {
       statusCode: statusCode,
       serverCode: serverCode,
     );
+  }
+
+  OperationReplayAppointmentSender patientScheduleConflictSender({
+    void Function()? onSend,
+  }) {
+    return ({
+      required String path,
+      required Map<String, dynamic> body,
+      required String bearerToken,
+      required String idempotencyKey,
+    }) async {
+      onSend?.call();
+      throw httpFailure(
+        409,
+        serverCode: 'APPOINTMENT_PATIENT_SCHEDULE_CONFLICT',
+      );
+    };
   }
 
   Future<OperationReplayRunResult> replayConflict(String? serverCode) async {
@@ -308,6 +499,230 @@ void main() {
       _appointmentPayload,
     );
   });
+
+  test(
+    'does not claim conflict intervention when its durable write fails',
+    () async {
+      await enqueue();
+      await markForReconciliationRequired();
+      queueStore.fault = _QueueStoreFault.conflictWriteBeforePersist;
+
+      var sends = 0;
+      final result = await worker(
+        sender: patientScheduleConflictSender(onSend: () => sends++),
+      ).reconcileAppointmentCreate('appointment-1');
+
+      expect(sends, 1);
+      expect(result.disposition, OperationReconciliationDisposition.unresolved);
+      expect(result.category, 'conflictStatePersistenceUncertain');
+
+      final entry = await queueStore.findByOperationId('appointment-1');
+      expect(
+        entry?.lifecycleState,
+        OperationLifecycleState.reconciliationRequired.name,
+      );
+      expect(entry?.idempotencyKey, 'appointment-1-key');
+    },
+  );
+
+  test(
+    'confirms user intervention when the write persisted before throwing',
+    () async {
+      await enqueue();
+      await markForReconciliationRequired();
+      queueStore.fault = _QueueStoreFault.conflictWriteAfterPersist;
+
+      final result = await worker(sender: patientScheduleConflictSender())
+          .reconcileAppointmentCreate('appointment-1');
+
+      expect(
+        result.disposition,
+        OperationReconciliationDisposition.userInterventionRequired,
+      );
+      expect(result.category, 'appointmentPatientScheduleConflict');
+
+      final entry = await queueStore.findByOperationId('appointment-1');
+      expect(
+        entry?.lifecycleState,
+        OperationLifecycleState.userInterventionRequired.name,
+      );
+      expect(entry?.lastFailureCategory, 'appointmentPatientScheduleConflict');
+    },
+  );
+
+  test(
+    'honors a concurrent durable acknowledgement after a conflict write fails',
+    () async {
+      await enqueue();
+      await markForReconciliationRequired();
+      queueStore.fault = _QueueStoreFault.conflictRaceToAcknowledged;
+
+      final result = await worker(sender: patientScheduleConflictSender())
+          .reconcileAppointmentCreate('appointment-1');
+
+      expect(
+        result.disposition,
+        OperationReconciliationDisposition.acknowledged,
+      );
+
+      final entry = await queueStore.findByOperationId('appointment-1');
+      expect(entry?.lifecycleState, OperationLifecycleState.acknowledged.name);
+    },
+  );
+
+  test(
+    'never claims conflict intervention when durable readback also fails',
+    () async {
+      await enqueue();
+      await markForReconciliationRequired();
+      queueStore.fault = _QueueStoreFault.conflictWriteAndReadbackFail;
+
+      final result = await worker(sender: patientScheduleConflictSender())
+          .reconcileAppointmentCreate('appointment-1');
+
+      expect(result.disposition, OperationReconciliationDisposition.unresolved);
+      expect(result.category, 'conflictStatePersistenceUncertain');
+
+      queueStore.failReadback = false;
+      queueStore.fault = _QueueStoreFault.none;
+
+      final entry = await queueStore.findByOperationId('appointment-1');
+      expect(
+        entry?.lifecycleState,
+        OperationLifecycleState.reconciliationRequired.name,
+      );
+    },
+  );
+
+  test(
+    'explicit reconciliation keeps unresolved idempotency outcomes unresolved',
+    () async {
+      await enqueue();
+      await markForReconciliationRequired();
+
+      var sends = 0;
+      final result = await worker(
+        sender:
+            ({
+              required String path,
+              required Map<String, dynamic> body,
+              required String bearerToken,
+              required String idempotencyKey,
+            }) async {
+              sends++;
+              throw httpFailure(
+                409,
+                serverCode: 'IDEMPOTENCY_OUTCOME_UNRESOLVED',
+              );
+            },
+      ).reconcileAppointmentCreate('appointment-1');
+
+      expect(sends, 1);
+      expect(result.disposition, OperationReconciliationDisposition.unresolved);
+      expect(result.category, 'idempotencyOutcomeUnresolved');
+
+      final entry = await queueStore.findByOperationId('appointment-1');
+      expect(
+        entry?.lifecycleState,
+        OperationLifecycleState.reconciliationRequired.name,
+      );
+      expect(entry?.nextAttemptAt, isNull);
+      expect(entry?.idempotencyKey, 'appointment-1-key');
+      expect(
+        await queueStore.loadPayload(
+          operationId: 'appointment-1',
+          context: _context,
+        ),
+        _appointmentPayload,
+      );
+    },
+  );
+
+  test('does not claim acknowledgement when its durable write fails', () async {
+    await enqueue();
+    await markForReconciliationRequired();
+    queueStore.fault = _QueueStoreFault.acknowledgementWriteBeforePersist;
+
+    final result = await worker(
+      sender: ({
+        required String path,
+        required Map<String, dynamic> body,
+        required String bearerToken,
+        required String idempotencyKey,
+      }) async => <String, dynamic>{'success': true},
+    ).reconcileAppointmentCreate('appointment-1');
+
+    expect(
+      result.disposition,
+      OperationReconciliationDisposition.acknowledgementPersistenceUncertain,
+    );
+    expect(result.category, 'acknowledgementPersistenceUncertain');
+
+    final entry = await queueStore.findByOperationId('appointment-1');
+    expect(
+      entry?.lifecycleState,
+      OperationLifecycleState.reconciliationRequired.name,
+    );
+  });
+
+  test(
+    'confirms acknowledgement if its write persisted before throwing',
+    () async {
+      await enqueue();
+      await markForReconciliationRequired();
+      queueStore.fault = _QueueStoreFault.acknowledgementWriteAfterPersist;
+
+      final result = await worker(
+        sender: ({
+          required String path,
+          required Map<String, dynamic> body,
+          required String bearerToken,
+          required String idempotencyKey,
+        }) async => <String, dynamic>{'success': true},
+      ).reconcileAppointmentCreate('appointment-1');
+
+      expect(
+        result.disposition,
+        OperationReconciliationDisposition.acknowledged,
+      );
+
+      final entry = await queueStore.findByOperationId('appointment-1');
+      expect(entry?.lifecycleState, OperationLifecycleState.acknowledged.name);
+    },
+  );
+
+  test(
+    'does not claim acknowledgement if its write and durable readback fail',
+    () async {
+      await enqueue();
+      await markForReconciliationRequired();
+      queueStore.fault = _QueueStoreFault.acknowledgementWriteAndReadbackFail;
+
+      final result = await worker(
+        sender: ({
+          required String path,
+          required Map<String, dynamic> body,
+          required String bearerToken,
+          required String idempotencyKey,
+        }) async => <String, dynamic>{'success': true},
+      ).reconcileAppointmentCreate('appointment-1');
+
+      expect(
+        result.disposition,
+        OperationReconciliationDisposition.acknowledgementPersistenceUncertain,
+      );
+      expect(result.category, 'acknowledgementPersistenceUncertain');
+
+      queueStore.failReadback = false;
+      queueStore.fault = _QueueStoreFault.none;
+
+      final entry = await queueStore.findByOperationId('appointment-1');
+      expect(
+        entry?.lifecycleState,
+        OperationLifecycleState.reconciliationRequired.name,
+      );
+    },
+  );
 
   test('reconciliation refuses a different authenticated owner', () async {
     await enqueue();
