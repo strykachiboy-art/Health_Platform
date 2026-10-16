@@ -403,3 +403,46 @@ This record captures the current mobile storage boundary and the constraints
 for subsequent offline work. Any future decision that changes the allowed
 data categories, storage mechanism, encryption assumptions, or authoritative
 ownership must be reviewed and documented before implementation.
+
+## Phase 19 current-state security inventory
+
+Review date: 2026-10-16. Source snapshot: [5be486b2a60304df0f40425fd6219efe80263570](https://github.com/strykachiboy-art/clinic-system-pro/commit/5be486b2a60304df0f40425fd6219efe80263570).
+
+The current source inventory and selected lifecycle design are recorded in [phase-19-offline-sensitive-data-inventory.md](phase-19-offline-sensitive-data-inventory.md).
+
+This note adds a current-state view without rewriting historical evidence. Statements in earlier sections describing a prior source baseline remain historical; they must not be read as claims about the current implementation. Earlier test and migration results also remain evidence only for the source commit and environment originally recorded.
+
+### Current source findings
+
+- The runtime wires `AppDatabase` to the durable operation queue. Schema version 3 contains `AppMetadata`, `OperationQueueEntry` and `OperationQueuePayload`.
+- Offline appointment request payloads use AES-256-GCM. The encryption key is handled through platform-backed secure storage, and authenticated associated data binds encrypted content to operation identity and user/clinic context. This is payload-level encryption, not whole-database SQLite encryption.
+- Queue metadata remains in ordinary SQLite columns. The queue store has a terminal purge primitive that accepts a caller-provided cutoff. The primitive does not itself establish or schedule a retention policy.
+- The selected design retains terminal queue records and associated encrypted payloads for 30 days after the terminal transition. The runtime policy, safe trigger and verification are not yet established by this documentation change.
+- The selected design requires unresolved operations aged 30 days from creation to enter review and be excluded from automatic replay until reviewed. The current ready-operation selection does not enforce this age-based review guard.
+- The client lifecycle distinguishes queued, in-flight, retry-scheduled, reconciliation-required, acknowledged, rejected, user-intervention-required and cancelled operations. An in-flight operation may have reached the server before interruption; it must not be treated as a confirmed failure merely because its response was lost.
+- A universal backend idempotency-key validity period has not been established in this review. The local 30-day retention policy is not proof of backend deduplication for 30 days. Replay of aged or uncertain work requires verification of the applicable operation-specific backend contract.
+- Authentication tokens reside in the platform-backed session record. Patient directory, detail, edit and registration screens hold sensitive models or form values in memory. Source review of these screens does not prove automatic clearing across every route and session transition.
+- The current logout path waits for active replay and leaves replay paused after logout. The encrypted queue and its keys are retained; logout is not an implicit destructive queue purge.
+- The queue producer may include optional appointment `reason` and `notes` fields. Their necessity and approval for persistent offline storage must be resolved before enabling that sensitive payload content in a deployment.
+- Android manifest and backup/data-extraction exclusions exist at source level. They do not prove actual backup/restore behavior, whole-database encryption or protection against a compromised device.
+
+### Selected Slice 1 lifecycle design
+
+- Terminal states `acknowledged`, `rejected` and `cancelled`: 30-day local retention measured from the terminal transition, followed by eligibility for a transactional purge.
+- Unresolved states: 30-day age-based review, without automatic deletion just because the age threshold is reached.
+- Unknown outcome: reconcile before a potentially unsafe repeat delivery. Preserve stable operation identity and idempotency key when a repeat attempt is proven safe; otherwise fail closed.
+- Explicit discard: require the authenticated original operation owner, the original user/clinic context, verified permission for the operation type and explicit confirmation. If a server-side effect may have occurred, require authoritative reconciliation or an explicitly recorded manual disposition before deletion. Local deletion is not server-side cancellation.
+- Logout and context changes: stop and await active replay, keep replay paused, invalidate access to prior session-scoped views, and revalidate user/clinic ownership before decrypting or delivering retained work. Ordinary logout does not itself delete queue data or encryption keys.
+- Key cleanup: retain keys needed by surviving encrypted payloads. After an authorized purge, check key dependencies before removing keys. Database deletion and secure-storage deletion are separate operations; incomplete cleanup must be reported and retriable.
+- Device controls: treat backup rules as source-level evidence until platform behavior has been verified on suitable devices and supported versions.
+
+### Remaining verification and rollout gates
+
+- Verify the selected 30-day retention rule against applicable product, organizational, legal, contractual and audit requirements before deployment.
+- Verify the actual idempotency and reconciliation contract for each replayable operation type. Do not infer the backend validity window from local retention.
+- Resolve whether optional appointment reason/notes are necessary and approved for persistent offline storage.
+- Implement and test the terminal purge policy and trigger, unresolved-operation review guard, explicit discard authorization, disposition evidence, dependency-aware key cleanup and failure recovery.
+- Verify that sensitive views and forms become inaccessible following logout, authentication rejection, and user/clinic changes.
+- Perform platform-level verification of secure storage, backup/restore, reinstall and device lifecycle behavior where supported. Unit and widget tests alone do not establish device behavior.
+
+Status remains **Proposed**. This current-state note records source findings and selected design policy; it does not claim that outstanding runtime enforcement has been implemented, platform behavior has been verified, or production operation has occurred.
