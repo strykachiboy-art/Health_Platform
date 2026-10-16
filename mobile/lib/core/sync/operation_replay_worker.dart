@@ -96,6 +96,7 @@ enum OperationReconciliationDisposition {
   storageUnavailable,
   alreadyRunning,
   unresolved,
+  userInterventionRequired,
   acknowledgementPersistenceUncertain,
 }
 
@@ -617,9 +618,56 @@ class OperationReplayWorker {
           idempotencyKey: initialEntry.idempotencyKey,
         );
       } on ApiException catch (exception) {
+        final failure = _classifyApiFailure(exception);
+        final category = _failureCategory(failure);
+
+        if (_requiresConflictUserIntervention(failure)) {
+          try {
+            await _queueStore.transition(
+              operationId: id,
+              expectedState: OperationLifecycleState.reconciliationRequired,
+              nextState: OperationLifecycleState.userInterventionRequired,
+              now: _clock().toUtc(),
+              failure: failure,
+              replayContract: _appointmentContract,
+            );
+
+            return result(
+              OperationReconciliationDisposition.userInterventionRequired,
+              category: category,
+            );
+          } catch (_) {
+            // Resolve a concurrent state change before reporting persistence
+            // uncertainty; never claim the transition without durable proof.
+            try {
+              final latest = await _queueStore.findByOperationId(id);
+
+              if (latest?.lifecycleState ==
+                  OperationLifecycleState.acknowledged.name) {
+                return result(OperationReconciliationDisposition.acknowledged);
+              }
+
+              if (latest?.lifecycleState ==
+                  OperationLifecycleState.userInterventionRequired.name) {
+                return result(
+                  OperationReconciliationDisposition.userInterventionRequired,
+                  category: category,
+                );
+              }
+            } catch (_) {
+              // Durable state still cannot be established.
+            }
+
+            return result(
+              OperationReconciliationDisposition.unresolved,
+              category: 'conflictStatePersistenceUncertain',
+            );
+          }
+        }
+
         return result(
           OperationReconciliationDisposition.unresolved,
-          category: _failureCategory(_classifyApiFailure(exception)),
+          category: category,
         );
       } catch (_) {
         return result(
@@ -711,7 +759,24 @@ class OperationReplayWorker {
     if (status == null) return OperationAttemptFailure.outcomeUnknown;
     if (status == 401) return OperationAttemptFailure.sessionExpired;
     if (status == 403) return OperationAttemptFailure.authorizationDenied;
-    if (status == 409) return OperationAttemptFailure.serverConflict;
+
+    if (status == 409) {
+      switch (exception.serverCode) {
+        case 'APPOINTMENT_PATIENT_SCHEDULE_CONFLICT':
+          return OperationAttemptFailure.appointmentPatientScheduleConflict;
+        case 'APPOINTMENT_STAFF_SCHEDULE_CONFLICT':
+          return OperationAttemptFailure.appointmentStaffScheduleConflict;
+        case 'IDEMPOTENCY_KEY_PAYLOAD_MISMATCH':
+          return OperationAttemptFailure.idempotencyKeyPayloadMismatch;
+        case 'IDEMPOTENCY_OUTCOME_UNRESOLVED':
+          return OperationAttemptFailure.idempotencyOutcomeUnresolved;
+        case 'IDEMPOTENCY_RECORD_UNRESOLVED':
+          return OperationAttemptFailure.idempotencyRecordUnresolved;
+        default:
+          // Older servers and unknown codes keep the conservative fallback.
+          return OperationAttemptFailure.serverConflict;
+      }
+    }
 
     if (status == 408 || status == 429 || status >= 500) {
       return OperationAttemptFailure.outcomeUnknown;
@@ -734,7 +799,28 @@ class OperationReplayWorker {
       OperationAttemptFailure.sessionExpired => 'sessionExpired',
       OperationAttemptFailure.authorizationDenied => 'authorizationDenied',
       OperationAttemptFailure.serverConflict => 'serverConflict',
+      OperationAttemptFailure.appointmentPatientScheduleConflict =>
+        'appointmentPatientScheduleConflict',
+      OperationAttemptFailure.appointmentStaffScheduleConflict =>
+        'appointmentStaffScheduleConflict',
+      OperationAttemptFailure.idempotencyKeyPayloadMismatch =>
+        'idempotencyKeyPayloadMismatch',
+      OperationAttemptFailure.idempotencyOutcomeUnresolved =>
+        'idempotencyOutcomeUnresolved',
+      OperationAttemptFailure.idempotencyRecordUnresolved =>
+        'idempotencyRecordUnresolved',
     };
+  }
+
+  static bool _requiresConflictUserIntervention(
+    OperationAttemptFailure failure,
+  ) {
+    return const <OperationAttemptFailure>{
+      OperationAttemptFailure.appointmentPatientScheduleConflict,
+      OperationAttemptFailure.appointmentStaffScheduleConflict,
+      OperationAttemptFailure.idempotencyKeyPayloadMismatch,
+      OperationAttemptFailure.idempotencyRecordUnresolved,
+    }.contains(failure);
   }
 
   static OperationReplayDisposition _dispositionFor(String state) {

@@ -46,8 +46,7 @@ enum OperationLifecycleState {
             next == OperationLifecycleState.cancelled,
       OperationLifecycleState.acknowledged ||
       OperationLifecycleState.rejected ||
-      OperationLifecycleState.cancelled =>
-        false,
+      OperationLifecycleState.cancelled => false,
     };
   }
 }
@@ -62,16 +61,8 @@ class OperationIdentity {
     required String operationId,
     required String operationType,
     required String idempotencyKey,
-  }) : operationId = _normalizeRequired(
-         operationId,
-         'operationId',
-         128,
-       ),
-       operationType = _normalizeRequired(
-         operationType,
-         'operationType',
-         120,
-       ),
+  }) : operationId = _normalizeRequired(operationId, 'operationId', 128),
+       operationType = _normalizeRequired(operationType, 'operationType', 120),
        idempotencyKey = _normalizeRequired(
          idempotencyKey,
          'idempotencyKey',
@@ -95,11 +86,7 @@ class OperationIdentity {
     final normalized = value.trim();
 
     if (normalized.isEmpty) {
-      throw ArgumentError.value(
-        value,
-        argumentName,
-        'Must be non-empty.',
-      );
+      throw ArgumentError.value(value, argumentName, 'Must be non-empty.');
     }
     if (normalized.length > maximumLength) {
       throw ArgumentError.value(
@@ -125,6 +112,11 @@ enum OperationAttemptFailure {
   sessionExpired,
   authorizationDenied,
   serverConflict,
+  appointmentPatientScheduleConflict,
+  appointmentStaffScheduleConflict,
+  idempotencyKeyPayloadMismatch,
+  idempotencyOutcomeUnresolved,
+  idempotencyRecordUnresolved,
 }
 
 /// The endpoint-specific retry guarantee available for an operation.
@@ -157,11 +149,7 @@ class OperationRetryPolicy {
       );
     }
     if (baseDelay <= Duration.zero) {
-      throw ArgumentError.value(
-        baseDelay,
-        'baseDelay',
-        'Must be positive.',
-      );
+      throw ArgumentError.value(baseDelay, 'baseDelay', 'Must be positive.');
     }
     if (maxDelay < baseDelay) {
       throw ArgumentError.value(
@@ -204,9 +192,7 @@ class OperationRetryPolicy {
   }) {
     _validateAttemptCount(attemptsCompleted);
 
-    if (!jitterSample.isFinite ||
-        jitterSample < 0 ||
-        jitterSample > 1) {
+    if (!jitterSample.isFinite || jitterSample < 0 || jitterSample > 1) {
       throw ArgumentError.value(
         jitterSample,
         'jitterSample',
@@ -230,8 +216,7 @@ class OperationRetryPolicy {
       }
     }
 
-    final factor =
-        1 - jitterRatio + (2 * jitterRatio * jitterSample);
+    final factor = 1 - jitterRatio + (2 * jitterRatio * jitterSample);
     final jitteredMicros = (ceilingMicros * factor).round();
     final boundedMicros = jitteredMicros.clamp(1, maximumMicros).toInt();
 
@@ -277,8 +262,7 @@ OperationFailureDecision decideOperationFailure({
   required OperationAttemptFailure failure,
   required int attemptsCompleted,
   required OperationRetryPolicy retryPolicy,
-  OperationReplayContract replayContract =
-      OperationReplayContract.notVerified,
+  OperationReplayContract replayContract = OperationReplayContract.notVerified,
 }) {
   // Validates the count even for non-retryable failure classes.
   final hasRetryBudget = retryPolicy.canRetryAfterFailure(attemptsCompleted);
@@ -304,9 +288,7 @@ OperationFailureDecision decideOperationFailure({
       );
 
     case OperationAttemptFailure.definitiveRejectionWithoutEffect:
-      return const OperationFailureDecision(
-        OperationLifecycleState.rejected,
-      );
+      return const OperationFailureDecision(OperationLifecycleState.rejected);
 
     case OperationAttemptFailure.sessionExpired:
     case OperationAttemptFailure.authorizationDenied:
@@ -315,8 +297,17 @@ OperationFailureDecision decideOperationFailure({
       );
 
     case OperationAttemptFailure.serverConflict:
+    case OperationAttemptFailure.idempotencyOutcomeUnresolved:
       return const OperationFailureDecision(
         OperationLifecycleState.reconciliationRequired,
+      );
+
+    case OperationAttemptFailure.appointmentPatientScheduleConflict:
+    case OperationAttemptFailure.appointmentStaffScheduleConflict:
+    case OperationAttemptFailure.idempotencyKeyPayloadMismatch:
+    case OperationAttemptFailure.idempotencyRecordUnresolved:
+      return const OperationFailureDecision(
+        OperationLifecycleState.userInterventionRequired,
       );
   }
 }

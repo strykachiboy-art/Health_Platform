@@ -125,13 +125,76 @@ void main() {
     );
   }
 
-  ApiException httpFailure(int statusCode) {
+  ApiException httpFailure(int statusCode, {String? serverCode}) {
     return ApiException(
       kind: ApiFailureKind.httpStatus,
       message: 'Test HTTP failure',
       uri: Uri.parse('https://example.test/api/v1/appointments/'),
       statusCode: statusCode,
+      serverCode: serverCode,
     );
+  }
+
+  Future<OperationReplayRunResult> replayConflict(String? serverCode) async {
+    await enqueue();
+
+    return worker(
+      sender:
+          ({
+            required String path,
+            required Map<String, dynamic> body,
+            required String bearerToken,
+            required String idempotencyKey,
+          }) async {
+            throw httpFailure(409, serverCode: serverCode);
+          },
+    ).runOnce();
+  }
+
+  Future<void> expectConflictNeedsUserIntervention({
+    required String serverCode,
+    required String expectedCategory,
+  }) async {
+    final result = await replayConflict(serverCode);
+
+    expect(result.userInterventionRequired, 1);
+    expect(result.reconciliationRequired, 0);
+    expect(result.items.single.category, expectedCategory);
+
+    final entry = await queueStore.findByOperationId('appointment-1');
+
+    expect(
+      entry?.lifecycleState,
+      OperationLifecycleState.userInterventionRequired.name,
+    );
+    expect(entry?.nextAttemptAt, isNull);
+    expect(entry?.idempotencyKey, 'appointment-1-key');
+    expect(
+      await queueStore.loadPayload(
+        operationId: 'appointment-1',
+        context: _context,
+      ),
+      _appointmentPayload,
+    );
+
+    // The operation must not be retried automatically from this state.
+    var repeatedCalls = 0;
+
+    final repeated = await worker(
+      sender:
+          ({
+            required String path,
+            required Map<String, dynamic> body,
+            required String bearerToken,
+            required String idempotencyKey,
+          }) async {
+            repeatedCalls++;
+            return <String, dynamic>{'success': true};
+          },
+    ).runOnce();
+
+    expect(repeatedCalls, 0);
+    expect(repeated.items, isEmpty);
   }
 
   test('explicit reconciliation reuses the original key and payload', () async {
@@ -198,6 +261,51 @@ void main() {
     expect(
       entry?.lifecycleState,
       OperationLifecycleState.reconciliationRequired.name,
+    );
+  });
+
+  test('explicit reconciliation persists a recognized conflict as user intervention', () async {
+    await enqueue();
+    await markForReconciliationRequired();
+
+    var calls = 0;
+
+    final result = await worker(
+      sender:
+          ({
+            required String path,
+            required Map<String, dynamic> body,
+            required String bearerToken,
+            required String idempotencyKey,
+          }) async {
+            calls++;
+            throw httpFailure(
+              409,
+              serverCode: 'APPOINTMENT_PATIENT_SCHEDULE_CONFLICT',
+            );
+          },
+    ).reconcileAppointmentCreate('appointment-1');
+
+    expect(
+      result.disposition,
+      OperationReconciliationDisposition.userInterventionRequired,
+    );
+    expect(result.category, 'appointmentPatientScheduleConflict');
+    expect(calls, 1);
+
+    final entry = await queueStore.findByOperationId('appointment-1');
+
+    expect(
+      entry?.lifecycleState,
+      OperationLifecycleState.userInterventionRequired.name,
+    );
+    expect(entry?.idempotencyKey, 'appointment-1-key');
+    expect(
+      await queueStore.loadPayload(
+        operationId: 'appointment-1',
+        context: _context,
+      ),
+      _appointmentPayload,
     );
   });
 
@@ -373,12 +481,86 @@ void main() {
     ).runOnce();
 
     expect(result.reconciliationRequired, 1);
+    expect(result.items.single.category, 'serverConflict');
 
     expect(
       (await queueStore.findByOperationId('appointment-1'))?.lifecycleState,
       OperationLifecycleState.reconciliationRequired.name,
     );
   });
+
+  test(
+    'patient schedule conflict requires intervention and preserves the payload',
+    () async {
+      await expectConflictNeedsUserIntervention(
+        serverCode: 'APPOINTMENT_PATIENT_SCHEDULE_CONFLICT',
+        expectedCategory: 'appointmentPatientScheduleConflict',
+      );
+    },
+  );
+
+  test(
+    'staff schedule conflict requires intervention and preserves the payload',
+    () async {
+      await expectConflictNeedsUserIntervention(
+        serverCode: 'APPOINTMENT_STAFF_SCHEDULE_CONFLICT',
+        expectedCategory: 'appointmentStaffScheduleConflict',
+      );
+    },
+  );
+
+  test('idempotency payload mismatch requires intervention without rewriting payload', () async {
+    await expectConflictNeedsUserIntervention(
+      serverCode: 'IDEMPOTENCY_KEY_PAYLOAD_MISMATCH',
+      expectedCategory: 'idempotencyKeyPayloadMismatch',
+    );
+  });
+
+  test('unresolved idempotency record requires user intervention', () async {
+    await expectConflictNeedsUserIntervention(
+      serverCode: 'IDEMPOTENCY_RECORD_UNRESOLVED',
+      expectedCategory: 'idempotencyRecordUnresolved',
+    );
+  });
+
+  test('unresolved idempotency outcome remains in reconciliation', () async {
+    final result = await replayConflict('IDEMPOTENCY_OUTCOME_UNRESOLVED');
+
+    expect(result.reconciliationRequired, 1);
+    expect(result.userInterventionRequired, 0);
+    expect(result.items.single.category, 'idempotencyOutcomeUnresolved');
+
+    final entry = await queueStore.findByOperationId('appointment-1');
+
+    expect(
+      entry?.lifecycleState,
+      OperationLifecycleState.reconciliationRequired.name,
+    );
+    expect(entry?.nextAttemptAt, isNull);
+    expect(entry?.idempotencyKey, 'appointment-1-key');
+    expect(
+      await queueStore.loadPayload(
+        operationId: 'appointment-1',
+        context: _context,
+      ),
+      _appointmentPayload,
+    );
+  });
+
+  test(
+    'unknown HTTP 409 codes retain generic reconciliation behavior',
+    () async {
+      final result = await replayConflict('FUTURE_UNRECOGNIZED_CONFLICT');
+
+      expect(result.reconciliationRequired, 1);
+      expect(result.items.single.category, 'serverConflict');
+
+      expect(
+        (await queueStore.findByOperationId('appointment-1'))?.lifecycleState,
+        OperationLifecycleState.reconciliationRequired.name,
+      );
+    },
+  );
 
   test('requires user intervention after HTTP 401', () async {
     await enqueue();
