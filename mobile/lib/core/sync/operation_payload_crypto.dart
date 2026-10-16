@@ -128,15 +128,21 @@ class OperationPayloadCrypto {
     'token',
     'authorization',
     'authorizationheader',
+    'cookie',
+    'setcookie',
     'password',
     'passwd',
     'clientsecret',
     'apikey',
+    'xapikey',
     'apisecret',
     'secretkey',
     'privatekey',
     'credential',
     'credentials',
+    'googleidtoken',
+    'idtoken',
+    'identitytoken',
   };
 
   final SecureKeyValueStorage _secureStorage;
