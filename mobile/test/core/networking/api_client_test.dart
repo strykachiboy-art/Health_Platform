@@ -519,6 +519,75 @@ void main() {
     });
 
     test(
+      'API exception diagnostics exclude potentially sensitive details',
+      () async {
+        const accessTokenMarker = 'ACCESS_TOKEN_SENTINEL_DO_NOT_LOG';
+        const patientDataMarker = 'PATIENT_DATA_SENTINEL_DO_NOT_LOG';
+        const rawResponseMarker = 'RAW_RESPONSE_SENTINEL_DO_NOT_LOG';
+        const uriQueryMarker = 'URI_QUERY_SENTINEL_DO_NOT_LOG';
+
+        final mock = MockClient(
+          (request) async => http.Response(
+            jsonEncode({
+              'message':
+                  '$accessTokenMarker $patientDataMarker $rawResponseMarker',
+              'details': [
+                {
+                  'loc': ['body', 'first_name'],
+                  'msg':
+                      'Rejected $accessTokenMarker $patientDataMarker $rawResponseMarker',
+                },
+              ],
+            }),
+            422,
+          ),
+        );
+        addTearDown(mock.close);
+
+        final api = ApiClient(config: testConfig(), client: mock);
+        addTearDown(api.close);
+
+        ApiException? captured;
+        try {
+          await api.patchJson(
+            'api/v1/patients/7?marker=$uriQueryMarker',
+            body: <String, dynamic>{'first_name': patientDataMarker},
+          );
+          fail('Expected the mock backend to return HTTP 422.');
+        } on ApiException catch (error) {
+          captured = error;
+        }
+
+        expect(captured, isNotNull);
+        final error = captured!;
+
+        // Preserve parsed details for controlled UI feedback.
+        expect(error.statusCode, 422);
+        expect(error.serverMessage, contains(accessTokenMarker));
+        expect(
+          error.validationErrors['first_name'],
+          contains(patientDataMarker),
+        );
+        expect(error.uri.query, contains(uriQueryMarker));
+
+        // Diagnostic formatting must not expose them.
+        final diagnostic = error.toString();
+        expect(diagnostic, contains('422'));
+        for (final marker in <String>[
+          accessTokenMarker,
+          patientDataMarker,
+          rawResponseMarker,
+          uriQueryMarker,
+        ]) {
+          expect(
+            diagnostic,
+            isNot(contains(marker)),
+            reason: 'Diagnostic output exposed a sensitive sentinel.',
+          );
+        }
+      },
+    );
+    test(
       'HTTP validation metadata is parsed without retaining raw body',
       () async {
         final mock = MockClient(
