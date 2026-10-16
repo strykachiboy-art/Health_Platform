@@ -25,6 +25,9 @@ enum OperationQueueEnqueueResult {
 ///
 /// The backend remains authoritative for authorization and application state.
 class OperationQueueStore {
+  static const Duration terminalRetentionPeriod = Duration(days: 30);
+  static const Duration unresolvedReviewAge = Duration(days: 30);
+
   OperationQueueStore(
     this._database, {
     OperationRetryPolicy? retryPolicy,
@@ -260,6 +263,7 @@ class OperationQueueStore {
     if (context == null) return const <OperationQueueEntryData>[];
 
     final timestamp = (now ?? DateTime.now()).toUtc();
+    final reviewCutoff = timestamp.subtract(unresolvedReviewAge);
     final table = _database.operationQueueEntry;
     final payloadTable = _database.operationQueuePayload;
 
@@ -275,6 +279,7 @@ class OperationQueueStore {
                   OperationLifecycleState.queued.name,
                   OperationLifecycleState.retryScheduled.name,
                 ]) &
+                table.createdAt.isBiggerThanValue(reviewCutoff) &
                 table.attemptsCompleted.isSmallerThanValue(
                   _retryPolicy.maxAttempts,
                 ) &
@@ -296,17 +301,60 @@ class OperationQueueStore {
     return rows.map((row) => row.readTable(table)).toList(growable: false);
   }
 
-  /// Returns the earliest scheduled retry for this owner and clinic.
+  /// Lists unresolved entries at or beyond the review age for this context.
   ///
-  /// This is scheduling metadata only. It never decrypts payloads or exposes
-  /// another user's queued work.
+  /// The persisted createdAt timestamp makes the review condition durable.
+  /// A review listing does not itself authorize replay or deletion.
+  Future<List<OperationQueueEntryData>> listReviewRequired({
+    required OperationPayloadContext context,
+    DateTime? now,
+    int limit = 100,
+  }) async {
+    if (limit < 1 || limit > 100) {
+      throw ArgumentError.value(limit, 'limit', 'Must be between 1 and 100.');
+    }
+
+    final cutoff = (now ?? DateTime.now()).toUtc().subtract(
+      unresolvedReviewAge,
+    );
+    final table = _database.operationQueueEntry;
+    final unresolvedStates = <String>{
+      OperationLifecycleState.queued.name,
+      OperationLifecycleState.inFlight.name,
+      OperationLifecycleState.retryScheduled.name,
+      OperationLifecycleState.reconciliationRequired.name,
+      OperationLifecycleState.userInterventionRequired.name,
+    };
+
+    final query = _database.select(table)
+      ..where(
+        (entry) =>
+            entry.lifecycleState.isIn(unresolvedStates) &
+            entry.createdAt.isSmallerOrEqualValue(cutoff) &
+            entry.ownerUserId.equals(context.userId) &
+            entry.clinicContextId.equals(context.clinicContextId),
+      )
+      ..orderBy([
+        (entry) => OrderingTerm.asc(entry.createdAt),
+        (entry) => OrderingTerm.asc(entry.operationId),
+      ])
+      ..limit(limit);
+
+    final rows = await query.get();
+    return rows.toList(growable: false);
+  }
+
   /// Returns the earliest scheduled retry for this owner and clinic.
   ///
   /// This is scheduling metadata only. It does not decrypt payloads or expose
   /// another user's queued work.
   Future<DateTime?> nextScheduledAttempt({
     required OperationPayloadContext context,
+    DateTime? now,
   }) async {
+    final cutoff = (now ?? DateTime.now()).toUtc().subtract(
+      unresolvedReviewAge,
+    );
     final table = _database.operationQueueEntry;
 
     final query = _database.select(table)
@@ -316,6 +364,7 @@ class OperationQueueStore {
               OperationLifecycleState.retryScheduled.name,
             ) &
             entry.nextAttemptAt.isNotNull() &
+            entry.createdAt.isBiggerThanValue(cutoff) &
             entry.ownerUserId.equals(context.userId) &
             entry.clinicContextId.equals(context.clinicContextId),
       )
@@ -635,6 +684,14 @@ class OperationQueueStore {
     return jsonEncode(normalize(payload));
   }
 
+  /// Applies the approved 30-day retention window to terminal entries.
+  ///
+  /// This is safe to repeat and never removes unresolved work or encryption keys.
+  Future<int> purgeTerminalOperationsPastRetention({required DateTime now}) {
+    final cutoff = now.toUtc().subtract(terminalRetentionPeriod);
+    return purgeExpiredTerminalOperations(olderThan: cutoff);
+  }
+
   /// Deletes terminal operations older than an explicit retention cutoff.
   ///
   /// Retention policy belongs to the caller. Active or unresolved operations
@@ -652,13 +709,13 @@ class OperationQueueStore {
     final payloadTable = _database.operationQueuePayload;
 
     return _database.transaction(() async {
-      final expired = await (_database.select(entryTable)
-            ..where(
-              (row) =>
-                  row.lifecycleState.isIn(terminalStates) &
-                  row.updatedAt.isSmallerThanValue(cutoff),
-            ))
-          .get();
+      final expired =
+          await (_database.select(entryTable)..where(
+                (row) =>
+                    row.lifecycleState.isIn(terminalStates) &
+                    row.updatedAt.isSmallerThanValue(cutoff),
+              ))
+              .get();
 
       if (expired.isEmpty) return 0;
 
@@ -666,13 +723,13 @@ class OperationQueueStore {
           .map((row) => row.operationId)
           .toList(growable: false);
 
-      await (_database.delete(payloadTable)
-            ..where((row) => row.operationId.isIn(operationIds)))
-          .go();
+      await (_database.delete(
+        payloadTable,
+      )..where((row) => row.operationId.isIn(operationIds))).go();
 
-      return (_database.delete(entryTable)
-            ..where((row) => row.operationId.isIn(operationIds)))
-          .go();
+      return (_database.delete(
+        entryTable,
+      )..where((row) => row.operationId.isIn(operationIds))).go();
     });
   }
 

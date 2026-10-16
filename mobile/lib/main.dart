@@ -63,6 +63,11 @@ void main() {
   final replayScheduler = OperationReplayScheduler(
     connectivitySource: connectivitySource,
     runReplay: replayWorker.runOnce,
+    runMaintenance: () async {
+      await queueStore.purgeTerminalOperationsPastRetention(
+        now: DateTime.now().toUtc(),
+      );
+    },
   );
   final appointmentCreateQueueProducer = AppointmentCreateQueueProducer(
     queueStore: queueStore,

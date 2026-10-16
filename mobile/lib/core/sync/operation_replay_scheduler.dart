@@ -6,6 +6,7 @@ import '../networking/device_connectivity_source.dart';
 import 'operation_replay_worker.dart';
 
 typedef OperationReplayRunner = Future<OperationReplayRunResult> Function();
+typedef OperationMaintenanceRunner = Future<void> Function();
 
 /// Foreground scheduling for durable operation replay.
 ///
@@ -16,14 +17,29 @@ class OperationReplayScheduler with WidgetsBindingObserver {
   factory OperationReplayScheduler({
     required DeviceConnectivitySource connectivitySource,
     required OperationReplayRunner runReplay,
+    OperationMaintenanceRunner? runMaintenance,
   }) {
-    return OperationReplayScheduler._(connectivitySource, runReplay);
+    return OperationReplayScheduler._(
+      connectivitySource,
+      runReplay,
+      runMaintenance,
+    );
   }
 
-  OperationReplayScheduler._(this._connectivitySource, this._runReplay);
+  OperationReplayScheduler._(
+    this._connectivitySource,
+    this._runReplay,
+    this._runMaintenance,
+  );
 
   final DeviceConnectivitySource _connectivitySource;
   final OperationReplayRunner _runReplay;
+  final OperationMaintenanceRunner? _runMaintenance;
+
+  Future<void>? _activeMaintenance;
+  bool _maintenanceFailed = false;
+
+  bool get maintenanceFailed => _maintenanceFailed;
 
   StreamSubscription<DeviceNetworkStatus>? _subscription;
   Future<void>? _activeRun;
@@ -49,6 +65,7 @@ class OperationReplayScheduler with WidgetsBindingObserver {
       },
     );
 
+    await _runMaintenanceIfConfigured();
     await _refreshConnectivity();
   }
 
@@ -111,6 +128,46 @@ class OperationReplayScheduler with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _handleResume() async {
+    await _runMaintenanceIfConfigured();
+    await _refreshConnectivity();
+  }
+
+  Future<void> _runMaintenanceIfConfigured() async {
+    if (_disposed) return;
+
+    final runner = _runMaintenance;
+    if (runner == null) return;
+
+    final active = _activeMaintenance;
+    if (active != null) {
+      await active;
+      return;
+    }
+
+    late final Future<void> task;
+    task = _runMaintenanceWithStatus(runner).whenComplete(() {
+      if (identical(_activeMaintenance, task)) {
+        _activeMaintenance = null;
+      }
+    });
+
+    _activeMaintenance = task;
+    await task;
+  }
+
+  Future<void> _runMaintenanceWithStatus(
+    OperationMaintenanceRunner runner,
+  ) async {
+    try {
+      await runner();
+      _maintenanceFailed = false;
+    } catch (_) {
+      // Record bounded failure state; retry on the next startup/resume.
+      _maintenanceFailed = true;
+    }
+  }
+
   void _handleStatus(DeviceNetworkStatus status) {
     if (_disposed) return;
 
@@ -124,7 +181,7 @@ class OperationReplayScheduler with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(_refreshConnectivity());
+      unawaited(_handleResume());
     }
   }
 
@@ -213,6 +270,11 @@ class OperationReplayScheduler with WidgetsBindingObserver {
       } catch (_) {
         // The scheduler is being disposed; do not leak an async error.
       }
+    }
+
+    final maintenance = _activeMaintenance;
+    if (maintenance != null) {
+      await maintenance;
     }
   }
 }

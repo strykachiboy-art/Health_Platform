@@ -66,6 +66,76 @@ void main() {
     }
   });
 
+  test(
+    'runs queue maintenance on startup and resume while disconnected',
+    () async {
+      final connectivity = _FakeConnectivity(DeviceNetworkStatus.disconnected);
+      var maintenanceCalls = 0;
+      var replayCalls = 0;
+
+      final scheduler = OperationReplayScheduler(
+        connectivitySource: connectivity,
+        runReplay: () async {
+          replayCalls++;
+          return _result();
+        },
+        runMaintenance: () async {
+          maintenanceCalls++;
+        },
+      );
+
+      try {
+        await scheduler.start();
+        expect(maintenanceCalls, 1);
+        expect(replayCalls, 0);
+        expect(scheduler.maintenanceFailed, isFalse);
+
+        scheduler.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        await _settle();
+
+        expect(maintenanceCalls, 2);
+        expect(replayCalls, 0);
+        expect(scheduler.maintenanceFailed, isFalse);
+      } finally {
+        await scheduler.dispose();
+        await connectivity.close();
+      }
+    },
+  );
+
+  test(
+    'records maintenance failure and retries successfully on resume',
+    () async {
+      final connectivity = _FakeConnectivity(DeviceNetworkStatus.disconnected);
+      var maintenanceCalls = 0;
+
+      final scheduler = OperationReplayScheduler(
+        connectivitySource: connectivity,
+        runReplay: () async => _result(),
+        runMaintenance: () async {
+          maintenanceCalls++;
+          if (maintenanceCalls == 1) {
+            throw StateError('Injected local maintenance failure.');
+          }
+        },
+      );
+
+      try {
+        await scheduler.start();
+        expect(maintenanceCalls, 1);
+        expect(scheduler.maintenanceFailed, isTrue);
+
+        scheduler.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        await _settle();
+
+        expect(maintenanceCalls, 2);
+        expect(scheduler.maintenanceFailed, isFalse);
+      } finally {
+        await scheduler.dispose();
+        await connectivity.close();
+      }
+    },
+  );
   test('pause blocks replay until the session-change notification', () async {
     final connectivity = _FakeConnectivity(DeviceNetworkStatus.connected);
 

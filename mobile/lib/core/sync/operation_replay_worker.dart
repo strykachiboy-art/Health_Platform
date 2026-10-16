@@ -202,6 +202,15 @@ class OperationReplayWorker {
   Future<OperationReplayRunResult> runOnce() async {
     final results = <OperationReplayItemResult>[];
 
+    try {
+      await _queueStore.purgeTerminalOperationsPastRetention(now: _clock());
+    } on Object {
+      return OperationReplayRunResult(
+        items: results,
+        blockedReason: 'retentionMaintenanceUnavailable',
+      );
+    }
+
     final AuthTokenResponse? session;
     try {
       session = await _loadSession();
@@ -432,6 +441,7 @@ class OperationReplayWorker {
 
     final nextRetryAt = await _queueStore.nextScheduledAttempt(
       context: context,
+      now: now,
     );
 
     return OperationReplayRunResult(items: results, nextRetryAt: nextRetryAt);

@@ -1074,6 +1074,51 @@ void main() {
     },
   );
 
+  test('runs terminal retention before requiring an active session', () async {
+    const operationId = 'expired-terminal';
+    final terminalAt = _now.subtract(const Duration(days: 31));
+
+    await queueStore.enqueueEncrypted(
+      OperationIdentity(
+        operationId: operationId,
+        operationType: OperationReplayWorker.appointmentCreateType,
+        idempotencyKey: 'expired-terminal-key',
+      ),
+      context: _context,
+      payload: _appointmentPayload,
+      now: terminalAt,
+    );
+    await queueStore.transition(
+      operationId: operationId,
+      expectedState: OperationLifecycleState.queued,
+      nextState: OperationLifecycleState.inFlight,
+      context: _context,
+      now: terminalAt,
+    );
+    await queueStore.transition(
+      operationId: operationId,
+      expectedState: OperationLifecycleState.inFlight,
+      nextState: OperationLifecycleState.acknowledged,
+      now: terminalAt,
+    );
+
+    final result = await worker(
+      sender: ({
+        required String path,
+        required Map<String, dynamic> body,
+        required String bearerToken,
+        required String idempotencyKey,
+      }) async => <String, dynamic>{},
+      session: null,
+    ).runOnce();
+
+    expect(result.blockedReason, 'sessionUnavailable');
+    expect(await queueStore.findByOperationId(operationId), isNull);
+    expect(
+      await database.select(database.operationQueuePayload).get(),
+      isEmpty,
+    );
+  });
   test('does not send without an active clinic context', () async {
     await enqueue();
 
