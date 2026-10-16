@@ -423,7 +423,7 @@ This note adds a current-state view without rewriting historical evidence. State
 - A universal backend idempotency-key validity period has not been established in this review. The local 30-day retention policy is not proof of backend deduplication for 30 days. Replay of aged or uncertain work requires verification of the applicable operation-specific backend contract.
 - Authentication tokens reside in the platform-backed session record. Patient directory, detail, edit and registration screens hold sensitive models or form values in memory. Source review of these screens does not prove automatic clearing across every route and session transition.
 - The current logout path waits for active replay and leaves replay paused after logout. The encrypted queue and its keys are retained; logout is not an implicit destructive queue purge.
-- The queue producer may include optional appointment `reason` and `notes` fields. Their necessity and approval for persistent offline storage must be resolved before enabling that sensitive payload content in a deployment.
+- Approved design decision: exclude optional appointment `reason` and `notes` from persisted offline payloads by default. Later inclusion requires documented workflow necessity and explicit approval, plus review of protection, access, retention and deletion requirements. The current producer still includes these fields when supplied; runtime enforcement and focused tests remain outstanding.
 - Android manifest and backup/data-extraction exclusions exist at source level. They do not prove actual backup/restore behavior, whole-database encryption or protection against a compromised device.
 
 ### Selected Slice 1 lifecycle design
@@ -434,13 +434,14 @@ This note adds a current-state view without rewriting historical evidence. State
 - Explicit discard: require the authenticated original operation owner, the original user/clinic context, verified permission for the operation type and explicit confirmation. If a server-side effect may have occurred, require authoritative reconciliation or an explicitly recorded manual disposition before deletion. Local deletion is not server-side cancellation.
 - Logout and context changes: stop and await active replay, keep replay paused, invalidate access to prior session-scoped views, and revalidate user/clinic ownership before decrypting or delivering retained work. Ordinary logout does not itself delete queue data or encryption keys.
 - Key cleanup: retain keys needed by surviving encrypted payloads. After an authorized purge, check key dependencies before removing keys. Database deletion and secure-storage deletion are separate operations; incomplete cleanup must be reported and retriable.
+- Appointment payload minimization: exclude optional `reason` and `notes` from persisted offline payloads by default. Later inclusion requires documented workflow necessity and explicit approval, followed by review of protection, access, retention and deletion requirements. This is a selected design policy, not yet runtime-enforced.
 - Device controls: treat backup rules as source-level evidence until platform behavior has been verified on suitable devices and supported versions.
 
 ### Remaining verification and rollout gates
 
 - Verify the selected 30-day retention rule against applicable product, organizational, legal, contractual and audit requirements before deployment.
 - Verify the actual idempotency and reconciliation contract for each replayable operation type. Do not infer the backend validity window from local retention.
-- Resolve whether optional appointment reason/notes are necessary and approved for persistent offline storage.
+- Enforce the approved default exclusion of optional appointment `reason` and `notes` in the appointment queue producer, and test that these fields cannot enter persisted offline payloads by default. Any later inclusion requires documented workflow necessity and explicit approval, with the relevant protection, access, retention and deletion review.
 - Implement and test the terminal purge policy and trigger, unresolved-operation review guard, explicit discard authorization, disposition evidence, dependency-aware key cleanup and failure recovery.
 - Verify that sensitive views and forms become inaccessible following logout, authentication rejection, and user/clinic changes.
 - Perform platform-level verification of secure storage, backup/restore, reinstall and device lifecycle behavior where supported. Unit and widget tests alone do not establish device behavior.
