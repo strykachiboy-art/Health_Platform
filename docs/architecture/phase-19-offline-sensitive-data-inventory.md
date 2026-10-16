@@ -2,9 +2,10 @@
 
 - Review date: 2026-10-16
 - Reviewed source branch: `feat/phase19-offline-data-security`
-- Reviewed source HEAD: `55daab92f3c68dafdadd1198f306e5fb9e6f8ec8`
+- Reviewed mobile source baseline: `55daab92f3c68dafdadd1198f306e5fb9e6f8ec8`
 - Architecture record: [ADR-001: Mobile Storage Architecture and Offline Boundaries](ADR-001-mobile-storage-and-offline-boundaries.md)
-- Status: Gate 1 design accepted on 2026-10-16. ADR-001 is Accepted as the Phase 19 offline-storage and lifecycle design baseline. Remaining runtime implementation and verification, platform evidence, and rollout blockers remain outstanding; completed Slice 2 implementation and local test evidence are summarized in Section 7.
+- Status: Gate 1 design accepted on 2026-10-16. ADR-001 is Accepted as the Phase 19 offline-storage and lifecycle design baseline. Remaining runtime implementation and verification, platform evidence, and rollout blockers for the wider Phase 19 plan remain outstanding.
+- Slice 2 status: scoped runtime protections and focused local verification are complete, subject to the legacy-payload and platform limitations recorded in Section 7.
 
 ## 1. Purpose and boundaries
 
@@ -166,15 +167,7 @@ The following are requirements, not claims that the behavior already exists:
 4. Do not release age-based retention, unresolved-operation review, or destructive cleanup as implemented until their runtime guards and failure paths have been verified.
 5. The default exclusion of optional appointment `reason` and `notes` is implemented and covered by focused local tests at the reviewed source baseline. Confirm that a release candidate preserves the exclusion. Any future inclusion requires documented workflow necessity and explicit approval, followed by review of applicable protection, access, retention and deletion requirements.
 
-## 6. Required behavior for later slices
-
-### Slice 2 — protected local storage and credentials
-
-- Keep small authentication secrets and encryption keys behind the platform-backed secure-storage abstraction.
-- Fail closed on secure-storage read/write/delete errors; never silently reset credentials or fall back to plaintext.
-- Do not store authentication secrets, clinical payloads or encryption keys in `AppMetadata`.
-- Keep offline payload encryption authenticated and bound to operation identity and owner/clinic context.
-- Verify protection boundaries and secure-storage failure behavior with focused tests.
+## 6. Requirements for remaining slices
 
 ### Slice 3 — retention, expiration and deletion
 
@@ -204,7 +197,11 @@ The following are requirements, not claims that the behavior already exists:
 
 ### Slice 2 implementation and local verification evidence (2026-10-16)
 
-Reviewed source/test HEAD: [55daab92f3c68dafdadd1198f306e5fb9e6f8ec8](https://github.com/strykachiboy-art/clinic-system-pro/commit/55daab92f3c68dafdadd1198f306e5fb9e6f8ec8).
+Reviewed mobile source baseline: [55daab92f3c68dafdadd1198f306e5fb9e6f8ec8](https://github.com/strykachiboy-art/clinic-system-pro/commit/55daab92f3c68dafdadd1198f306e5fb9e6f8ec8).
+
+**Slice 2 exit disposition — IMPLEMENTED / LOCALLY VERIFIED:** the scoped runtime protections and focused local verification passed. The combined five-suite Flutter regression passed 68 tests and was rerun at HEAD `3fb6cfd39fd89fba13359dcf5ae1b0e1de4b9408`; the mobile source tree was unchanged between that execution and the original source baseline. This does not establish physical-device behavior or production operation.
+
+**Legacy-payload limitation:** new appointment queue payloads omit `reason` and `notes`; existing encrypted queue payloads are not rewritten. A potentially attempted request must not be changed while retaining its stable idempotency key, since that can violate the endpoint's payload-fingerprint contract. Keep legacy records unchanged until a migration or disposition policy can be implemented and tested safely.
 
 - `a2fc102` (`fix(mobile): omit clinical free text from offline payloads`): `AppointmentCreateCommand.toPayload()` omits optional appointment `reason` and `notes`. Focused tests assert that neither field appears in producer output or in the decrypted persisted queue payload.
 - `c34adf5` (`fix(mobile): harden offline payload credential filtering`): normalized credential filtering includes `Cookie`, `Set-Cookie`, `X-API-Key` and Google/identity-token field variants alongside the existing sensitive fields. Focused secure-storage tests cover key-read and key-write failure paths without a silent fallback.
