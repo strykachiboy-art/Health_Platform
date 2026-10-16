@@ -69,6 +69,7 @@ void main() {
     ) async {
       final storage = _MemorySecureStorage();
       var requests = 0;
+      var sessionChangedCalls = 0;
 
       final client = MockClient((request) async {
         requests++;
@@ -103,6 +104,7 @@ void main() {
             acquireGoogleIdToken: () async => _idToken,
             authRemoteDataSource: remote,
             sessionCoordinator: coordinator,
+            onSessionChanged: () => sessionChangedCalls++,
           ),
         ),
       );
@@ -112,6 +114,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(requests, 1);
+      expect(sessionChangedCalls, 1);
       expect(
         find.byKey(const ValueKey('authenticated-session')),
         findsOneWidget,
@@ -228,6 +231,7 @@ void main() {
       await store.save(_session());
 
       final pauseGate = Completer<void>();
+      var sessionChangedCalls = 0;
       var requests = 0;
       final client = MockClient((request) async {
         requests++;
@@ -267,6 +271,7 @@ void main() {
             onSessionEnding: () async {
               await pauseGate.future;
             },
+            onSessionChanged: () => sessionChangedCalls++,
           ),
         ),
       );
@@ -287,6 +292,11 @@ void main() {
 
       expect(requests, 1);
       expect(await store.read(), isNull);
+      expect(
+        sessionChangedCalls,
+        0,
+        reason: 'Logout must leave replay paused until the next successful sign-in.',
+      );
       expect(
         find.byKey(const ValueKey('google-sign-in-button')),
         findsOneWidget,

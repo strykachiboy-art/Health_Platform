@@ -136,7 +136,6 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
     try {
       await widget.onSessionEnding?.call();
       final result = await widget.sessionCoordinator.logoutSession();
-      widget.onSessionChanged?.call();
       final restored = await widget.sessionCoordinator.restoreSession();
 
       if (!mounted) return;
