@@ -4,7 +4,7 @@
 - Reviewed source branch: `feat/phase19-offline-data-security`
 - Reviewed source HEAD: `5be486b2a60304df0f40425fd6219efe80263570`
 - Architecture record: [ADR-001: Mobile Storage Architecture and Offline Boundaries](ADR-001-mobile-storage-and-offline-boundaries.md)
-- Status: Gate 1 source inventory and current-state reconciliation are ready for final acceptance review. The lifecycle policy set is documented; ADR-001 remains Proposed pending formal architectural acceptance. Runtime implementation and verification remain assigned to later Phase 19 gates.
+- Status: Gate 1 design accepted on 2026-10-16. ADR-001 is Accepted as the Phase 19 offline-storage and lifecycle design baseline. Runtime implementation, focused verification, platform evidence, and rollout blockers remain outstanding.
 
 ## 1. Purpose and boundaries
 
@@ -94,9 +94,9 @@ The inventory considers these failure and misuse scenarios:
 
 The required response is fail-closed where authorization, payload integrity, replay safety or cleanup completion cannot be established. This document does not claim that all threats are currently mitigated.
 
-## 5. Proposed lifecycle and retention decisions
+## 5. Accepted lifecycle and retention decisions
 
-**Slice 1 design status:** The lifecycle rules below are selected for the design baseline. They are not evidence that runtime enforcement exists, has passed tests, or has operated in production. ADR-001 remains **Proposed**.
+**Slice 1 design status:** Accepted on 2026-10-16 as the Phase 19 architecture baseline. The lifecycle rules below are approved design requirements, not evidence that runtime enforcement exists, has passed tests, or has operated in production.
 
 ### 5.1 Terminal queue retention
 
@@ -228,4 +228,4 @@ The following are requirements, not claims that the behavior already exists:
 - The current ready-operation selection does not enforce the 30-day unresolved review guard.
 - A universal backend idempotency-key validity window has not been established by the reviewed client source. Verify each operation type's actual backend contract before enabling aged or uncertain replay.
 - No complete key-deletion lifecycle or dependency-aware destructive-cleanup implementation is claimed.
-- **ADR-001 remains Proposed.** This inventory is a design baseline and evidence record, not architectural approval, platform verification or a production-operation claim.
+- **ADR-001 is Accepted for the design baseline.** This inventory records approved policy and source evidence, not runtime enforcement, platform verification or a production-operation claim.

@@ -1,6 +1,6 @@
 # ADR-001: Mobile Storage Architecture and Offline Boundaries
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-12
 - Evidence baseline: `00c199325be61647ba7da328c2412c506863021b`
 
@@ -426,6 +426,12 @@ This note adds a current-state view without rewriting historical evidence. State
 - Approved design decision: exclude optional appointment `reason` and `notes` from persisted offline payloads by default. Later inclusion requires documented workflow necessity and explicit approval, plus review of protection, access, retention and deletion requirements. The current producer still includes these fields when supplied; runtime enforcement and focused tests remain outstanding.
 - Android manifest and backup/data-extraction exclusions exist at source level. They do not prove actual backup/restore behavior, whole-database encryption or protection against a compromised device.
 
+### Gate 1 formal architecture acceptance (2026-10-16)
+
+The Phase 19 offline-storage and lifecycle design is formally accepted. Acceptance covers terminal queue retention for 30 days after the terminal transition, measured from `updatedAt`; unresolved operations older than 30 days from `createdAt` entering review and being excluded from automatic replay, never silently deleted due to age; reconciliation of unknown outcomes before unsafe repeat delivery, preserving stable operation identity/idempotency only when the endpoint contract establishes safe replay; explicit authenticated discard by the original operation owner in the original user/clinic context, with operation-specific authorization and confirmation, and reconciliation or recorded manual disposition before deletion where a server-side effect may have occurred; stopping and awaiting active replay during logout or context changes, invalidating sensitive session/view state while retaining queue data and keys; revalidating ownership before decrypting or delivering retained work; dependency-aware key cleanup with retriable and reported incomplete cleanup; Android backup exclusions as source-level controls only; and the default exclusion of optional appointment `reason` and `notes` from persisted offline payloads.
+
+This acceptance approves the design baseline, not implementation or rollout. Runtime enforcement, focused verification, backend idempotency/reconciliation checks, platform-device evidence, and documented rollout blockers remain mandatory. It does not establish whole-database SQLite encryption, protection from a compromised device, or production operation.
+
 ### Selected Slice 1 lifecycle design
 
 - Terminal states `acknowledged`, `rejected` and `cancelled`: 30-day local retention measured from the terminal transition, followed by eligibility for a transactional purge.
@@ -446,4 +452,4 @@ This note adds a current-state view without rewriting historical evidence. State
 - Verify that sensitive views and forms become inaccessible following logout, authentication rejection, and user/clinic changes.
 - Perform platform-level verification of secure storage, backup/restore, reinstall and device lifecycle behavior where supported. Unit and widget tests alone do not establish device behavior.
 
-Status remains **Proposed**. This current-state note records source findings and selected design policy; it does not claim that outstanding runtime enforcement has been implemented, platform behavior has been verified, or production operation has occurred.
+Status is **Accepted** for the Phase 19 design baseline. The selected policies are formally approved; this does not claim that outstanding runtime enforcement has been implemented, platform behavior has been verified, or production operation has occurred.
