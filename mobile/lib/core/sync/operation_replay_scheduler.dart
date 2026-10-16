@@ -65,6 +65,23 @@ class OperationReplayScheduler with WidgetsBindingObserver {
     _retryAt = null;
   }
 
+  /// Pauses new replay triggers and waits for the active run to finish.
+  ///
+  /// Logout awaits this before invalidating session credentials. Queue entries
+  /// and encryption keys remain intact for scope-bound recovery.
+  Future<void> pauseAndWait() async {
+    pause();
+
+    final activeRun = _activeRun;
+    if (activeRun == null) return;
+
+    try {
+      await activeRun;
+    } on Object {
+      // A completed replay failure must not block local session invalidation.
+    }
+  }
+
   /// Called after a login/session transition to resume scheduling safely.
   void notifySessionChanged() {
     if (_disposed) return;

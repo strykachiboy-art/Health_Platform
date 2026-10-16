@@ -25,7 +25,7 @@ class GoogleLoginScreen extends StatefulWidget {
   final Future<String?> Function() acquireGoogleIdToken;
   final AuthRemoteDataSource authRemoteDataSource;
   final AuthSessionCoordinator sessionCoordinator;
-  final VoidCallback? onSessionEnding;
+  final FutureOr<void> Function()? onSessionEnding;
   final VoidCallback? onSessionChanged;
 
   @override
@@ -134,7 +134,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
     });
 
     try {
-      widget.onSessionEnding?.call();
+      await widget.onSessionEnding?.call();
       final result = await widget.sessionCoordinator.logoutSession();
       widget.onSessionChanged?.call();
       final restored = await widget.sessionCoordinator.restoreSession();

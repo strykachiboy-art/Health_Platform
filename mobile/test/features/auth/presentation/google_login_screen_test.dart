@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -226,6 +227,7 @@ void main() {
       final store = AuthSessionStore(storage: storage);
       await store.save(_session());
 
+      final pauseGate = Completer<void>();
       var requests = 0;
       final client = MockClient((request) async {
         requests++;
@@ -262,6 +264,9 @@ void main() {
             acquireGoogleIdToken: () async => null,
             authRemoteDataSource: remote,
             sessionCoordinator: coordinator,
+            onSessionEnding: () async {
+              await pauseGate.future;
+            },
           ),
         ),
       );
@@ -270,6 +275,14 @@ void main() {
       expect(find.byKey(const ValueKey('sign-out-button')), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('sign-out-button')));
+      await tester.pump();
+      await tester.idle();
+      expect(
+        requests,
+        0,
+        reason: 'Remote logout must wait for replay quiescence.',
+      );
+      pauseGate.complete();
       await tester.pumpAndSettle();
 
       expect(requests, 1);

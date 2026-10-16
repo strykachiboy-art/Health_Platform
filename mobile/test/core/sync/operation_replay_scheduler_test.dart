@@ -99,6 +99,58 @@ void main() {
     }
   });
 
+  test(
+    'pauseAndWait waits for active replay and blocks new triggers',
+    () async {
+      final connectivity = _FakeConnectivity(DeviceNetworkStatus.connected);
+      final started = Completer<void>();
+      final release = Completer<void>();
+      var calls = 0;
+
+      final scheduler = OperationReplayScheduler(
+        connectivitySource: connectivity,
+        runReplay: () async {
+          calls++;
+          if (calls == 1) {
+            started.complete();
+            await release.future;
+          }
+          return _result();
+        },
+      );
+
+      try {
+        await scheduler.start();
+        await started.future;
+
+        var waitFinished = false;
+        final waiting = scheduler.pauseAndWait().then((_) {
+          waitFinished = true;
+        });
+
+        await _settle();
+        expect(waitFinished, isFalse);
+
+        connectivity.emit(DeviceNetworkStatus.connected);
+        await _settle();
+        expect(calls, 1);
+
+        release.complete();
+        await waiting;
+        await _settle();
+        expect(calls, 1);
+
+        scheduler.notifySessionChanged();
+        await _settle();
+        expect(calls, 2);
+      } finally {
+        if (!release.isCompleted) release.complete();
+        await scheduler.dispose();
+        await connectivity.close();
+      }
+    },
+  );
+
   test('runs replay promptly when a new operation is queued online', () async {
     final connectivity = _FakeConnectivity(DeviceNetworkStatus.connected);
 

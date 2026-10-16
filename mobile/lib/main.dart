@@ -92,7 +92,7 @@ void main() {
     acquireGoogleIdToken: googleSignInProvider.signInForIdToken,
     authRemoteDataSource: authRemoteDataSource,
     sessionCoordinator: sessionCoordinator,
-    onSessionEnding: replayScheduler.pause,
+    onSessionEnding: replayScheduler.pauseAndWait,
     onSessionChanged: replayScheduler.notifySessionChanged,
   );
 
