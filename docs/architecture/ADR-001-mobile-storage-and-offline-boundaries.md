@@ -410,7 +410,7 @@ Review date: 2026-10-16. Source snapshot: [5be486b2a60304df0f40425fd6219efe80263
 
 The current source inventory and selected lifecycle design are recorded in [phase-19-offline-sensitive-data-inventory.md](phase-19-offline-sensitive-data-inventory.md).
 
-This note adds a current-state view without rewriting historical evidence. Statements in earlier sections describing a prior source baseline remain historical; they must not be read as claims about the current implementation. Earlier test and migration results also remain evidence only for the source commit and environment originally recorded.
+This note adds a current-state view without rewriting historical evidence. Statements in earlier sections describing a prior source baseline remain historical; they must not be read as claims about the current implementation. Earlier test and migration results also remain evidence only for the source commit and environment originally recorded. Gate 1 source reconciliation compared the cited snapshot `5be486b2a60304df0f40425fd6219efe80263570` with branch HEAD `3bcfa9698d0f05fbfd2e830ab5a0c5a90ac116d5`; only the ADR and Phase 19 inventory changed between those refs, so the reviewed application source remains the source snapshot.
 
 ### Current source findings
 
