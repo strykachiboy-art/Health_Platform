@@ -46,8 +46,9 @@ class FakeResponse:
 def _resolver(*addresses):
     calls = []
 
-    def resolve(hostname, port):
-        calls.append((hostname, port))
+    def resolve(hostname, port, timeout_seconds):
+        assert 0 < timeout_seconds <= 5.0
+        calls.append((hostname, port, timeout_seconds))
         return addresses
 
     return resolve, calls
@@ -220,7 +221,7 @@ def test_read_only_transport_pins_validated_ip_and_encodes_query(monkeypatch):
         headers={"Authorization": "Bearer test-token"},
     )
 
-    assert calls == [("fhir.partnerhealth.org", 443)]
+    assert calls == [("fhir.partnerhealth.org", 443, 2.0)]
     assert len(FakeConnection.instances) == 1
 
     connection = FakeConnection.instances[0]
@@ -294,7 +295,7 @@ def test_transport_rejects_redirect_without_following_it():
     with pytest.raises(HIERedirectRejectedError):
         transport.request(endpoint_url=BASE_URL, path="Patient")
 
-    assert calls == [("fhir.partnerhealth.org", 443)]
+    assert calls == [("fhir.partnerhealth.org", 443, 2.0)]
     assert len(FakeConnection.instances) == 1
     assert len(FakeConnection.instances[0].request_calls) == 1
     assert FakeConnection.instances[0].closed is True
@@ -379,7 +380,7 @@ def test_all_dns_answers_must_pass_before_any_connection():
     with pytest.raises(HIEEndpointPolicyError):
         transport.request(endpoint_url=BASE_URL, path="Patient")
 
-    assert calls == [("fhir.partnerhealth.org", 443)]
+    assert calls == [("fhir.partnerhealth.org", 443, 2.0)]
     assert FakeConnection.instances == []
 
 
@@ -416,3 +417,8 @@ def test_transport_rejects_invalid_timeout_configuration():
 
     with pytest.raises(ValueError):
         HIEHTTPTransport(ALLOWED_HOSTS, max_response_bytes=0)
+    with pytest.raises(ValueError, match="DNS timeout"):
+        HIEHTTPTransport(ALLOWED_HOSTS, dns_timeout_seconds=0)
+
+    with pytest.raises(ValueError, match="DNS timeout"):
+        HIEHTTPTransport(ALLOWED_HOSTS, dns_timeout_seconds=5.1)

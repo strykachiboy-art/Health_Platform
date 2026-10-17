@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import dns.exception
+import dns.name
+import dns.resolver
 import ipaddress
-import socket
+import math
 from collections.abc import Callable, Iterable
+from time import monotonic as _monotonic
 from urllib.parse import unquote, urljoin, urlsplit
 
 from app.modules.hie.providers.endpoint_policy import (
@@ -11,51 +15,115 @@ from app.modules.hie.providers.endpoint_policy import (
 )
 
 
-AddressResolver = Callable[[str, int], Iterable[str]]
+AddressResolver = Callable[[str, int, float], Iterable[str]]
+
+DEFAULT_DNS_TIMEOUT_SECONDS = 2.0
+MAX_DNS_TIMEOUT_SECONDS = 5.0
 
 
-def _system_dns_resolver(hostname: str, port: int) -> tuple[str, ...]:
-    """Return socket addresses from the system resolver.
-
-    This performs DNS resolution only. It does not open a socket or send
-    a network request to the returned addresses.
-    """
-    try:
-        records = socket.getaddrinfo(
-            hostname,
-            port,
-            family=socket.AF_UNSPEC,
-            type=socket.SOCK_STREAM,
-            proto=socket.IPPROTO_TCP,
+def validate_hie_dns_timeout(timeout_seconds: object) -> float:
+    """Validate a finite, positive DNS timeout no greater than five seconds."""
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+        raise ValueError(
+            "DNS timeout must be greater than zero and at most "
+            f"{MAX_DNS_TIMEOUT_SECONDS:g} seconds"
         )
-    except OSError as exc:
+
+    try:
+        timeout = float(timeout_seconds)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "DNS timeout must be greater than zero and at most "
+            f"{MAX_DNS_TIMEOUT_SECONDS:g} seconds"
+        ) from exc
+
+    if not math.isfinite(timeout) or timeout <= 0 or timeout > MAX_DNS_TIMEOUT_SECONDS:
+        raise ValueError(
+            "DNS timeout must be greater than zero and at most "
+            f"{MAX_DNS_TIMEOUT_SECONDS:g} seconds"
+        )
+
+    return timeout
+
+
+def _system_dns_resolver(
+    hostname: str,
+    port: int,
+    timeout_seconds: float,
+) -> tuple[str, ...]:
+    """Resolve absolute A/AAAA queries under one shared monotonic deadline.
+
+    dnspython applies each query's remaining lifetime to its DNS work. A
+    monotonic deadline is shared across the IPv4 and IPv6 lookups, so the
+    second query cannot receive a fresh copy of the original time budget.
+    This performs DNS resolution only; it does not open an HTTPS connection.
+    """
+    if port != 443:
         raise HIEEndpointPolicyError(
-            "DNS resolution failed for the approved HIE endpoint"
+            "HIE DNS resolver only permits the default HTTPS port"
+        )
+
+    timeout_budget = validate_hie_dns_timeout(timeout_seconds)
+    deadline = _monotonic() + timeout_budget
+
+    try:
+        resolver = dns.resolver.Resolver(configure=True)
+        resolver.timeout = min(float(resolver.timeout), timeout_budget)
+        # An absolute DNS name avoids search-domain expansion.
+        query_name = dns.name.from_text(hostname, origin=dns.name.root)
+    except (dns.exception.DNSException, OSError, ValueError, TypeError) as exc:
+        raise HIEEndpointPolicyError(
+            "DNS resolver configuration failed for the approved HIE endpoint"
         ) from exc
 
     addresses: list[str] = []
 
-    for record in records:
-        try:
-            family = record[0]
-            sockaddr = record[4]
-            address = sockaddr[0]
-        except (IndexError, TypeError) as exc:
+    for record_type in ("A", "AAAA"):
+        remaining = deadline - _monotonic()
+        if remaining <= 0:
             raise HIEEndpointPolicyError(
-                "DNS resolver returned a malformed address record"
+                "DNS resolution exceeded the configured deadline"
+            )
+
+        try:
+            answer = resolver.resolve(
+                query_name,
+                record_type,
+                search=False,
+                lifetime=remaining,
+                raise_on_no_answer=False,
+            )
+        except dns.resolver.LifetimeTimeout as exc:
+            raise HIEEndpointPolicyError(
+                "DNS resolution exceeded the configured deadline"
+            ) from exc
+        except dns.resolver.NXDOMAIN as exc:
+            raise HIEEndpointPolicyError(
+                "Approved HIE endpoint hostname does not resolve"
+            ) from exc
+        except (dns.exception.DNSException, OSError) as exc:
+            raise HIEEndpointPolicyError(
+                "DNS resolution failed for the approved HIE endpoint"
             ) from exc
 
-        if family not in (socket.AF_INET, socket.AF_INET6):
+        # Defend against resolver implementations that return after the
+        # advertised lifetime rather than raising a timeout themselves.
+        if _monotonic() >= deadline:
             raise HIEEndpointPolicyError(
-                "DNS resolver returned an unsupported address family"
+                "DNS resolution exceeded the configured deadline"
             )
 
-        if not isinstance(address, str) or not address:
-            raise HIEEndpointPolicyError(
-                "DNS resolver returned an invalid IP address"
-            )
+        if getattr(answer, "rrset", None) is None:
+            # A hostname can legitimately have no AAAA records.
+            continue
 
-        addresses.append(address)
+        for record in answer:
+            address = getattr(record, "address", None)
+            if not isinstance(address, str) or not address:
+                raise HIEEndpointPolicyError(
+                    "DNS resolver returned an invalid IP address"
+                )
+            addresses.append(address)
 
     return tuple(addresses)
 
@@ -65,21 +133,24 @@ def resolve_hie_endpoint_ips(
     *,
     allowed_hosts: Iterable[str],
     resolver: AddressResolver | None = None,
+    dns_timeout_seconds: float = DEFAULT_DNS_TIMEOUT_SECONDS,
 ) -> frozenset[str]:
     """Resolve an approved HIE endpoint and reject unsafe DNS answers.
 
-    Every returned address must be a globally routable IP address. One
-    unsafe or malformed answer rejects the entire DNS response.
+    The default resolver uses dnspython and one monotonic deadline shared
+    across A and AAAA. An injected resolver receives the requested timeout
+    budget and is responsible for honoring it. Injection is intended for
+    controlled integrations and deterministic offline tests.
 
-    A resolver can be injected for deterministic offline tests.
+    Every returned address must be globally routable. One unsafe or malformed
+    answer rejects the entire set.
 
-    SECURITY LIMITATION:
-    This is DNS preflight validation, not connection-time destination
-    enforcement. A later HTTP client that independently resolves the
-    hostname could connect to a different IP. Do not use this result as
-    proof that a future connection is safe or as a substitute for transport
-    controls that validate or pin the actual connected destination.
+    This remains DNS preflight, not connection-time destination enforcement.
+    Transport code must connect to a validated numeric IP and preserve TLS
+    hostname verification rather than resolving the hostname again.
     """
+    timeout_budget = validate_hie_dns_timeout(dns_timeout_seconds)
+
     normalized_url = validate_hie_endpoint_url(
         endpoint_url,
         allowed_hosts=allowed_hosts,
@@ -87,8 +158,6 @@ def resolve_hie_endpoint_ips(
 
     hostname = urlsplit(normalized_url).hostname
     if hostname is None:
-        # The endpoint validator should make this unreachable. Retain
-        # the fail-closed check at the boundary.
         raise HIEEndpointPolicyError(
             "Approved HIE endpoint is missing a hostname"
         )
@@ -96,7 +165,7 @@ def resolve_hie_endpoint_ips(
     resolve = _system_dns_resolver if resolver is None else resolver
 
     try:
-        raw_addresses = tuple(resolve(hostname, 443))
+        raw_addresses = tuple(resolve(hostname, 443, timeout_budget))
     except HIEEndpointPolicyError:
         raise
     except Exception as exc:
@@ -117,7 +186,6 @@ def resolve_hie_endpoint_ips(
                 "DNS resolver returned an invalid IP address"
             )
 
-        # Scoped IPv6 addresses are not acceptable as public destinations.
         if "%" in value:
             raise HIEEndpointPolicyError(
                 "Scoped IP addresses are not permitted for HIE endpoints"

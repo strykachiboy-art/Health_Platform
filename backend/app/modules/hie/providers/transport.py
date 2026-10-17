@@ -12,8 +12,11 @@ from urllib.parse import urlencode, unquote, urlsplit
 
 from app.modules.hie.providers.destination_policy import (
     AddressResolver,
+    DEFAULT_DNS_TIMEOUT_SECONDS,
     resolve_hie_endpoint_ips,
+    validate_hie_dns_timeout,
 )
+
 from app.modules.hie.providers.endpoint_policy import (
     HIEEndpointPolicyError,
     validate_hie_endpoint_url,
@@ -348,7 +351,9 @@ class HIEHTTPTransport:
         allowed_hosts: Iterable[str],
         *,
         resolver: AddressResolver | None = None,
+        dns_timeout_seconds: float = DEFAULT_DNS_TIMEOUT_SECONDS,
         connect_timeout: float = 3.0,
+
         read_timeout: float = 10.0,
         max_response_bytes: int = 5 * 1024 * 1024,
     ) -> None:
@@ -370,6 +375,7 @@ class HIEHTTPTransport:
             )
 
         self._resolver = resolver
+        self._dns_timeout_seconds = validate_hie_dns_timeout(dns_timeout_seconds)
         self._connect_timeout = _validate_timeout(
             connect_timeout,
             name="connect_timeout",
@@ -460,7 +466,9 @@ class HIEHTTPTransport:
             normalized_url,
             allowed_hosts=self._allowed_hosts,
             resolver=self._resolver,
+            dns_timeout_seconds=self._dns_timeout_seconds,
         )
+
 
         # Deterministically prefer IPv4, then IPv6. All returned addresses
         # were required to pass validation before any connection is attempted.

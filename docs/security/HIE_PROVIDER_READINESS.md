@@ -332,3 +332,13 @@ The transport only supports `GET` and `HEAD`. It enforces bounded connect/read t
 The allowlist must be supplied from trusted operator/deployment configuration, never tenant-controlled input. Network egress controls remain necessary. Before enabling a concrete provider, verify the actual runtime environment, TLS trust configuration, connected-peer behavior, redirect requirements, credential scoping, response handling, logging/redaction and partner sandbox behavior. Writes remain deliberately unsupported by this initial transport primitive.
 
 Status: **PINNED HTTPS TRANSPORT IMPLEMENTED / OFFLINE UNIT TESTS PASSED (449 HIE module tests) / READ-ONLY ONLY / NOT WIRED TO HIE PROVIDER REGISTRY / PARTNER OR PRODUCTION CONNECTIVITY NOT VERIFIED**.
+
+## Bounded DNS resolution
+
+The bounded DNS resolution slice uses `dnspython` directly. The resolver sends absolute A and AAAA queries without search-domain expansion and uses a single monotonic deadline across both queries. The default DNS budget is 2 seconds; configured values must be greater than zero and cannot exceed 5 seconds. Each query receives only the remaining budget through dnspython's `lifetime` option.
+
+The timeout budget is passed through `HIEHTTPTransport` to destination resolution. Injected resolver callbacks receive the requested budget and are responsible for honoring it. DNS errors, timeouts and missing usable addresses fail closed. The direct dependency is declared in `backend/requirements.txt`; regenerate `backend/requirements.lock` with the repository's pinned `pip-compile` command before merging.
+
+This bounds the resolver's DNS query lifetime; it does not replace deployment-level DNS availability monitoring, egress restrictions or connection-time destination enforcement. The transport must continue connecting to a validated numeric IP, preserve TLS hostname verification, verify the connected peer, and reject redirects.
+
+Status while this slice is under review: **BOUNDED DNS LOOKUP IMPLEMENTED / REGRESSION PENDING / NOT MERGED**.
