@@ -1,6 +1,6 @@
 # ADR-001: Mobile Storage Architecture and Offline Boundaries
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-12
 - Evidence baseline: `00c199325be61647ba7da328c2412c506863021b`
 
@@ -403,3 +403,65 @@ This record captures the current mobile storage boundary and the constraints
 for subsequent offline work. Any future decision that changes the allowed
 data categories, storage mechanism, encryption assumptions, or authoritative
 ownership must be reviewed and documented before implementation.
+
+## Phase 19 current-state security inventory
+
+Review date: 2026-10-16. Gate 1 source snapshot: [5be486b2a60304df0f40425fd6219efe80263570](https://github.com/strykachiboy-art/clinic-system-pro/commit/5be486b2a60304df0f40425fd6219efe80263570). Latest Slice 2 mobile source baseline: [55daab92f3c68dafdadd1198f306e5fb9e6f8ec8](https://github.com/strykachiboy-art/clinic-system-pro/commit/55daab92f3c68dafdadd1198f306e5fb9e6f8ec8). Focused regression rerun: [3fb6cfd39fd89fba13359dcf5ae1b0e1de4b9408](https://github.com/strykachiboy-art/clinic-system-pro/commit/3fb6cfd39fd89fba13359dcf5ae1b0e1de4b9408).
+
+The current source inventory and selected lifecycle design are recorded in [phase-19-offline-sensitive-data-inventory.md](phase-19-offline-sensitive-data-inventory.md).
+
+This note adds a current-state view without rewriting historical evidence. Statements in earlier sections describing a prior source baseline remain historical; they must not be read as claims about the current implementation. Earlier test and migration results also remain evidence only for the source commit and environment originally recorded. The Gate 1 source comparison referenced above was accurate at that time, but it predates subsequent Slice 2 changes and does not describe the latest source. Slice 2 source and local test evidence was reviewed at HEAD `55daab92f3c68dafdadd1198f306e5fb9e6f8ec8`; the local Flutter regression does not establish device behavior or production operation.
+
+### Current source findings
+
+- The runtime wires `AppDatabase` to the durable operation queue. Schema version 3 contains `AppMetadata`, `OperationQueueEntry` and `OperationQueuePayload`.
+- Offline appointment request payloads use AES-256-GCM. The encryption key is handled through platform-backed secure storage, and authenticated associated data binds encrypted content to operation identity and user/clinic context. This is payload-level encryption, not whole-database SQLite encryption.
+- Queue metadata remains in ordinary SQLite columns. The queue store has a terminal purge primitive that accepts a caller-provided cutoff. The primitive does not itself establish or schedule a retention policy.
+- The selected design retains terminal queue records and associated encrypted payloads for 30 days after the terminal transition. The runtime policy, safe trigger and verification are not yet established by this documentation change.
+- The selected design requires unresolved operations aged 30 days from creation to enter review and be excluded from automatic replay until reviewed. The current ready-operation selection does not enforce this age-based review guard.
+- The client lifecycle distinguishes queued, in-flight, retry-scheduled, reconciliation-required, acknowledged, rejected, user-intervention-required and cancelled operations. An in-flight operation may have reached the server before interruption; it must not be treated as a confirmed failure merely because its response was lost.
+- A universal backend idempotency-key validity period has not been established in this review. The local 30-day retention policy is not proof of backend deduplication for 30 days. Replay of aged or uncertain work requires verification of the applicable operation-specific backend contract.
+- Authentication tokens reside in the platform-backed session record. Patient directory, detail, edit and registration screens hold sensitive models or form values in memory. Source review of these screens does not prove automatic clearing across every route and session transition.
+- The current logout path waits for active replay and leaves replay paused after logout. The encrypted queue and its keys are retained; logout is not an implicit destructive queue purge.
+- Approved design decision: exclude optional appointment `reason` and `notes` from persisted offline payloads by default. Later inclusion requires documented workflow necessity and explicit approval, plus review of protection, access, retention and deletion requirements. The producer now omits these fields from new payloads, and focused tests assert their absence from producer output and the decrypted persisted queue payload. Existing legacy queued payloads are not rewritten. The combined local Flutter regression passed 68 tests at `55daab9` and passed again at `3fb6cfd` with no intervening mobile source changes. Neither result establishes device behavior or production operation.
+- API diagnostic formatting: commit `55daab9` adds a mocked HTTP 422 regression that asserts sentinel markers from server messages, validation errors, request body, raw body and URI query are absent from `ApiException.toString()`, while parsed UI details remain available. Native, plugin, transport and OS logging paths are outside this test.
+- Android manifest and backup/data-extraction exclusions exist at source level. They do not prove actual backup/restore behavior, whole-database encryption or protection against a compromised device.
+
+### Gate 1 formal architecture acceptance (2026-10-16)
+
+The Phase 19 offline-storage and lifecycle design is formally accepted. Acceptance covers terminal queue retention for 30 days after the terminal transition, measured from `updatedAt`; unresolved operations older than 30 days from `createdAt` entering review and being excluded from automatic replay, never silently deleted due to age; reconciliation of unknown outcomes before unsafe repeat delivery, preserving stable operation identity/idempotency only when the endpoint contract establishes safe replay; explicit authenticated discard by the original operation owner in the original user/clinic context, with operation-specific authorization and confirmation, and reconciliation or recorded manual disposition before deletion where a server-side effect may have occurred; stopping and awaiting active replay during logout or context changes, invalidating sensitive session/view state while retaining queue data and keys; revalidating ownership before decrypting or delivering retained work; dependency-aware key cleanup with retriable and reported incomplete cleanup; Android backup exclusions as source-level controls only; and the default exclusion of optional appointment `reason` and `notes` from persisted offline payloads.
+
+This acceptance approves the design baseline, not implementation or rollout. Runtime enforcement, focused verification, backend idempotency/reconciliation checks, platform-device evidence, and documented rollout blockers remain mandatory. It does not establish whole-database SQLite encryption, protection from a compromised device, or production operation.
+
+### Selected Slice 1 lifecycle design
+
+- Terminal states `acknowledged`, `rejected` and `cancelled`: 30-day local retention measured from the terminal transition, followed by eligibility for a transactional purge.
+- Unresolved states: 30-day age-based review, without automatic deletion just because the age threshold is reached.
+- Unknown outcome: reconcile before a potentially unsafe repeat delivery. Preserve stable operation identity and idempotency key when a repeat attempt is proven safe; otherwise fail closed.
+- Explicit discard: require the authenticated original operation owner, the original user/clinic context, verified permission for the operation type and explicit confirmation. If a server-side effect may have occurred, require authoritative reconciliation or an explicitly recorded manual disposition before deletion. Local deletion is not server-side cancellation.
+- Logout and context changes: stop and await active replay, keep replay paused, invalidate access to prior session-scoped views, and revalidate user/clinic ownership before decrypting or delivering retained work. Ordinary logout does not itself delete queue data or encryption keys.
+- Key cleanup: retain keys needed by surviving encrypted payloads. After an authorized purge, check key dependencies before removing keys. Database deletion and secure-storage deletion are separate operations; incomplete cleanup must be reported and retriable.
+- Appointment payload minimization: exclude optional `reason` and `notes` from persisted offline payloads by default. Later inclusion requires documented workflow necessity and explicit approval, followed by review of protection, access, retention and deletion requirements. The current producer enforces this default for new payloads, and focused tests cover producer output and the decrypted stored payload. Existing legacy queued payloads are not rewritten.
+- Device controls: treat backup rules as source-level evidence until platform behavior has been verified on suitable devices and supported versions.
+
+### Phase 19 implementation status and final verification — 2026-10-17
+
+The Phase 19 architecture baseline remains **Accepted**. The implementation/evidence status below distinguishes local development evidence from platform and production claims.
+
+- **Slice 1 — design:** accepted on 2026-10-16.
+- **Slice 2 — protected local storage and credentials:** scoped runtime protections and local regression evidence are recorded in the Phase 19 inventory. AES-256-GCM protects queued operation payloads; this is not whole-database SQLite encryption, and legacy payloads were not rewritten.
+- **Slice 3 — retention and cleanup:** current source includes the 30-day terminal-retention policy and transactional purge, calls the policy from the replay worker, excludes aged unresolved work from ready/retry selection and exposes a context-scoped review listing. Confirmed-disposition cleanup includes context checks, payload/entry deletion, key dependency checks and reported retryable cleanup failure. Backend idempotency/reconciliation contracts and applicable rollout approvals remain separate gates.
+- **Slice 4 — session invalidation:** Slices 4A–4C are committed and pushed. Focused local checks passed at their individual gates. They cover protected navigation, authenticated 401/logout invalidation, waiting for active replay, stale sign-in races and rejection of changed user/clinic context on session refresh.
+- **Slice 5 — device evidence:** on a Pixel 4 emulator reporting Android 15 (API 35), secure-storage integration passed **1 test** and database close/reopen integration passed **1 test**. The focused database regression passed **9 tests**; the database integration-test analysis reported no issues. Manifest and backup XML source checks passed for `allowBackup="false"`, configured rule references and the expected cloud-backup/device-transfer exclusions.
+
+The two emulator integration results establish only their tested scenarios. They do not establish actual backup/restore, device transfer, uninstall/reinstall, physical-device behavior, hardware-backed key guarantees, all key-loss or migration-failure paths, whole-database SQLite encryption or compromised-device protection. XML and manifest checks remain source-level evidence for backup behavior.
+
+### Remaining verification and rollout gates
+
+- Validate the accepted 30-day retention rule against applicable product, organizational, legal, contractual and audit requirements.
+- Verify operation-specific backend idempotency and reconciliation guarantees; local retention duration is not evidence of backend key validity.
+- Keep authorization, server-disposition validation, cleanup-failure recovery and dependency-aware key cleanup in the release-candidate regression.
+- Obtain additional platform evidence for actual backup/restore, transfer, reinstall, secure-key lifecycle and supported physical-device scenarios where required.
+- Run and record the final applicable mobile regression before Slice 5 commit. Local and emulator test evidence does not establish production operation.
+
+**Disposition:** Slice 5's two scoped Android integration tests and source-level backup configuration check passed. Phase 19's final PR must carry the remaining limitations and rollout gates above; no production-readiness or production-operation claim is made.

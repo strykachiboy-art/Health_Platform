@@ -2714,6 +2714,11 @@ def test_create_appointment_idempotency_replays_existing_appointment(
     app,
     monkeypatch,
 ):
+    disposition_checks = []
+    monkeypatch.setattr(
+        "app.core.offline_operations.services.disposition_service.assert_operation_not_disposed",
+        lambda **kwargs: disposition_checks.append(kwargs),
+    )
     existing = type(
         "ExistingAppointment",
         (),
@@ -2767,6 +2772,14 @@ def test_create_appointment_idempotency_replays_existing_appointment(
     )
 
     assert result is existing
+    assert disposition_checks == [
+        {
+            "clinic_id": 10,
+            "user_id": 50,
+            "operation_type": "appointment.create",
+            "idempotency_key": "appointment-service-001",
+        }
+    ]
     assert captured["operation"] == "appointment.create"
     assert captured["idempotency_key"] == (
         "appointment-service-001"
@@ -2778,6 +2791,11 @@ def test_create_appointment_idempotency_binds_created_appointment(
     app,
     monkeypatch,
 ):
+    disposition_checks = []
+    monkeypatch.setattr(
+        "app.core.offline_operations.services.disposition_service.assert_operation_not_disposed",
+        lambda **kwargs: disposition_checks.append(kwargs),
+    )
     clinic = type(
         "Clinic",
         (),
@@ -2885,5 +2903,13 @@ def test_create_appointment_idempotency_binds_created_appointment(
     )
 
     assert result.id == 202
+    assert disposition_checks == [
+        {
+            "clinic_id": 10,
+            "user_id": 50,
+            "operation_type": "appointment.create",
+            "idempotency_key": "appointment-service-002",
+        }
+    ]
     assert record.entity_type == "Appointment"
     assert record.entity_id == 202

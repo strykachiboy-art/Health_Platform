@@ -66,6 +66,76 @@ void main() {
     }
   });
 
+  test(
+    'runs queue maintenance on startup and resume while disconnected',
+    () async {
+      final connectivity = _FakeConnectivity(DeviceNetworkStatus.disconnected);
+      var maintenanceCalls = 0;
+      var replayCalls = 0;
+
+      final scheduler = OperationReplayScheduler(
+        connectivitySource: connectivity,
+        runReplay: () async {
+          replayCalls++;
+          return _result();
+        },
+        runMaintenance: () async {
+          maintenanceCalls++;
+        },
+      );
+
+      try {
+        await scheduler.start();
+        expect(maintenanceCalls, 1);
+        expect(replayCalls, 0);
+        expect(scheduler.maintenanceFailed, isFalse);
+
+        scheduler.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        await _settle();
+
+        expect(maintenanceCalls, 2);
+        expect(replayCalls, 0);
+        expect(scheduler.maintenanceFailed, isFalse);
+      } finally {
+        await scheduler.dispose();
+        await connectivity.close();
+      }
+    },
+  );
+
+  test(
+    'records maintenance failure and retries successfully on resume',
+    () async {
+      final connectivity = _FakeConnectivity(DeviceNetworkStatus.disconnected);
+      var maintenanceCalls = 0;
+
+      final scheduler = OperationReplayScheduler(
+        connectivitySource: connectivity,
+        runReplay: () async => _result(),
+        runMaintenance: () async {
+          maintenanceCalls++;
+          if (maintenanceCalls == 1) {
+            throw StateError('Injected local maintenance failure.');
+          }
+        },
+      );
+
+      try {
+        await scheduler.start();
+        expect(maintenanceCalls, 1);
+        expect(scheduler.maintenanceFailed, isTrue);
+
+        scheduler.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        await _settle();
+
+        expect(maintenanceCalls, 2);
+        expect(scheduler.maintenanceFailed, isFalse);
+      } finally {
+        await scheduler.dispose();
+        await connectivity.close();
+      }
+    },
+  );
   test('pause blocks replay until the session-change notification', () async {
     final connectivity = _FakeConnectivity(DeviceNetworkStatus.connected);
 
@@ -98,6 +168,58 @@ void main() {
       await connectivity.close();
     }
   });
+
+  test(
+    'pauseAndWait waits for active replay and blocks new triggers',
+    () async {
+      final connectivity = _FakeConnectivity(DeviceNetworkStatus.connected);
+      final started = Completer<void>();
+      final release = Completer<void>();
+      var calls = 0;
+
+      final scheduler = OperationReplayScheduler(
+        connectivitySource: connectivity,
+        runReplay: () async {
+          calls++;
+          if (calls == 1) {
+            started.complete();
+            await release.future;
+          }
+          return _result();
+        },
+      );
+
+      try {
+        await scheduler.start();
+        await started.future;
+
+        var waitFinished = false;
+        final waiting = scheduler.pauseAndWait().then((_) {
+          waitFinished = true;
+        });
+
+        await _settle();
+        expect(waitFinished, isFalse);
+
+        connectivity.emit(DeviceNetworkStatus.connected);
+        await _settle();
+        expect(calls, 1);
+
+        release.complete();
+        await waiting;
+        await _settle();
+        expect(calls, 1);
+
+        scheduler.notifySessionChanged();
+        await _settle();
+        expect(calls, 2);
+      } finally {
+        if (!release.isCompleted) release.complete();
+        await scheduler.dispose();
+        await connectivity.close();
+      }
+    },
+  );
 
   test('runs replay promptly when a new operation is queued online', () async {
     final connectivity = _FakeConnectivity(DeviceNetworkStatus.connected);

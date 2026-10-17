@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:http/testing.dart';
 import 'package:clinic_system_pro/core/config/backend_config.dart';
 import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/security/secure_key_value_storage.dart';
+import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_store.dart';
@@ -42,6 +44,22 @@ class _MemorySecureStorage implements SecureKeyValueStorage {
   }
 }
 
+class _GateWriteSecureStorage extends _MemorySecureStorage {
+  final Completer<void> writeStarted = Completer<void>();
+  final Completer<void> releaseWrite = Completer<void>();
+  bool blockNextWrite = false;
+
+  @override
+  Future<void> write({required String key, required String value}) async {
+    if (blockNextWrite) {
+      blockNextWrite = false;
+      writeStarted.complete();
+      await releaseWrite.future;
+    }
+    await super.write(key: key, value: value);
+  }
+}
+
 AuthTokenResponse _session() => const AuthTokenResponse(
   accessToken: _accessToken,
   refreshToken: _refreshToken,
@@ -68,6 +86,7 @@ void main() {
     ) async {
       final storage = _MemorySecureStorage();
       var requests = 0;
+      var sessionChangedCalls = 0;
 
       final client = MockClient((request) async {
         requests++;
@@ -102,6 +121,7 @@ void main() {
             acquireGoogleIdToken: () async => _idToken,
             authRemoteDataSource: remote,
             sessionCoordinator: coordinator,
+            onSessionChanged: () => sessionChangedCalls++,
           ),
         ),
       );
@@ -111,6 +131,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(requests, 1);
+      expect(sessionChangedCalls, 1);
       expect(
         find.byKey(const ValueKey('authenticated-session')),
         findsOneWidget,
@@ -122,6 +143,72 @@ void main() {
       expect(stored?.accessToken, _accessToken);
       expect(stored?.refreshToken, _refreshToken);
     });
+
+    testWidgets(
+      'invalidation during session persistence cannot reopen protected navigation',
+      (tester) async {
+        final storage = _GateWriteSecureStorage()..blockNextWrite = true;
+        final guard = SessionNavigationGuard()..markSignedOut();
+        addTearDown(guard.dispose);
+
+        final client = MockClient((request) async {
+          expect(request.url.path, '/api/v1/auth/google/mobile');
+          return http.Response(jsonEncode(_successEnvelope()), 200);
+        });
+        addTearDown(client.close);
+
+        final remote = AuthRemoteDataSource(
+          apiClient: ApiClient(
+            config: const BackendConfig(
+              baseUrl: 'http://127.0.0.1:5000',
+              allowInsecureHttp: true,
+            ),
+            client: client,
+          ),
+        );
+        final coordinator = AuthSessionCoordinator(
+          sessionStore: AuthSessionStore(storage: storage),
+          remoteDataSource: remote,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GoogleLoginScreen(
+              acquireGoogleIdToken: () async => _idToken,
+              authRemoteDataSource: remote,
+              sessionCoordinator: coordinator,
+              sessionNavigationGuard: guard,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('google-sign-in-button')));
+        await tester.pump();
+        await storage.writeStarted.future;
+
+        guard.invalidate();
+        final invalidation = coordinator
+            .invalidateAfterDefinitiveAuthenticationRejection();
+        storage.releaseWrite.complete();
+        await invalidation;
+        await tester.pumpAndSettle();
+
+        expect(guard.status, SessionNavigationStatus.invalidated);
+        expect(await AuthSessionStore(storage: storage).read(), isNull);
+        expect(
+          find.byKey(const ValueKey('session-recovery-required')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('authenticated-session')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('google-sign-in-button')),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets('cancellation makes no backend request and stores no session', (
       tester,
@@ -224,8 +311,12 @@ void main() {
     ) async {
       final storage = _MemorySecureStorage();
       final store = AuthSessionStore(storage: storage);
+      final guard = SessionNavigationGuard()..markSessionAvailable();
+      addTearDown(guard.dispose);
       await store.save(_session());
 
+      final pauseGate = Completer<void>();
+      var sessionChangedCalls = 0;
       var requests = 0;
       final client = MockClient((request) async {
         requests++;
@@ -262,6 +353,11 @@ void main() {
             acquireGoogleIdToken: () async => null,
             authRemoteDataSource: remote,
             sessionCoordinator: coordinator,
+            sessionNavigationGuard: guard,
+            onSessionEnding: () async {
+              await pauseGate.future;
+            },
+            onSessionChanged: () => sessionChangedCalls++,
           ),
         ),
       );
@@ -270,10 +366,25 @@ void main() {
       expect(find.byKey(const ValueKey('sign-out-button')), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('sign-out-button')));
+      await tester.pump();
+      await tester.idle();
+      expect(guard.status, SessionNavigationStatus.invalidated);
+      expect(guard.redirect('/patients/42'), '/login');
+      expect(
+        requests,
+        0,
+        reason: 'Remote logout must wait for replay quiescence.',
+      );
+      pauseGate.complete();
       await tester.pumpAndSettle();
 
       expect(requests, 1);
       expect(await store.read(), isNull);
+      expect(
+        sessionChangedCalls,
+        0,
+        reason: 'Logout must leave replay paused until the next successful sign-in.',
+      );
       expect(
         find.byKey(const ValueKey('google-sign-in-button')),
         findsOneWidget,
@@ -405,5 +516,84 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets(
+      'invalidation hides a restored session until secure local state is cleared',
+      (tester) async {
+        final storage = _MemorySecureStorage();
+        final store = AuthSessionStore(storage: storage);
+        await store.save(_session());
+        final guard = SessionNavigationGuard();
+        addTearDown(guard.dispose);
+
+        final client = MockClient((_) async {
+          fail('Restoration and invalidation must not make a network request.');
+        });
+        addTearDown(client.close);
+
+        final remote = AuthRemoteDataSource(
+          apiClient: ApiClient(
+            config: const BackendConfig(
+              baseUrl: 'http://127.0.0.1:5000',
+              allowInsecureHttp: true,
+            ),
+            client: client,
+          ),
+        );
+        final coordinator = AuthSessionCoordinator(
+          sessionStore: store,
+          remoteDataSource: remote,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GoogleLoginScreen(
+              acquireGoogleIdToken: () async => _idToken,
+              authRemoteDataSource: remote,
+              sessionCoordinator: coordinator,
+              sessionNavigationGuard: guard,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(guard.status, SessionNavigationStatus.sessionAvailable);
+        expect(
+          find.byKey(const ValueKey('authenticated-session')),
+          findsOneWidget,
+        );
+
+        guard.invalidate();
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('session-recovery-required')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('authenticated-session')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('clear-local-session-button')),
+          findsOneWidget,
+        );
+
+        await store.clear();
+        guard.markSignedOut();
+        await tester.pumpAndSettle();
+
+        expect(await store.read(), isNull);
+        expect(guard.status, SessionNavigationStatus.signedOut);
+        expect(
+          find.byKey(const ValueKey('google-sign-in-button')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('authenticated-session')),
+          findsNothing,
+        );
+      },
+    );
   });
 }

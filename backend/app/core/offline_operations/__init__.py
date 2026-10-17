@@ -1,0 +1,1 @@
+"""Authoritative lifecycle decisions for client-side offline operations."""

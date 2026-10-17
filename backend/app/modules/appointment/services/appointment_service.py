@@ -445,6 +445,20 @@ def create_appointment(
                 "Idempotency user ID is required"
             )
 
+        # Use the shared disposition guard before reserving the operation key.
+        # Every future offline-capable endpoint adapter must call this guard
+        # inside its transaction before attempting a side effect.
+        from app.core.offline_operations.services.disposition_service import (
+            assert_operation_not_disposed,
+        )
+
+        assert_operation_not_disposed(
+            clinic_id=clinic_id,
+            user_id=idempotency_user_id,
+            operation_type="appointment.create",
+            idempotency_key=idempotency_key,
+        )
+
         idempotency_record, created = reserve_idempotency_operation(
             clinic_id=clinic_id,
             user_id=idempotency_user_id,

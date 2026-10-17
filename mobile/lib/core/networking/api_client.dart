@@ -26,6 +26,11 @@ class ApiClient {
   final bool _ownsClient;
   final Duration requestTimeout;
 
+  /// Synchronously notifies the app when a bearer-authenticated request
+  /// receives HTTP 401. The callback must start cleanup without waiting
+  /// for the request or its replay worker to finish.
+  void Function()? onAuthenticationRejected;
+
   int _requestSequence = 0;
 
   ApiCommunicationStatus _communicationStatus =
@@ -215,6 +220,13 @@ class ApiClient {
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode == 401 && bearerToken != null) {
+        try {
+          onAuthenticationRejected?.call();
+        } on Object {
+          // Cleanup notification must not hide the original HTTP failure.
+        }
+      }
       throw ApiException(
         kind: ApiFailureKind.httpStatus,
         message: 'The backend returned HTTP ${response.statusCode}.',

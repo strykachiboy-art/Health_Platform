@@ -81,12 +81,9 @@ class AppointmentCreateCommand {
     if (appointmentType != null) {
       payload['appointment_type'] = appointmentType;
     }
-    if (reason != null) {
-      payload['reason'] = reason;
-    }
-    if (notes != null) {
-      payload['notes'] = notes;
-    }
+    // Deliberately omit optional clinical free-text from persisted
+    // offline payloads by default. Future inclusion requires explicit
+    // design approval and a reviewed protection/retention/deletion policy.
 
     return payload;
   }

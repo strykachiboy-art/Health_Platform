@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
@@ -17,6 +18,35 @@ enum OperationQueueEnqueueResult {
   contextConflict,
 }
 
+enum OperationQueueKeyCleanupStatus {
+  deleted,
+  retainedForPayloadDependencies,
+  failed,
+}
+
+enum OperationQueueDiscardCleanupStatus {
+  removedAndKeyDeleted,
+  removedKeyRetainedForDependencies,
+  removedKeyCleanupPending,
+  alreadyAbsentAndKeyDeleted,
+  alreadyAbsentKeyRetainedForDependencies,
+  alreadyAbsentKeyCleanupPending,
+  contextMismatch,
+  acknowledgedOperation,
+}
+
+class _DiscardTransactionOutcome {
+  const _DiscardTransactionOutcome({
+    required this.removed,
+    required this.blockedStatus,
+    required this.hasDependencies,
+  });
+
+  final bool removed;
+  final OperationQueueDiscardCleanupStatus? blockedStatus;
+  final bool hasDependencies;
+}
+
 /// Durable metadata store for the offline-operation lifecycle.
 ///
 /// This store deliberately does not persist request or response payloads.
@@ -25,6 +55,39 @@ enum OperationQueueEnqueueResult {
 ///
 /// The backend remains authoritative for authorization and application state.
 class OperationQueueStore {
+  static const Duration terminalRetentionPeriod = Duration(days: 30);
+  static const Duration unresolvedReviewAge = Duration(days: 30);
+
+  // Serializes encrypted payload persistence with context-key deletion. The
+  // lock is process-wide so separate store instances in the same app isolate
+  // cannot delete a key while another store is attaching a payload under it.
+  static final Map<String, Future<void>> _contextMutationTails =
+      <String, Future<void>>{};
+
+  static Future<T> _withContextMutationLock<T>(
+    OperationPayloadContext context,
+    Future<T> Function() action,
+  ) async {
+    final lockKey = jsonEncode(<String>[
+      context.userId,
+      context.clinicContextId,
+    ]);
+    final previous = _contextMutationTails[lockKey];
+    final release = Completer<void>();
+    _contextMutationTails[lockKey] = release.future;
+
+    if (previous != null) await previous;
+
+    try {
+      return await action();
+    } finally {
+      release.complete();
+      if (identical(_contextMutationTails[lockKey], release.future)) {
+        _contextMutationTails.remove(lockKey);
+      }
+    }
+  }
+
   OperationQueueStore(
     this._database, {
     OperationRetryPolicy? retryPolicy,
@@ -94,6 +157,10 @@ class OperationQueueStore {
   ///
   /// An identical re-enqueue is a no-op. Reuse of an operation ID with
   /// different payload or scope is rejected without replacing existing data.
+  /// Atomically persists queue metadata and its authenticated encrypted body.
+  ///
+  /// The per-context mutation lock spans encryption and database persistence,
+  /// so safe key cleanup cannot race between ciphertext creation and insertion.
   Future<OperationQueueEnqueueResult> enqueueEncrypted(
     OperationIdentity identity, {
     required OperationPayloadContext context,
@@ -105,113 +172,116 @@ class OperationQueueStore {
       throw StateError('Encrypted payload support is not configured.');
     }
 
-    // Encrypt before touching the queue. A crypto or secure-storage failure
-    // must not leave a queue record that appears ready for delivery.
-    final encrypted = await crypto.encrypt(
-      identity: identity,
-      context: context,
-      payload: payload,
-    );
-    final timestamp = (now ?? DateTime.now()).toUtc();
+    return _withContextMutationLock(context, () async {
+      // Encrypt before touching the queue. A crypto or secure-storage failure
+      // must not leave a queue record that appears ready for delivery.
+      final encrypted = await crypto.encrypt(
+        identity: identity,
+        context: context,
+        payload: payload,
+      );
+      final timestamp = (now ?? DateTime.now()).toUtc();
 
-    return _database.transaction(() async {
-      final table = _database.operationQueueEntry;
-      final payloadTable = _database.operationQueuePayload;
+      return _database.transaction(() async {
+        final table = _database.operationQueueEntry;
+        final payloadTable = _database.operationQueuePayload;
 
-      final existingById =
-          await (_database.select(table)
-                ..where((row) => row.operationId.equals(identity.operationId)))
-              .getSingleOrNull();
-
-      if (existingById != null) {
-        final sameIdentity =
-            existingById.operationType == identity.operationType &&
-            existingById.idempotencyKey == identity.idempotencyKey;
-
-        if (!sameIdentity) {
-          return OperationQueueEnqueueResult.operationIdConflict;
-        }
-
-        if ((existingById.ownerUserId != null &&
-                existingById.ownerUserId != context.userId) ||
-            (existingById.clinicContextId != null &&
-                existingById.clinicContextId != context.clinicContextId) ||
-            ((existingById.ownerUserId == null) !=
-                (existingById.clinicContextId == null))) {
-          return OperationQueueEnqueueResult.contextConflict;
-        }
-
-        final existingPayload =
+        final existingById =
             await (_database.select(
-                  payloadTable,
+                  table,
                 )..where((row) => row.operationId.equals(identity.operationId)))
                 .getSingleOrNull();
 
-        if (existingPayload != null) {
-          if (existingById.ownerUserId != context.userId ||
-              existingById.clinicContextId != context.clinicContextId) {
+        if (existingById != null) {
+          final sameIdentity =
+              existingById.operationType == identity.operationType &&
+              existingById.idempotencyKey == identity.idempotencyKey;
+
+          if (!sameIdentity) {
+            return OperationQueueEnqueueResult.operationIdConflict;
+          }
+
+          if ((existingById.ownerUserId != null &&
+                  existingById.ownerUserId != context.userId) ||
+              (existingById.clinicContextId != null &&
+                  existingById.clinicContextId != context.clinicContextId) ||
+              ((existingById.ownerUserId == null) !=
+                  (existingById.clinicContextId == null))) {
             return OperationQueueEnqueueResult.contextConflict;
           }
 
-          final originalPayload = await _decryptPayloadForEntry(
-            existingById,
-            context,
-          );
+          final existingPayload =
+              await (_database.select(payloadTable)..where(
+                    (row) => row.operationId.equals(identity.operationId),
+                  ))
+                  .getSingleOrNull();
 
-          return _canonicalPayload(originalPayload) ==
-                  _canonicalPayload(payload)
-              ? OperationQueueEnqueueResult.alreadyPresent
-              : OperationQueueEnqueueResult.payloadConflict;
+          if (existingPayload != null) {
+            if (existingById.ownerUserId != context.userId ||
+                existingById.clinicContextId != context.clinicContextId) {
+              return OperationQueueEnqueueResult.contextConflict;
+            }
+
+            final originalPayload = await _decryptPayloadForEntry(
+              existingById,
+              context,
+            );
+
+            return _canonicalPayload(originalPayload) ==
+                    _canonicalPayload(payload)
+                ? OperationQueueEnqueueResult.alreadyPresent
+                : OperationQueueEnqueueResult.payloadConflict;
+          }
+
+          // Only an untouched queued metadata row can be upgraded to carry a
+          // payload. Never attach a new body after a delivery attempt/outcome.
+          if (existingById.lifecycleState !=
+                  OperationLifecycleState.queued.name ||
+              existingById.attemptsCompleted != 0) {
+            return OperationQueueEnqueueResult.payloadConflict;
+          }
+
+          await (_database.update(table)
+                ..where((row) => row.operationId.equals(identity.operationId)))
+              .write(
+                OperationQueueEntryCompanion(
+                  ownerUserId: Value<String?>(context.userId),
+                  clinicContextId: Value<String?>(context.clinicContextId),
+                  updatedAt: Value<DateTime>(timestamp),
+                ),
+              );
+
+          await _insertEncryptedPayload(identity.operationId, encrypted);
+          return OperationQueueEnqueueResult.payloadAttached;
         }
 
-        // Only an untouched queued metadata row can be upgraded to carry a
-        // payload. Never attach a new body after a delivery attempt or outcome.
-        if (existingById.lifecycleState !=
-                OperationLifecycleState.queued.name ||
-            existingById.attemptsCompleted != 0) {
-          return OperationQueueEnqueueResult.payloadConflict;
+        final existingByKey =
+            await (_database.select(table)..where(
+                  (row) => row.idempotencyKey.equals(identity.idempotencyKey),
+                ))
+                .getSingleOrNull();
+
+        if (existingByKey != null) {
+          return OperationQueueEnqueueResult.idempotencyKeyConflict;
         }
 
-        await (_database.update(
-          table,
-        )..where((row) => row.operationId.equals(identity.operationId))).write(
-          OperationQueueEntryCompanion(
-            ownerUserId: Value<String?>(context.userId),
-            clinicContextId: Value<String?>(context.clinicContextId),
-            updatedAt: Value<DateTime>(timestamp),
-          ),
-        );
+        await _database
+            .into(table)
+            .insert(
+              OperationQueueEntryCompanion.insert(
+                operationId: identity.operationId,
+                operationType: identity.operationType,
+                idempotencyKey: identity.idempotencyKey,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+                ownerUserId: Value<String?>(context.userId),
+                clinicContextId: Value<String?>(context.clinicContextId),
+              ),
+            );
 
         await _insertEncryptedPayload(identity.operationId, encrypted);
-        return OperationQueueEnqueueResult.payloadAttached;
-      }
-
-      final existingByKey =
-          await (_database.select(table)..where(
-                (row) => row.idempotencyKey.equals(identity.idempotencyKey),
-              ))
-              .getSingleOrNull();
-
-      if (existingByKey != null) {
-        return OperationQueueEnqueueResult.idempotencyKeyConflict;
-      }
-
-      await _database
-          .into(table)
-          .insert(
-            OperationQueueEntryCompanion.insert(
-              operationId: identity.operationId,
-              operationType: identity.operationType,
-              idempotencyKey: identity.idempotencyKey,
-              createdAt: timestamp,
-              updatedAt: timestamp,
-              ownerUserId: Value<String?>(context.userId),
-              clinicContextId: Value<String?>(context.clinicContextId),
-            ),
-          );
-
-      await _insertEncryptedPayload(identity.operationId, encrypted);
-      return OperationQueueEnqueueResult.inserted;
+        return OperationQueueEnqueueResult.inserted;
+      });
     });
   }
 
@@ -260,6 +330,7 @@ class OperationQueueStore {
     if (context == null) return const <OperationQueueEntryData>[];
 
     final timestamp = (now ?? DateTime.now()).toUtc();
+    final reviewCutoff = timestamp.subtract(unresolvedReviewAge);
     final table = _database.operationQueueEntry;
     final payloadTable = _database.operationQueuePayload;
 
@@ -275,6 +346,7 @@ class OperationQueueStore {
                   OperationLifecycleState.queued.name,
                   OperationLifecycleState.retryScheduled.name,
                 ]) &
+                table.createdAt.isBiggerThanValue(reviewCutoff) &
                 table.attemptsCompleted.isSmallerThanValue(
                   _retryPolicy.maxAttempts,
                 ) &
@@ -296,17 +368,60 @@ class OperationQueueStore {
     return rows.map((row) => row.readTable(table)).toList(growable: false);
   }
 
-  /// Returns the earliest scheduled retry for this owner and clinic.
+  /// Lists unresolved entries at or beyond the review age for this context.
   ///
-  /// This is scheduling metadata only. It never decrypts payloads or exposes
-  /// another user's queued work.
+  /// The persisted createdAt timestamp makes the review condition durable.
+  /// A review listing does not itself authorize replay or deletion.
+  Future<List<OperationQueueEntryData>> listReviewRequired({
+    required OperationPayloadContext context,
+    DateTime? now,
+    int limit = 100,
+  }) async {
+    if (limit < 1 || limit > 100) {
+      throw ArgumentError.value(limit, 'limit', 'Must be between 1 and 100.');
+    }
+
+    final cutoff = (now ?? DateTime.now()).toUtc().subtract(
+      unresolvedReviewAge,
+    );
+    final table = _database.operationQueueEntry;
+    final unresolvedStates = <String>{
+      OperationLifecycleState.queued.name,
+      OperationLifecycleState.inFlight.name,
+      OperationLifecycleState.retryScheduled.name,
+      OperationLifecycleState.reconciliationRequired.name,
+      OperationLifecycleState.userInterventionRequired.name,
+    };
+
+    final query = _database.select(table)
+      ..where(
+        (entry) =>
+            entry.lifecycleState.isIn(unresolvedStates) &
+            entry.createdAt.isSmallerOrEqualValue(cutoff) &
+            entry.ownerUserId.equals(context.userId) &
+            entry.clinicContextId.equals(context.clinicContextId),
+      )
+      ..orderBy([
+        (entry) => OrderingTerm.asc(entry.createdAt),
+        (entry) => OrderingTerm.asc(entry.operationId),
+      ])
+      ..limit(limit);
+
+    final rows = await query.get();
+    return rows.toList(growable: false);
+  }
+
   /// Returns the earliest scheduled retry for this owner and clinic.
   ///
   /// This is scheduling metadata only. It does not decrypt payloads or expose
   /// another user's queued work.
   Future<DateTime?> nextScheduledAttempt({
     required OperationPayloadContext context,
+    DateTime? now,
   }) async {
+    final cutoff = (now ?? DateTime.now()).toUtc().subtract(
+      unresolvedReviewAge,
+    );
     final table = _database.operationQueueEntry;
 
     final query = _database.select(table)
@@ -316,6 +431,7 @@ class OperationQueueStore {
               OperationLifecycleState.retryScheduled.name,
             ) &
             entry.nextAttemptAt.isNotNull() &
+            entry.createdAt.isBiggerThanValue(cutoff) &
             entry.ownerUserId.equals(context.userId) &
             entry.clinicContextId.equals(context.clinicContextId),
       )
@@ -633,6 +749,218 @@ class OperationQueueStore {
     }
 
     return jsonEncode(normalize(payload));
+  }
+
+  /// Applies the approved 30-day retention window to terminal entries.
+  ///
+  /// This is safe to repeat and never removes unresolved work or encryption keys.
+  Future<int> purgeTerminalOperationsPastRetention({required DateTime now}) {
+    final cutoff = now.toUtc().subtract(terminalRetentionPeriod);
+    return purgeExpiredTerminalOperations(olderThan: cutoff);
+  }
+
+  /// Deletes terminal operations older than an explicit retention cutoff.
+  ///
+  /// Retention policy belongs to the caller. Active or unresolved operations
+  /// are never removed by this method. Payload and entry deletion are atomic.
+  Future<int> purgeExpiredTerminalOperations({
+    required DateTime olderThan,
+  }) async {
+    final cutoff = olderThan.toUtc();
+    final terminalStates = <String>{
+      OperationLifecycleState.acknowledged.name,
+      OperationLifecycleState.rejected.name,
+      OperationLifecycleState.cancelled.name,
+    };
+    final entryTable = _database.operationQueueEntry;
+    final payloadTable = _database.operationQueuePayload;
+
+    return _database.transaction(() async {
+      final expired =
+          await (_database.select(entryTable)..where(
+                (row) =>
+                    row.lifecycleState.isIn(terminalStates) &
+                    row.updatedAt.isSmallerThanValue(cutoff),
+              ))
+              .get();
+
+      if (expired.isEmpty) return 0;
+
+      final operationIds = expired
+          .map((row) => row.operationId)
+          .toList(growable: false);
+
+      await (_database.delete(
+        payloadTable,
+      )..where((row) => row.operationId.isIn(operationIds))).go();
+
+      return (_database.delete(
+        entryTable,
+      )..where((row) => row.operationId.isIn(operationIds))).go();
+    });
+  }
+
+  /// Removes one local queue record only after a server-issued no-effect
+  /// disposition receipt has been validated by the caller.
+  ///
+  /// The record and encrypted body are deleted in one Drift transaction. The
+  /// context mutation lock then prevents a new payload from appearing between
+  /// the dependency check and deletion of its context key. A secure-storage
+  /// failure is reported as pending cleanup because the DB deletion has already
+  /// committed; retrying cleanup is safe and does not recreate queue data.
+  Future<OperationQueueDiscardCleanupStatus> discardAfterConfirmedDisposition({
+    required String operationId,
+    required OperationPayloadContext context,
+    required int serverDispositionId,
+  }) async {
+    if (serverDispositionId <= 0) {
+      throw ArgumentError.value(
+        serverDispositionId,
+        'serverDispositionId',
+        'Must be a positive server disposition record ID.',
+      );
+    }
+    final crypto = _payloadCrypto;
+    if (crypto == null) {
+      throw StateError('Encrypted payload support is not configured.');
+    }
+
+    return _withContextMutationLock(context, () async {
+      final outcome = await _database.transaction(() async {
+        final entryTable = _database.operationQueueEntry;
+        final payloadTable = _database.operationQueuePayload;
+        final current =
+            await (_database.select(entryTable)
+                  ..where((row) => row.operationId.equals(operationId)))
+                .getSingleOrNull();
+
+        if (current != null &&
+            (current.ownerUserId != context.userId ||
+                current.clinicContextId != context.clinicContextId)) {
+          return _DiscardTransactionOutcome(
+            removed: false,
+            blockedStatus: OperationQueueDiscardCleanupStatus.contextMismatch,
+            hasDependencies: true,
+          );
+        }
+
+        // A locally acknowledged operation represents a known server effect;
+        // never erase it through the no-effect discard path.
+        if (current?.lifecycleState ==
+            OperationLifecycleState.acknowledged.name) {
+          return _DiscardTransactionOutcome(
+            removed: false,
+            blockedStatus:
+                OperationQueueDiscardCleanupStatus.acknowledgedOperation,
+            hasDependencies: true,
+          );
+        }
+
+        var removed = false;
+        if (current != null) {
+          await (_database.delete(
+            payloadTable,
+          )..where((row) => row.operationId.equals(operationId))).go();
+          final deleted =
+              await (_database.delete(entryTable)..where(
+                    (row) =>
+                        row.operationId.equals(operationId) &
+                        row.ownerUserId.equals(context.userId) &
+                        row.clinicContextId.equals(context.clinicContextId),
+                  ))
+                  .go();
+          if (deleted != 1) {
+            throw StateError(
+              'Queue entry changed during confirmed-disposition cleanup.',
+            );
+          }
+          removed = true;
+        }
+
+        final hasDependencies = await _hasPayloadDependenciesForContext(
+          context,
+        );
+        return _DiscardTransactionOutcome(
+          removed: removed,
+          blockedStatus: null,
+          hasDependencies: hasDependencies,
+        );
+      });
+
+      if (outcome.blockedStatus != null) return outcome.blockedStatus!;
+      if (outcome.hasDependencies) {
+        return outcome.removed
+            ? OperationQueueDiscardCleanupStatus
+                  .removedKeyRetainedForDependencies
+            : OperationQueueDiscardCleanupStatus
+                  .alreadyAbsentKeyRetainedForDependencies;
+      }
+
+      try {
+        await crypto.deleteContextKeyForQueueCleanup(context);
+        return outcome.removed
+            ? OperationQueueDiscardCleanupStatus.removedAndKeyDeleted
+            : OperationQueueDiscardCleanupStatus.alreadyAbsentAndKeyDeleted;
+      } on Object {
+        return outcome.removed
+            ? OperationQueueDiscardCleanupStatus.removedKeyCleanupPending
+            : OperationQueueDiscardCleanupStatus.alreadyAbsentKeyCleanupPending;
+      }
+    });
+  }
+
+  /// Retryable key cleanup for a context after a partial discard cleanup or
+  /// other maintenance. It deletes no queue rows and never removes a key while
+  /// a retained payload may still depend on it.
+  Future<OperationQueueKeyCleanupStatus> cleanupContextKeyIfUnused({
+    required OperationPayloadContext context,
+  }) async {
+    final crypto = _payloadCrypto;
+    if (crypto == null) {
+      throw StateError('Encrypted payload support is not configured.');
+    }
+
+    return _withContextMutationLock(context, () async {
+      final hasDependencies = await _database.transaction(
+        () => _hasPayloadDependenciesForContext(context),
+      );
+      if (hasDependencies) {
+        return OperationQueueKeyCleanupStatus.retainedForPayloadDependencies;
+      }
+      try {
+        await crypto.deleteContextKeyForQueueCleanup(context);
+        return OperationQueueKeyCleanupStatus.deleted;
+      } on Object {
+        return OperationQueueKeyCleanupStatus.failed;
+      }
+    });
+  }
+
+  Future<bool> _hasPayloadDependenciesForContext(
+    OperationPayloadContext context,
+  ) async {
+    final entryTable = _database.operationQueueEntry;
+    final payloadTable = _database.operationQueuePayload;
+    final matchingContext =
+        entryTable.ownerUserId.equals(context.userId) &
+        entryTable.clinicContextId.equals(context.clinicContextId);
+    // Unknown/incomplete ownership is treated conservatively: it prevents
+    // deleting a context key until every payload's dependency is understood.
+    final unknownContext =
+        entryTable.ownerUserId.isNull() | entryTable.clinicContextId.isNull();
+    final query =
+        _database.select(payloadTable).join([
+          innerJoin(
+            entryTable,
+            entryTable.operationId.equalsExp(payloadTable.operationId),
+          ),
+        ])..where(
+          payloadTable.encryptionKeyVersion.equals(
+                OperationPayloadCrypto.encryptionKeyVersion,
+              ) &
+              (matchingContext | unknownContext),
+        );
+    return (await query.get()).isNotEmpty;
   }
 
   /// Applies the failure policy and persists its resulting state and backoff.

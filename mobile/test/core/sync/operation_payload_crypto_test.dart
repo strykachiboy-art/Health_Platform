@@ -9,16 +9,20 @@ class _MemorySecureStorage implements SecureKeyValueStorage {
   int reads = 0;
   int writes = 0;
   int deletes = 0;
+  Object? readFailure;
+  Object? writeFailure;
 
   @override
   Future<String?> read({required String key}) async {
     reads++;
+    if (readFailure != null) throw readFailure!;
     return values[key];
   }
 
   @override
   Future<void> write({required String key, required String value}) async {
     writes++;
+    if (writeFailure != null) throw writeFailure!;
     values[key] = value;
   }
 
@@ -314,6 +318,80 @@ void main() {
       expect(storage.values[keyName], 'not-a-valid-key');
     });
 
+    test(
+      'propagates key-read failures without creating key material',
+      () async {
+        final storage = _MemorySecureStorage();
+        final crypto = OperationPayloadCrypto(secureStorage: storage);
+        final failure = StateError('injected secure-storage read failure');
+        storage.readFailure = failure;
+
+        await expectLater(
+          crypto.encrypt(
+            identity: _identity(),
+            context: _context(),
+            payload: _payload(),
+          ),
+          throwsA(same(failure)),
+        );
+
+        expect(storage.reads, 1);
+        expect(storage.writes, 0);
+        expect(storage.values, isEmpty);
+      },
+    );
+
+    test(
+      'propagates key-write failures without returning ciphertext',
+      () async {
+        final storage = _MemorySecureStorage();
+        final crypto = OperationPayloadCrypto(secureStorage: storage);
+        final failure = StateError('injected secure-storage write failure');
+        storage.writeFailure = failure;
+
+        await expectLater(
+          crypto.encrypt(
+            identity: _identity(),
+            context: _context(),
+            payload: _payload(),
+          ),
+          throwsA(same(failure)),
+        );
+
+        expect(storage.reads, 1);
+        expect(storage.writes, 1);
+        expect(storage.values, isEmpty);
+      },
+    );
+
+    test(
+      'propagates key-read failures during decryption without fallback',
+      () async {
+        final storage = _MemorySecureStorage();
+        final crypto = OperationPayloadCrypto(secureStorage: storage);
+        final encrypted = await crypto.encrypt(
+          identity: _identity(),
+          context: _context(),
+          payload: _payload(),
+        );
+        final writeCount = storage.writes;
+        final failure = StateError('injected secure-storage read failure');
+        storage.readFailure = failure;
+
+        await expectLater(
+          crypto.decrypt(
+            identity: _identity(),
+            context: _context(),
+            encrypted: encrypted,
+          ),
+          throwsA(same(failure)),
+        );
+
+        expect(storage.writes, writeCount);
+        expect(storage.values, hasLength(1));
+      },
+    );
+
     test('rejects unsupported encryption scheme and key version', () async {
       final crypto = OperationPayloadCrypto(
         secureStorage: _MemorySecureStorage(),
@@ -348,6 +426,11 @@ void main() {
 
       for (final badPayload in <Map<String, dynamic>>[
         <String, dynamic>{'access_token': 'secret'},
+        <String, dynamic>{'id_token': 'secret'},
+        <String, dynamic>{'google_id_token': 'secret'},
+        <String, dynamic>{'X-API-Key': 'secret'},
+        <String, dynamic>{'Cookie': 'session=secret'},
+        <String, dynamic>{'Set-Cookie': 'session=secret'},
         <String, dynamic>{
           'request': <String, dynamic>{'refreshToken': 'secret'},
         },

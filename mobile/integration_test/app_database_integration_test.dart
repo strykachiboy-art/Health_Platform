@@ -29,7 +29,7 @@ void main() {
       final firstDatabase = AppDatabase();
       activeDatabase = firstDatabase;
 
-      expect(firstDatabase.schemaVersion, 2);
+      expect(firstDatabase.schemaVersion, 3);
 
       await firstDatabase
           .into(firstDatabase.appMetadata)
@@ -56,7 +56,7 @@ void main() {
       final reopenedDatabase = AppDatabase();
       activeDatabase = reopenedDatabase;
 
-      expect(reopenedDatabase.schemaVersion, 2);
+      expect(reopenedDatabase.schemaVersion, 3);
 
       final reopenedRows = await reopenedDatabase
           .select(reopenedDatabase.appMetadata)

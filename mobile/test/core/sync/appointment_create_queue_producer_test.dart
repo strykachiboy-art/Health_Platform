@@ -143,6 +143,11 @@ void main() {
         expect(result.operationId, command.operationId);
         expect(result.idempotencyKey, command.idempotencyKey);
 
+        final commandPayload = command.toPayload();
+        expect(commandPayload.containsKey('reason'), isFalse);
+        expect(commandPayload.containsKey('notes'), isFalse);
+        expect(commandPayload['appointment_type'], 'consultation');
+
         final entry = await harness.queueStore.findByOperationId(
           command.operationId,
         );
@@ -152,6 +157,13 @@ void main() {
         expect(entry.lifecycleState, OperationLifecycleState.queued.name);
         expect(entry.ownerUserId, '21');
         expect(entry.clinicContextId, '8');
+
+        final persistedPayload = await harness.queueStore.loadPayload(
+          operationId: command.operationId,
+          context: OperationPayloadContext(userId: '21', clinicContextId: '8'),
+        );
+        expect(persistedPayload.containsKey('reason'), isFalse);
+        expect(persistedPayload.containsKey('notes'), isFalse);
 
         final encryptedRows = await harness.database
             .select(harness.database.operationQueuePayload)

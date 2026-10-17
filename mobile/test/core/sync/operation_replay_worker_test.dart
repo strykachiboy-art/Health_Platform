@@ -790,6 +790,48 @@ void main() {
     final entry = await queueStore.findByOperationId('appointment-1');
     expect(entry?.lifecycleState, OperationLifecycleState.queued.name);
   });
+  test('session rejection stops the current replay run and leaves later work queued', () async {
+    await enqueue();
+    await enqueue(operationId: 'appointment-2');
+
+    var calls = 0;
+    final result = await worker(
+      sender:
+          ({
+            required String path,
+            required Map<String, dynamic> body,
+            required String bearerToken,
+            required String idempotencyKey,
+          }) async {
+            calls++;
+            throw httpFailure(401);
+          },
+    ).runOnce();
+
+    expect(calls, 1);
+    expect(result.items, hasLength(1));
+    expect(result.items.single.category, 'sessionExpired');
+
+    final entries = <OperationQueueEntryData?>[
+      await queueStore.findByOperationId('appointment-1'),
+      await queueStore.findByOperationId('appointment-2'),
+    ];
+    expect(
+      entries.where(
+        (entry) =>
+            entry?.lifecycleState ==
+            OperationLifecycleState.userInterventionRequired.name,
+      ),
+      hasLength(1),
+    );
+    expect(
+      entries.where(
+        (entry) => entry?.lifecycleState == OperationLifecycleState.queued.name,
+      ),
+      hasLength(1),
+    );
+  });
+
   test('sends appointment with original body and idempotency key', () async {
     await enqueue();
 
@@ -1074,6 +1116,51 @@ void main() {
     },
   );
 
+  test('runs terminal retention before requiring an active session', () async {
+    const operationId = 'expired-terminal';
+    final terminalAt = _now.subtract(const Duration(days: 31));
+
+    await queueStore.enqueueEncrypted(
+      OperationIdentity(
+        operationId: operationId,
+        operationType: OperationReplayWorker.appointmentCreateType,
+        idempotencyKey: 'expired-terminal-key',
+      ),
+      context: _context,
+      payload: _appointmentPayload,
+      now: terminalAt,
+    );
+    await queueStore.transition(
+      operationId: operationId,
+      expectedState: OperationLifecycleState.queued,
+      nextState: OperationLifecycleState.inFlight,
+      context: _context,
+      now: terminalAt,
+    );
+    await queueStore.transition(
+      operationId: operationId,
+      expectedState: OperationLifecycleState.inFlight,
+      nextState: OperationLifecycleState.acknowledged,
+      now: terminalAt,
+    );
+
+    final result = await worker(
+      sender: ({
+        required String path,
+        required Map<String, dynamic> body,
+        required String bearerToken,
+        required String idempotencyKey,
+      }) async => <String, dynamic>{},
+      session: null,
+    ).runOnce();
+
+    expect(result.blockedReason, 'sessionUnavailable');
+    expect(await queueStore.findByOperationId(operationId), isNull);
+    expect(
+      await database.select(database.operationQueuePayload).get(),
+      isEmpty,
+    );
+  });
   test('does not send without an active clinic context', () async {
     await enqueue();
 

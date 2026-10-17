@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
@@ -18,6 +19,7 @@ class GoogleLoginScreen extends StatefulWidget {
     required this.acquireGoogleIdToken,
     required this.authRemoteDataSource,
     required this.sessionCoordinator,
+    this.sessionNavigationGuard,
     this.onSessionEnding,
     this.onSessionChanged,
   });
@@ -25,7 +27,8 @@ class GoogleLoginScreen extends StatefulWidget {
   final Future<String?> Function() acquireGoogleIdToken;
   final AuthRemoteDataSource authRemoteDataSource;
   final AuthSessionCoordinator sessionCoordinator;
-  final VoidCallback? onSessionEnding;
+  final SessionNavigationGuard? sessionNavigationGuard;
+  final FutureOr<void> Function()? onSessionEnding;
   final VoidCallback? onSessionChanged;
 
   @override
@@ -42,20 +45,81 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   @override
   void initState() {
     super.initState();
+    widget.sessionNavigationGuard?.addListener(_handleNavigationStatusChanged);
     unawaited(_restoreSession());
   }
 
+  @override
+  void dispose() {
+    widget.sessionNavigationGuard?.removeListener(
+      _handleNavigationStatusChanged,
+    );
+    super.dispose();
+  }
+
+  void _handleNavigationStatusChanged() {
+    if (!mounted) return;
+    final status = widget.sessionNavigationGuard?.status;
+    if (status == SessionNavigationStatus.invalidated) {
+      setState(() {
+        _sessionState = const AuthSessionState.recoveryRequired();
+        _restoring = false;
+        _errorMessage = 'Your session is no longer valid. Clear local session data before signing in.';
+        _statusMessage = null;
+      });
+    } else if (status == SessionNavigationStatus.signedOut) {
+      setState(() {
+        _sessionState = const AuthSessionState.signedOut();
+        _restoring = false;
+        _errorMessage = null;
+        _statusMessage = null;
+      });
+    }
+  }
+
+  void _applyNavigationState(AuthSessionState state) {
+    final guard = widget.sessionNavigationGuard;
+    if (guard == null) return;
+    if (state.disposition == AuthSessionDisposition.ready) {
+      guard.markSessionAvailable();
+    } else if (state.disposition == AuthSessionDisposition.signedOut) {
+      guard.markSignedOut();
+    } else {
+      guard.invalidate();
+    }
+  }
+
   Future<void> _restoreSession() async {
+    if (widget.sessionNavigationGuard?.requiresLocalRecovery ?? false) {
+      if (!mounted) return;
+      setState(() {
+        _sessionState = const AuthSessionState.recoveryRequired();
+        _restoring = false;
+        _errorMessage =
+            'Your session requires local recovery before signing in.';
+      });
+      return;
+    }
     try {
       final restored = await widget.sessionCoordinator.restoreSession();
-
       if (!mounted) return;
+      if (widget.sessionNavigationGuard?.requiresLocalRecovery ?? false) {
+        setState(() {
+          _sessionState = const AuthSessionState.recoveryRequired();
+          _restoring = false;
+          _errorMessage =
+              'Your session requires local recovery before signing in.';
+        });
+        return;
+      }
+      _applyNavigationState(restored);
       setState(() {
         _sessionState = restored;
         _restoring = false;
       });
     } catch (_) {
       if (!mounted) return;
+      widget.sessionNavigationGuard?.invalidate();
       setState(() {
         _sessionState = const AuthSessionState.recoveryRequired();
         _restoring = false;
@@ -67,8 +131,17 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   }
 
   Future<AuthSessionState> _restoreOrRequireRecovery() async {
+    if (widget.sessionNavigationGuard?.requiresLocalRecovery ?? false) {
+      return const AuthSessionState.recoveryRequired();
+    }
     try {
-      return await widget.sessionCoordinator.restoreSession();
+      final restored = await widget.sessionCoordinator.restoreSession();
+      // Invalidation may happen while secure storage/session restoration is
+      // pending. Never let that stale completion reopen protected navigation.
+      if (widget.sessionNavigationGuard?.requiresLocalRecovery ?? false) {
+        return const AuthSessionState.recoveryRequired();
+      }
+      return restored;
     } catch (_) {
       return const AuthSessionState.recoveryRequired();
     }
@@ -76,6 +149,10 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
 
   Future<void> _signIn() async {
     if (_busy || _restoring) return;
+
+    final navigationGuard = widget.sessionNavigationGuard;
+    if (navigationGuard?.requiresLocalRecovery ?? false) return;
+    final navigationRevision = navigationGuard?.revision;
 
     setState(() {
       _busy = true;
@@ -102,6 +179,27 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       final authenticated = await widget.sessionCoordinator
           .persistAuthenticatedSession(tokens);
 
+      if (navigationGuard != null &&
+          navigationGuard.revision != navigationRevision) {
+        final currentState =
+            navigationGuard.status == SessionNavigationStatus.signedOut
+            ? const AuthSessionState.signedOut()
+            : const AuthSessionState.recoveryRequired();
+        if (!mounted) return;
+        setState(() {
+          _sessionState = currentState;
+          _busy = false;
+          _errorMessage =
+              currentState.disposition ==
+                  AuthSessionDisposition.recoveryRequired
+              ? 'Session state changed during sign-in. Clear local session data before continuing.'
+              : null;
+          _statusMessage = null;
+        });
+        return;
+      }
+
+      navigationGuard?.markSessionAvailable();
       widget.onSessionChanged?.call();
 
       if (!mounted) return;
@@ -112,6 +210,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       });
     } catch (_) {
       final restored = await _restoreOrRequireRecovery();
+      _applyNavigationState(restored);
       if (!mounted) return;
 
       setState(() {
@@ -133,11 +232,14 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       _statusMessage = null;
     });
 
+    // Close protected navigation immediately, before waiting for replay to stop.
+    widget.sessionNavigationGuard?.invalidate();
+
     try {
-      widget.onSessionEnding?.call();
+      await widget.onSessionEnding?.call();
       final result = await widget.sessionCoordinator.logoutSession();
-      widget.onSessionChanged?.call();
       final restored = await widget.sessionCoordinator.restoreSession();
+      _applyNavigationState(restored);
 
       if (!mounted) return;
 
@@ -155,6 +257,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         _statusMessage = message;
       });
     } catch (_) {
+      widget.sessionNavigationGuard?.invalidate();
       if (!mounted) return;
       setState(() {
         _sessionState = const AuthSessionState.recoveryRequired();

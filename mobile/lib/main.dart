@@ -10,6 +10,8 @@ import 'package:clinic_system_pro/core/networking/device_connectivity_banner.dar
 import 'package:clinic_system_pro/core/networking/device_connectivity_cubit.dart';
 import 'package:clinic_system_pro/core/networking/device_connectivity_source.dart';
 import 'package:clinic_system_pro/core/routing/app_router.dart';
+import 'package:clinic_system_pro/core/session/session_invalidation_coordinator.dart';
+import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/core/storage/app_database.dart';
 import 'package:clinic_system_pro/core/sync/operation_payload_crypto.dart';
 import 'package:clinic_system_pro/core/sync/operation_queue_store.dart';
@@ -38,6 +40,7 @@ void main() {
     sessionStore: sessionStore,
     remoteDataSource: authRemoteDataSource,
   );
+  final sessionNavigationGuard = SessionNavigationGuard();
   final googleSignInProvider = GoogleSignInProvider(
     configuration: GoogleSignInConfiguration.fromEnvironment(),
   );
@@ -63,7 +66,23 @@ void main() {
   final replayScheduler = OperationReplayScheduler(
     connectivitySource: connectivitySource,
     runReplay: replayWorker.runOnce,
+    runMaintenance: () async {
+      await queueStore.purgeTerminalOperationsPastRetention(
+        now: DateTime.now().toUtc(),
+      );
+    },
   );
+  final sessionInvalidationCoordinator = SessionInvalidationCoordinator(
+    sessionCoordinator: sessionCoordinator,
+    sessionNavigationGuard: sessionNavigationGuard,
+    replayScheduler: replayScheduler,
+  );
+  apiClient.onAuthenticationRejected = () {
+    unawaited(
+      sessionInvalidationCoordinator.handleDefinitiveAuthenticationRejection(),
+    );
+  };
+
   final appointmentCreateQueueProducer = AppointmentCreateQueueProducer(
     queueStore: queueStore,
     replayScheduler: replayScheduler,
@@ -92,7 +111,8 @@ void main() {
     acquireGoogleIdToken: googleSignInProvider.signInForIdToken,
     authRemoteDataSource: authRemoteDataSource,
     sessionCoordinator: sessionCoordinator,
-    onSessionEnding: replayScheduler.pause,
+    sessionNavigationGuard: sessionNavigationGuard,
+    onSessionEnding: replayScheduler.pauseAndWait,
     onSessionChanged: replayScheduler.notifySessionChanged,
   );
 
@@ -104,6 +124,7 @@ void main() {
         healthDataSource: healthDataSource,
         patientDataSource: patientDataSource,
         loginScreen: loginScreen,
+        sessionNavigationGuard: sessionNavigationGuard,
         deviceConnectivitySource: connectivitySource,
         operationReplayScheduler: replayScheduler,
         localDatabase: localDatabase,
@@ -118,6 +139,7 @@ class ClinicSystemProApp extends StatefulWidget {
     required this.healthDataSource,
     required this.loginScreen,
     this.patientDataSource,
+    this.sessionNavigationGuard,
     this.deviceConnectivitySource,
     this.operationReplayScheduler,
     this.localDatabase,
@@ -126,6 +148,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final BackendHealthRemoteDataSource healthDataSource;
   final Widget loginScreen;
   final PatientRemoteDataSource? patientDataSource;
+  final SessionNavigationGuard? sessionNavigationGuard;
   final DeviceConnectivitySource? deviceConnectivitySource;
   final OperationReplayScheduler? operationReplayScheduler;
   final AppDatabase? localDatabase;
@@ -144,6 +167,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       healthDataSource: widget.healthDataSource,
       loginScreen: widget.loginScreen,
       patientDataSource: widget.patientDataSource,
+      sessionNavigationGuard: widget.sessionNavigationGuard,
     );
 
     unawaited(widget.operationReplayScheduler?.start());
