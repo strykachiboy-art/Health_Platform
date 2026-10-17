@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../../core/networking/api_exception.dart';
 import 'auth_remote_data_source.dart';
 import 'auth_session_store.dart';
@@ -53,6 +55,8 @@ class AuthSessionCoordinator {
 
   bool _logoutRequested = false;
   bool _sessionEstablishmentInFlight = false;
+  Completer<void>? _sessionEstablishmentFinished;
+  Future<void>? _authenticationRejectionInvalidationInFlight;
   int _sessionTransitionGeneration = 0;
 
   /// Persists a token pair returned by a successful authentication call.
@@ -71,6 +75,8 @@ class AuthSessionCoordinator {
     }
 
     _sessionEstablishmentInFlight = true;
+    final establishmentFinished = Completer<void>();
+    _sessionEstablishmentFinished = establishmentFinished;
     _sessionTransitionGeneration++;
     try {
       final stored = await _sessionStore.readRecord();
@@ -91,12 +97,19 @@ class AuthSessionCoordinator {
       return AuthSessionState.ready(session);
     } finally {
       _sessionEstablishmentInFlight = false;
+      if (identical(_sessionEstablishmentFinished, establishmentFinished)) {
+        _sessionEstablishmentFinished = null;
+      }
+      if (!establishmentFinished.isCompleted) {
+        establishmentFinished.complete();
+      }
     }
   }
 
   /// Restores local state without doing network I/O.
   Future<AuthSessionState> restoreSession() async {
     if (_logoutRequested ||
+        _logoutInFlight != null ||
         _refreshInFlight != null ||
         _sessionEstablishmentInFlight) {
       return AuthSessionState.recoveryRequired(
@@ -129,7 +142,9 @@ class AuthSessionCoordinator {
 
   /// Rotates the current refresh token once and persists the replacement pair.
   Future<AuthSessionState> refreshSession() {
-    if (_logoutRequested || _sessionEstablishmentInFlight) {
+    if (_logoutRequested ||
+        _logoutInFlight != null ||
+        _sessionEstablishmentInFlight) {
       return Future.value(
         AuthSessionState.recoveryRequired(
           cause: StateError('Refresh blocked during a session transition.'),
@@ -191,6 +206,56 @@ class AuthSessionCoordinator {
     return AuthSessionState.ready(replacement);
   }
 
+  /// Clears only the saved session after a definitive authenticated HTTP 401.
+  /// This deliberately makes no remote logout request and never deletes
+  /// queued operations or their context encryption keys.
+  Future<void> invalidateAfterDefinitiveAuthenticationRejection() {
+    final active = _authenticationRejectionInvalidationInFlight;
+    if (active != null) return active;
+
+    late final Future<void> operation;
+    operation = _clearRejectedSessionLocally().whenComplete(() {
+      if (identical(_authenticationRejectionInvalidationInFlight, operation)) {
+        _authenticationRejectionInvalidationInFlight = null;
+      }
+    });
+    _authenticationRejectionInvalidationInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _clearRejectedSessionLocally() async {
+    _logoutRequested = true;
+    _sessionTransitionGeneration++;
+    try {
+      final establishment = _sessionEstablishmentFinished;
+      if (establishment != null) await establishment.future;
+
+      final activeLogout = _logoutInFlight;
+      if (activeLogout != null) {
+        try {
+          await activeLogout;
+        } on Object {
+          // Local clearing remains required if remote logout was uncertain.
+        }
+        _logoutRequested = true;
+      }
+
+      final activeRefresh = _refreshInFlight;
+      if (activeRefresh != null) {
+        try {
+          await activeRefresh;
+        } on Object {
+          // Clear the latest stored record even if refresh did not complete.
+        }
+        _logoutRequested = true;
+      }
+
+      await _sessionStore.clear();
+    } finally {
+      _logoutRequested = false;
+    }
+  }
+
   /// Signs out locally first, then makes one best-effort remote logout call.
   Future<AuthLogoutResult> logoutSession() {
     if (_sessionEstablishmentInFlight) {
@@ -202,6 +267,10 @@ class AuthSessionCoordinator {
     final active = _logoutInFlight;
     if (active != null) {
       return active;
+    }
+    if (_logoutRequested &&
+        _authenticationRejectionInvalidationInFlight != null) {
+      throw StateError('Cannot log out during another session transition.');
     }
 
     _logoutRequested = true;

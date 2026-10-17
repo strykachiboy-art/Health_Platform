@@ -790,6 +790,48 @@ void main() {
     final entry = await queueStore.findByOperationId('appointment-1');
     expect(entry?.lifecycleState, OperationLifecycleState.queued.name);
   });
+  test('session rejection stops the current replay run and leaves later work queued', () async {
+    await enqueue();
+    await enqueue(operationId: 'appointment-2');
+
+    var calls = 0;
+    final result = await worker(
+      sender:
+          ({
+            required String path,
+            required Map<String, dynamic> body,
+            required String bearerToken,
+            required String idempotencyKey,
+          }) async {
+            calls++;
+            throw httpFailure(401);
+          },
+    ).runOnce();
+
+    expect(calls, 1);
+    expect(result.items, hasLength(1));
+    expect(result.items.single.category, 'sessionExpired');
+
+    final entries = <OperationQueueEntryData?>[
+      await queueStore.findByOperationId('appointment-1'),
+      await queueStore.findByOperationId('appointment-2'),
+    ];
+    expect(
+      entries.where(
+        (entry) =>
+            entry?.lifecycleState ==
+            OperationLifecycleState.userInterventionRequired.name,
+      ),
+      hasLength(1),
+    );
+    expect(
+      entries.where(
+        (entry) => entry?.lifecycleState == OperationLifecycleState.queued.name,
+      ),
+      hasLength(1),
+    );
+  });
+
   test('sends appointment with original body and idempotency key', () async {
     await enqueue();
 

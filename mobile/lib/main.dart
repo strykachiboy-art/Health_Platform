@@ -10,6 +10,7 @@ import 'package:clinic_system_pro/core/networking/device_connectivity_banner.dar
 import 'package:clinic_system_pro/core/networking/device_connectivity_cubit.dart';
 import 'package:clinic_system_pro/core/networking/device_connectivity_source.dart';
 import 'package:clinic_system_pro/core/routing/app_router.dart';
+import 'package:clinic_system_pro/core/session/session_invalidation_coordinator.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/core/storage/app_database.dart';
 import 'package:clinic_system_pro/core/sync/operation_payload_crypto.dart';
@@ -71,6 +72,17 @@ void main() {
       );
     },
   );
+  final sessionInvalidationCoordinator = SessionInvalidationCoordinator(
+    sessionCoordinator: sessionCoordinator,
+    sessionNavigationGuard: sessionNavigationGuard,
+    replayScheduler: replayScheduler,
+  );
+  apiClient.onAuthenticationRejected = () {
+    unawaited(
+      sessionInvalidationCoordinator.handleDefinitiveAuthenticationRejection(),
+    );
+  };
+
   final appointmentCreateQueueProducer = AppointmentCreateQueueProducer(
     queueStore: queueStore,
     replayScheduler: replayScheduler,

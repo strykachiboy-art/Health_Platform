@@ -135,6 +135,78 @@ bool _pendingMarker(_MemorySecureStorage storage) {
 
 void main() {
   group('AuthSessionCoordinator', () {
+    test(
+      'definitive authentication rejection clears only local session state',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (_) async {
+            requests++;
+            fail('Local invalidation must not call remote logout.');
+          },
+        );
+
+        await coordinator.invalidateAfterDefinitiveAuthenticationRejection();
+
+        expect(await _store(storage).read(), isNull);
+        expect(requests, 0);
+      },
+    );
+
+    test(
+      'rejected-session clear failure propagates and can be retried',
+      () async {
+        final storage = _MemorySecureStorage()..failDelete = true;
+        await _store(storage).save(_oldSession());
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (_) async {
+            requests++;
+            fail('Local invalidation must not call remote logout.');
+          },
+        );
+
+        await expectLater(
+          coordinator.invalidateAfterDefinitiveAuthenticationRejection(),
+          throwsA(isA<StateError>()),
+        );
+        expect(storage.values[AuthSessionStore.storageKey], isNotNull);
+
+        storage.failDelete = false;
+        await coordinator.invalidateAfterDefinitiveAuthenticationRejection();
+
+        expect(await _store(storage).read(), isNull);
+        expect(requests, 0);
+      },
+    );
+
+    test(
+      'rejection invalidation waits for in-progress session establishment',
+      () async {
+        final storage = _GateFirstReadSecureStorage();
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (_) async => fail('No network request is expected.'),
+        );
+
+        final establishing = coordinator.persistAuthenticatedSession(
+          _oldSession(),
+        );
+        await storage.firstReadStarted.future;
+        final invalidation = coordinator
+            .invalidateAfterDefinitiveAuthenticationRejection();
+        storage.releaseFirstRead.complete();
+
+        await expectLater(establishing, throwsA(isA<StateError>()));
+        await invalidation;
+        expect(await _store(storage).read(), isNull);
+      },
+    );
+
     test('restores a saved session as ready without network I/O', () async {
       final storage = _MemorySecureStorage();
       await _store(storage).save(_oldSession());

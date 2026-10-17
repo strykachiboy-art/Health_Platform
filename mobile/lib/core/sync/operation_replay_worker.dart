@@ -437,6 +437,11 @@ class OperationReplayWorker {
           category: _failureCategory(failure),
         ),
       );
+
+      if (failure == OperationAttemptFailure.sessionExpired) {
+        // Do not send later operations under a rejected session.
+        break;
+      }
     }
 
     final nextRetryAt = await _queueStore.nextScheduledAttempt(
