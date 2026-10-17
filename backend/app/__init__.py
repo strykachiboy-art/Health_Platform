@@ -244,6 +244,10 @@ def register_blueprints(app):
         appointment_bp,
     )
 
+    from app.core.offline_operations.routes.disposition_route import (
+        offline_operation_bp,
+    )
+
     from app.modules.billing.routes.billing_route import (
         billing_bp,
     )
@@ -363,6 +367,7 @@ def register_blueprints(app):
         hie_bp,
         pharmacy_bp,
         appointment_bp,
+        offline_operation_bp,
         audit_bp,
         ai_bp,
         billing_bp,

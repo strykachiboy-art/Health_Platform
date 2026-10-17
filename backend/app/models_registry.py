@@ -2,6 +2,9 @@
 from app.core.auth.user.models.user_model import User
 from app.core.audit.models.audit_model import AuditLog
 from app.core.idempotency.models.idempotency_model import IdempotencyRecord
+from app.core.offline_operations.models.offline_operation_disposition_model import (
+    OfflineOperationDisposition,
+)
 
 
 # Clinic
@@ -169,6 +172,7 @@ __all__ = [
     "User",
     "AuditLog",
     "IdempotencyRecord",
+    "OfflineOperationDisposition",
 
 
     # Clinic
