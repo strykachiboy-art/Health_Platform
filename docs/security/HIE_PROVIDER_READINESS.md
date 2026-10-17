@@ -337,8 +337,8 @@ Status: **PINNED HTTPS TRANSPORT IMPLEMENTED / OFFLINE UNIT TESTS PASSED (449 HI
 
 The bounded DNS resolution slice uses `dnspython` directly. The resolver sends absolute A and AAAA queries without search-domain expansion and uses a single monotonic deadline across both queries. The default DNS budget is 2 seconds; configured values must be greater than zero and cannot exceed 5 seconds. Each query receives only the remaining budget through dnspython's `lifetime` option.
 
-The timeout budget is passed through `HIEHTTPTransport` to destination resolution. Injected resolver callbacks receive the requested budget and are responsible for honoring it. DNS errors, timeouts and missing usable addresses fail closed. The direct dependency is declared in `backend/requirements.txt`; regenerate `backend/requirements.lock` with the repository's pinned `pip-compile` command before merging.
+The timeout budget is passed through `HIEHTTPTransport` to destination resolution. Injected resolver callbacks receive the requested budget and are responsible for honoring it. DNS errors, timeouts and missing usable addresses fail closed. The direct dependency is declared in `backend/requirements.txt`. The existing `backend/requirements.lock` already pins `dnspython==2.8.0` through `email-validator`, which satisfies the direct dependency; the lockfile was retained unchanged rather than accepting unrelated platform-specific entries from Windows-based regeneration.
 
 This bounds the resolver's DNS query lifetime; it does not replace deployment-level DNS availability monitoring, egress restrictions or connection-time destination enforcement. The transport must continue connecting to a validated numeric IP, preserve TLS hostname verification, verify the connected peer, and reject redirects.
 
-Status while this slice is under review: **BOUNDED DNS LOOKUP IMPLEMENTED / REGRESSION PENDING / NOT MERGED**.
+Status: **BOUNDED DNS LOOKUP IMPLEMENTED / FULL HIE MODULE REGRESSION PASSED (461 TESTS ON THE PR BRANCH) / MERGED IN PR #38 / LIVE PARTNER CONNECTIVITY NOT VERIFIED / PRODUCTION DNS AND EGRESS CONTROLS NOT VERIFIED**.
