@@ -318,3 +318,17 @@ The new `backend/app/modules/hie/providers/destination_policy.py` adds two pure 
 Before live HTTP is enabled, the transport must enforce the actual connected destination (or securely pin an address while preserving TLS hostname/SNI and certificate verification), disable automatic redirects or validate every hop under a strict redirect limit, verify TLS, use bounded timeouts, scope credentials, and enforce deployment egress controls. Merely calling the DNS helper before an independently resolving HTTP request is insufficient.
 
 Status after this slice: **DESTINATION DNS PREFLIGHT IMPLEMENTED / REDIRECT TARGET POLICY IMPLEMENTED / OFFLINE TESTS PASSED (421 HIE module tests) / NOT WIRED TO HTTP / CONNECTION-TIME SSRF DEFENSE NOT YET VERIFIED**. Production HIE connectivity remains unimplemented.
+
+## Pinned HTTPS transport primitive
+
+Source baseline: `main` at `1a4b426c735b0b45d516ac23d6e0f708d070c9b2`, after PR #36 was merged.
+
+The new `backend/app/modules/hie/providers/transport.py` defines a strict, read-only HTTPS transport primitive. It accepts an explicit hostname allowlist, validates the endpoint, validates all DNS answers before attempting a connection, and connects directly to a selected numeric IP. The transport checks the connected peer IP and retains the configured hostname for TLS SNI and certificate hostname verification using Python's default verified TLS context.
+
+The transport only supports `GET` and `HEAD`. It enforces bounded connect/read timeouts and a response-body size limit, does not use environment-configured HTTP proxies, blocks caller-controlled transport headers, and rejects HTTP redirects rather than following them. Connection attempts may try another already-validated IP only before the HTTP request is transmitted; the request is not retried after transmission begins.
+
+**Integration boundary:** this primitive is not registered as an `HIEProvider` and is not wired into HIE integration creation/update, credentials, or service workflows. Its tests use deterministic resolver and connection fakes; they do not constitute a live partner or deployment-level TLS/network verification.
+
+The allowlist must be supplied from trusted operator/deployment configuration, never tenant-controlled input. Network egress controls remain necessary. Before enabling a concrete provider, verify the actual runtime environment, TLS trust configuration, connected-peer behavior, redirect requirements, credential scoping, response handling, logging/redaction and partner sandbox behavior. Writes remain deliberately unsupported by this initial transport primitive.
+
+Status: **PINNED HTTPS TRANSPORT IMPLEMENTED / OFFLINE UNIT TESTS PASSED (449 HIE module tests) / READ-ONLY ONLY / NOT WIRED TO HIE PROVIDER REGISTRY / PARTNER OR PRODUCTION CONNECTIVITY NOT VERIFIED**.
