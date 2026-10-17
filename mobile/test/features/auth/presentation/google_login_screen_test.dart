@@ -9,6 +9,7 @@ import 'package:http/testing.dart';
 import 'package:clinic_system_pro/core/config/backend_config.dart';
 import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/security/secure_key_value_storage.dart';
+import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_store.dart';
@@ -428,5 +429,84 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets(
+      'invalidation hides a restored session until secure local state is cleared',
+      (tester) async {
+        final storage = _MemorySecureStorage();
+        final store = AuthSessionStore(storage: storage);
+        await store.save(_session());
+        final guard = SessionNavigationGuard();
+        addTearDown(guard.dispose);
+
+        final client = MockClient((_) async {
+          fail('Restoration and invalidation must not make a network request.');
+        });
+        addTearDown(client.close);
+
+        final remote = AuthRemoteDataSource(
+          apiClient: ApiClient(
+            config: const BackendConfig(
+              baseUrl: 'http://127.0.0.1:5000',
+              allowInsecureHttp: true,
+            ),
+            client: client,
+          ),
+        );
+        final coordinator = AuthSessionCoordinator(
+          sessionStore: store,
+          remoteDataSource: remote,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GoogleLoginScreen(
+              acquireGoogleIdToken: () async => _idToken,
+              authRemoteDataSource: remote,
+              sessionCoordinator: coordinator,
+              sessionNavigationGuard: guard,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(guard.status, SessionNavigationStatus.sessionAvailable);
+        expect(
+          find.byKey(const ValueKey('authenticated-session')),
+          findsOneWidget,
+        );
+
+        guard.invalidate();
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('session-recovery-required')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('authenticated-session')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('clear-local-session-button')),
+          findsOneWidget,
+        );
+
+        await store.clear();
+        guard.markSignedOut();
+        await tester.pumpAndSettle();
+
+        expect(await store.read(), isNull);
+        expect(guard.status, SessionNavigationStatus.signedOut);
+        expect(
+          find.byKey(const ValueKey('google-sign-in-button')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('authenticated-session')),
+          findsNothing,
+        );
+      },
+    );
   });
 }
