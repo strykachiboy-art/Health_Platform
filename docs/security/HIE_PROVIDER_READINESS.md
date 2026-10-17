@@ -271,3 +271,34 @@ Until these gates are evidenced, status remains **PROPOSED BASELINE / NOT
 IMPLEMENTED / SANDBOX ACCESS NOT VERIFIED / PRODUCTION NOT VERIFIED**. This
 section does not claim Epic partnership, EHR vendor certification, US regulatory
 compliance, or production FHIR connectivity.
+
+## Outbound HIE endpoint policy primitive (implemented, not wired to HTTP)
+
+Source review date: 2026-10-17. Reviewed repository baseline: `main` at
+`fddad418a311dbfc102ee49087264675c42e388d` (PR #34 merge commit).
+
+The new `backend/app/modules/hie/providers/endpoint_policy.py` helper provides
+pure, offline validation for a proposed HIE endpoint URL when supplied an
+explicit collection of approved DNS hostnames. It requires HTTPS, accepts only
+the default HTTPS port, rejects user information, query strings, fragments,
+control/whitespace and backslashes, validates DNS hostname syntax, rejects IP
+literals and special-use hostnames, requires an exact allowlist match, and
+rejects URL path dot-segments. Focused tests cover these rules.
+
+**Scope boundary:** this helper performs no DNS resolution and no HTTP request.
+It is not a complete SSRF defense and it is not yet wired into the existing HIE
+integration create/update schemas or services. Existing URL parsing is not
+runtime enforcement. No endpoint should be contacted using this helper until a
+future adapter explicitly calls it with an operator-controlled allowlist.
+
+Before any HTTP client is introduced, the adapter still must constrain DNS
+resolution and the actual connected IP (including rebinding risks), enforce
+network egress restrictions, disable redirects or revalidate every redirect
+target, verify TLS, set connection/read timeouts, scope credentials to the
+approved host, and keep secrets and unnecessary PHI out of logs and persisted
+submission payloads. The allowlist must come from trusted operator/deployment
+configuration, never from untrusted tenant-supplied values.
+
+Status after this slice: **URL POLICY PRIMITIVE IMPLEMENTED / UNIT-VERIFIED /
+NOT WIRED TO CONFIGURATION OR HTTP / COMPLETE SSRF PROTECTION NOT IMPLEMENTED**.
+The production HIE/FHIR activation gate remains open.
