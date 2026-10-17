@@ -302,3 +302,19 @@ configuration, never from untrusted tenant-supplied values.
 Status after this slice: **URL POLICY PRIMITIVE IMPLEMENTED / UNIT-VERIFIED /
 NOT WIRED TO CONFIGURATION OR HTTP / COMPLETE SSRF PROTECTION NOT IMPLEMENTED**.
 The production HIE/FHIR activation gate remains open.
+
+
+## Outbound destination preflight and redirect target policy
+
+Source baseline: `main` at `dbecc4c1cb1f0a3cc977ed451f74aac89b47dc8a`, after PR #35 was merged.
+
+The new `backend/app/modules/hie/providers/destination_policy.py` adds two pure policy interfaces around the existing URL validator:
+
+- `resolve_hie_endpoint_ips()` validates the configured URL against the explicit hostname allowlist before resolving it. It rejects DNS failures, empty or malformed results, scoped or IPv4-mapped IPv6 addresses, and any answer that is not globally routable or is multicast. All returned addresses must pass; the helper does not silently discard unsafe answers. Tests inject deterministic address results and a fake `getaddrinfo` implementation.
+- `validate_hie_redirect_target()` validates a single redirect target against the same explicit allowlist and requires it to remain on the original HTTPS origin. It rejects scheme-relative redirects, cross-origin targets, unsafe URL forms and dot-segment paths.
+
+**Critical limitation: DNS preflight is not connection-time destination enforcement.** The DNS answers may change after validation. An HTTP client that resolves the hostname again can connect to a different IP. This slice does not open sockets, send HTTP requests, wire the policy into HIE integration configuration, or prove protection against DNS rebinding.
+
+Before live HTTP is enabled, the transport must enforce the actual connected destination (or securely pin an address while preserving TLS hostname/SNI and certificate verification), disable automatic redirects or validate every hop under a strict redirect limit, verify TLS, use bounded timeouts, scope credentials, and enforce deployment egress controls. Merely calling the DNS helper before an independently resolving HTTP request is insufficient.
+
+Status after this slice: **DESTINATION DNS PREFLIGHT IMPLEMENTED / REDIRECT TARGET POLICY IMPLEMENTED / OFFLINE TESTS PASSED (421 HIE module tests) / NOT WIRED TO HTTP / CONNECTION-TIME SSRF DEFENSE NOT YET VERIFIED**. Production HIE connectivity remains unimplemented.
