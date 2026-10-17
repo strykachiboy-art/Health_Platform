@@ -361,6 +361,18 @@ class OperationPayloadCrypto {
     return List<int>.unmodifiable(decoded);
   }
 
+  /// Deletes the context encryption key for queue cleanup.
+  ///
+  /// Call only while the queue store's per-context mutation lock is held and
+  /// after it has verified that no retained encrypted payload depends on this
+  /// key. The secure-storage operation can fail and must be reported/retried.
+  Future<void> deleteContextKeyForQueueCleanup(
+    OperationPayloadContext context,
+  ) async {
+    final keyName = await _secureKeyName(context);
+    await _secureStorage.delete(key: keyName);
+  }
+
   Future<String> _secureKeyName(OperationPayloadContext context) async {
     // Hash the context so raw user and clinic identifiers do not appear in
     // secure-storage key names.

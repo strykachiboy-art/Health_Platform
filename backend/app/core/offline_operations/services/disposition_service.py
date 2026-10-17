@@ -87,10 +87,11 @@ def record_confirmed_no_effect_disposition(
         )
     ).scalar_one_or_none()
     if existing_by_id is not None:
+        # A retry can carry a different reason after local state changes.
+        # Preserve and return the first authoritative disposition for this identity.
         same_identity = (
             existing_by_id.operation_type == operation_type
             and existing_by_id.idempotency_key == idempotency_key
-            and existing_by_id.reason_code == reason_code
             and existing_by_id.resolution == RESOLUTION_CONFIRMED_NO_EFFECT
         )
         if not same_identity:

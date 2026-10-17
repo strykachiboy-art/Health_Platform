@@ -45,9 +45,15 @@ def test_disposition_framework_records_policy_version_audit_and_idempotently_reu
     assert first_data["operation_id"] == "offline-operation-001"
     assert first_data["policy_version"] == "1"
 
-    second = _post(client, headers)
+    second = _post(
+        client,
+        headers,
+        payload=_payload(reason_code="verified_not_sent"),
+    )
     assert second.status_code == 200, second.get_json()
-    assert second.get_json()["data"]["id"] == first_data["id"]
+    second_data = second.get_json()["data"]
+    assert second_data["id"] == first_data["id"]
+    assert second_data["reason_code"] == "manual_reconciliation_no_effect"
 
     dispositions = list(db.session.execute(
         db.select(OfflineOperationDisposition).where(
