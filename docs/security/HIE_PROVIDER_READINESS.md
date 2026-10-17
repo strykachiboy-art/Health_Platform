@@ -148,3 +148,126 @@ References:
 Until these gates are accepted and evidenced, keep HIE provider readiness as an
 extension point. Do not advertise a supported FHIR partner or production-ready
 FHIR connectivity.
+
+## US-first FHIR baseline and first workflow (proposed)
+
+Source review date: 2026-10-17. Reviewed repository baseline: `main` at
+`962edd21cc76de4a25fdbfab0c7c99c03eeb5b04` (PR #32 merge commit).
+
+This is a proposed US-first evaluation baseline, not a signed partner contract,
+implemented adapter, or claim of production compatibility. Keep the existing
+partner-contract gate open until the selected vendor's actual capabilities,
+security model and test requirements have been recorded.
+
+### Proposed pinned standards baseline
+
+- **FHIR R4 4.0.1** as the initial evaluation version. The official US Core 9.0.0
+  publication is based on FHIR R4 4.0.1 and was generated on 2026-05-31.
+- **HL7 US Core 9.0.0 (STU 9)** as the initial US profile/terminology evaluation
+  package. Pin the exact package and validation output in implementation tests;
+  do not silently float to a newer version.
+- **SMART App Launch 2.2.0** as the initial OAuth-based app-launch reference
+  where applicable. Select the exact authorization pattern, client type, launch
+  context and scopes according to the actual user workflow and vendor contract.
+- Before each implementation gate, recheck the official published versions and
+  the target vendor's declared `CapabilityStatement`, implementation guides,
+  API documentation and supported interactions. If the vendor contract requires
+  different versions or profiles, record the exception and revise this baseline
+  through review; do not force a mismatched profile onto the vendor.
+
+Official references:
+
+- US Core 9.0.0: <https://hl7.org/fhir/us/core/>
+- US Core 9.0.0 downloads and package: <https://hl7.org/fhir/us/core/STU9/downloads.html>
+- SMART App Launch 2.2.0: <https://hl7.org/fhir/smart-app-launch/STU2.2/>
+- Epic on FHIR developer portal: <https://fhir.epic.com/Developer/>
+- Epic FHIR documentation: <https://fhir.epic.com/Documentation?docId=fhir>
+
+### First technical test target: Epic on FHIR sandbox (eligibility pending)
+
+Use Epic's public developer sandbox as the first candidate for a bounded
+technical evaluation only after access eligibility and app registration are
+confirmed using accurate company and contact information. The Epic developer
+portal documents a sandbox, client registration and test API documentation; it
+also presents a possible region-not-supported registration outcome. Do not
+misrepresent company details or bypass a geographic eligibility restriction.
+If registration is not available, record the blocker and review another approved
+US EHR/vendor sandbox before changing the target.
+
+Sandbox success is not a production customer integration. Epic's documentation
+states that customer-specific non-production testing is required for relevant
+behaviors not covered by the public sandbox. Do not infer production approval,
+customer access, or a commercial relationship from developer-account access.
+
+### First workflow: staff-authorized, read-only pre-visit chart import
+
+The first end-to-end workflow should retrieve and display selected external
+clinical information to an authorized clinic user for review before a visit.
+Do not write to the external EHR in this first slice. Do not automatically merge
+an external patient with an internal patient or silently overwrite local clinical
+records. Treat uncertain identity matches as unresolved and route them to an
+explicit review path.
+
+Candidate resource scope, subject to the vendor's declared capabilities and the
+agreed use case:
+
+- `Patient`: search/read demographics and external identifiers.
+- `Encounter`: relevant visit history.
+- `Condition`: recorded problems/diagnoses.
+- `AllergyIntolerance`: recorded allergies.
+- `MedicationRequest`: medication orders where supported and authorized.
+- `Observation` and `DiagnosticReport`: selected vital signs and results where
+  supported and authorized.
+
+This list is a candidate scope, not a claim that every resource, search parameter,
+profile, or interaction is available in the target sandbox or any customer tenant.
+Confirm each required read/search operation against the official vendor API
+specification and `CapabilityStatement`. Keep any unsupported resource out of the
+first release rather than quietly substituting a different representation.
+
+### Security and data-handling constraints
+
+- Use synthetic sandbox patients only. Never place real patient information or
+  production credentials in sandbox tests, fixtures, logs, screenshots or PRs.
+- Use the authorization flow approved for the specific deployment and actor
+  (for example, an appropriate clinician-facing SMART launch or standalone flow).
+  Request least-privilege scopes. Use PKCE where the chosen client flow supports
+  and requires it. Never embed a confidential client secret in Flutter/mobile code.
+- Preserve clinic isolation, staff authorization, purpose-of-use validation and
+  auditable access. External IDs must be namespaced by issuer/assigning authority;
+  a vendor resource ID is not a global patient identity.
+- Reuse the existing encrypted integration-credential mechanism. Do not place
+  access tokens or secrets in `HIESubmission.request_data` or `response_data`.
+- Before persisting imported FHIR resources, approve data minimization, provenance,
+  access, retention/deletion, redaction and recovery behavior. Do not persist full
+  raw responses by default. Logs should exclude access tokens and unnecessary PHI.
+- Enforce the outbound endpoint policy and TLS/redirect/DNS/IP protections before
+  introducing any live HTTP client. Only approved HTTPS endpoints and required
+  destinations may receive requests or credentials.
+
+### Acceptance gate for the first adapter slice
+
+1. Confirm eligible developer/sandbox registration and the official test process;
+   record the outcome. If unavailable, stop and choose another approved target.
+2. Record the actual sandbox base URL, FHIR version, `CapabilityStatement`, exact
+   resource interactions, profile package versions, supported search parameters,
+   OAuth discovery metadata, scopes, and redirect/client requirements. Keep secrets
+   out of documentation.
+3. Implement the provider inside the existing HIE registry and services; do not
+   create a disconnected interoperability subsystem or bypass current clinic/role
+   authorization.
+4. Verify the minimal read-only workflow with synthetic patients: successful read
+   and search; no-result and ambiguous identity; forbidden scope; expired/invalid
+   token; malformed FHIR response; rate limit/server error; timeout and retry;
+   pagination where required; audit trail; and cross-clinic isolation.
+5. Validate applicable US Core profiles with a pinned validator/package. Preserve
+   reproducible test evidence and distinguish tests against local fixtures from
+   actual sandbox requests.
+6. Keep production activation blocked until a real US healthcare organization
+   provides the required approval/access, customer-specific non-production testing
+   passes, and privacy, security, contractual and operational gates are accepted.
+
+Until these gates are evidenced, status remains **PROPOSED BASELINE / NOT
+IMPLEMENTED / SANDBOX ACCESS NOT VERIFIED / PRODUCTION NOT VERIFIED**. This
+section does not claim Epic partnership, EHR vendor certification, US regulatory
+compliance, or production FHIR connectivity.
