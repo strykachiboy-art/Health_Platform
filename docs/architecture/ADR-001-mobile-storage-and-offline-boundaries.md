@@ -444,13 +444,24 @@ This acceptance approves the design baseline, not implementation or rollout. Run
 - Appointment payload minimization: exclude optional `reason` and `notes` from persisted offline payloads by default. Later inclusion requires documented workflow necessity and explicit approval, followed by review of protection, access, retention and deletion requirements. The current producer enforces this default for new payloads, and focused tests cover producer output and the decrypted stored payload. Existing legacy queued payloads are not rewritten.
 - Device controls: treat backup rules as source-level evidence until platform behavior has been verified on suitable devices and supported versions.
 
+### Phase 19 implementation status and final verification — 2026-10-17
+
+The Phase 19 architecture baseline remains **Accepted**. The implementation/evidence status below distinguishes local development evidence from platform and production claims.
+
+- **Slice 1 — design:** accepted on 2026-10-16.
+- **Slice 2 — protected local storage and credentials:** scoped runtime protections and local regression evidence are recorded in the Phase 19 inventory. AES-256-GCM protects queued operation payloads; this is not whole-database SQLite encryption, and legacy payloads were not rewritten.
+- **Slice 3 — retention and cleanup:** current source includes the 30-day terminal-retention policy and transactional purge, calls the policy from the replay worker, excludes aged unresolved work from ready/retry selection and exposes a context-scoped review listing. Confirmed-disposition cleanup includes context checks, payload/entry deletion, key dependency checks and reported retryable cleanup failure. Backend idempotency/reconciliation contracts and applicable rollout approvals remain separate gates.
+- **Slice 4 — session invalidation:** Slices 4A–4C are committed and pushed. Focused local checks passed at their individual gates. They cover protected navigation, authenticated 401/logout invalidation, waiting for active replay, stale sign-in races and rejection of changed user/clinic context on session refresh.
+- **Slice 5 — device evidence:** on a Pixel 4 emulator reporting Android 15 (API 35), secure-storage integration passed **1 test** and database close/reopen integration passed **1 test**. The focused database regression passed **9 tests**; the database integration-test analysis reported no issues. Manifest and backup XML source checks passed for `allowBackup="false"`, configured rule references and the expected cloud-backup/device-transfer exclusions.
+
+The two emulator integration results establish only their tested scenarios. They do not establish actual backup/restore, device transfer, uninstall/reinstall, physical-device behavior, hardware-backed key guarantees, all key-loss or migration-failure paths, whole-database SQLite encryption or compromised-device protection. XML and manifest checks remain source-level evidence for backup behavior.
+
 ### Remaining verification and rollout gates
 
-- Verify the selected 30-day retention rule against applicable product, organizational, legal, contractual and audit requirements before deployment.
-- Verify the actual idempotency and reconciliation contract for each replayable operation type. Do not infer the backend validity window from local retention.
-- Preserve the implemented default exclusion of optional appointment `reason` and `notes`, and verify that it remains enforced in the release candidate across every payload-production path. Any later inclusion requires documented workflow necessity and explicit approval, with the relevant protection, access, retention and deletion review.
-- Implement and test the terminal purge policy and trigger, unresolved-operation review guard, explicit discard authorization, disposition evidence, dependency-aware key cleanup and failure recovery.
-- Verify that sensitive views and forms become inaccessible following logout, authentication rejection, and user/clinic changes.
-- Perform platform-level verification of secure storage, backup/restore, reinstall and device lifecycle behavior where supported. Unit and widget tests alone do not establish device behavior.
+- Validate the accepted 30-day retention rule against applicable product, organizational, legal, contractual and audit requirements.
+- Verify operation-specific backend idempotency and reconciliation guarantees; local retention duration is not evidence of backend key validity.
+- Keep authorization, server-disposition validation, cleanup-failure recovery and dependency-aware key cleanup in the release-candidate regression.
+- Obtain additional platform evidence for actual backup/restore, transfer, reinstall, secure-key lifecycle and supported physical-device scenarios where required.
+- Run and record the final applicable mobile regression before Slice 5 commit. Local and emulator test evidence does not establish production operation.
 
-Status is **Accepted** for the Phase 19 design baseline. The selected policies are formally approved; this does not claim that outstanding runtime enforcement has been implemented, platform behavior has been verified, or production operation has occurred.
+**Disposition:** Slice 5's two scoped Android integration tests and source-level backup configuration check passed. Phase 19's final PR must carry the remaining limitations and rollout gates above; no production-readiness or production-operation claim is made.

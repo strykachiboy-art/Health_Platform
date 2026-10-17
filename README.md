@@ -1313,17 +1313,17 @@ Conflict handling will be developed for:
 
 # 48. Sensitive Offline Data Security
 
-Offline storage must be treated as a sensitive environment.
+Offline storage is a sensitive environment. The Phase 19 architecture baseline was accepted on 2026-10-16; the final Slice 5 evidence is recorded on 2026-10-17.
 
-Planned protections include:
+Current implementation and evidence:
 
-- encrypted sensitive local storage
-- device-level controls
-- secure credential handling
-- local session invalidation
-- protected cached patient information
-- data expiration/retention behavior
-- synchronization authorization
+- Small authentication secrets use the platform-backed secure-storage boundary.
+- Queued operation payloads use AES-256-GCM payload encryption and context binding. This does not encrypt the entire SQLite database.
+- Queue retention, aged-unresolved review guards, dependency-aware cleanup and session/logout protections are represented in the current mobile source and their focused tests.
+- Android secure-storage integration passed **1 test** on the Android 15 (API 35) emulator; Drift close/reopen integration passed **1 test**. The focused database regression passed **9 tests**.
+- Manifest and backup XML source checks passed for the configured rules and expected cloud-backup/device-transfer exclusions.
+
+The platform evidence is limited to the scenarios actually tested. Actual backup/restore, device transfer, uninstall/reinstall, physical-device behavior, every secure-key lifecycle path and compromised-device protection remain unverified. No whole-database encryption or production-operation claim is made. See the [Phase 19 roadmap](#74-phase-19--offline-sensitive-data-security), [sensitive-data inventory](docs/architecture/phase-19-offline-sensitive-data-inventory.md), and [ADR-001](docs/architecture/ADR-001-mobile-storage-and-offline-boundaries.md) for status and rollout gates.
 
 Offline mode does not grant additional privileges.
 
@@ -2203,18 +2203,25 @@ Conflict resolution must not silently discard authoritative server data.
 
 ---
 
-# 74. Phase 19 Ã¢â‚¬â€ Offline Sensitive-data Security
+# 74. Phase 19 — Offline Sensitive-data Security
 
-Harden the client for:
+**Status snapshot — 2026-10-17:** Slice 5 is the final implementation slice. The two scoped Android integration tests and Android backup-configuration source checks passed; final applicable mobile regression and guarded commit/push remain part of closeout.
 
-- protected local storage
-- secure tokens
-- sensitive cache handling
-- session invalidation
-- local data expiration
-- device security
-- logout cleanup
+- **Slice 1:** security inventory and architecture design accepted.
+- **Slice 2:** protected local storage, credentials boundary and encrypted queue-payload protections have scoped local verification evidence.
+- **Slice 3:** 30-day terminal-retention policy and transactional purge, aged-unresolved replay exclusion, review listing, confirmed-disposition discard and dependency-aware key cleanup are represented in source and tests.
+- **Slice 4:** session/navigation invalidation, replay pause-and-wait on logout, and sign-in/session-context race protections are implemented and passed their focused local gates.
+- **Slice 5:** Android 15 (API 35) emulator secure-storage integration — **1 passed**; Drift close/reopen integration — **1 passed**; focused database regression — **9 passed**; backup manifest/XML source checks — **PASS**.
 
+**Remaining verification and rollout boundaries:**
+
+- Validate the 30-day retention policy against applicable organizational, legal, contractual and audit requirements.
+- Verify the actual backend idempotency and reconciliation contract for each replayable operation type.
+- Backup/restore, real device-to-device transfer, uninstall/reinstall, physical-device behavior and all secure-key lifecycle cases have not been established by the current tests.
+- Payload encryption is not whole-database SQLite encryption. Protection from a rooted or compromised device has not been established.
+- Development tests and emulator evidence are not production-operation evidence.
+
+The detailed status, evidence baseline and open gates are maintained in the [Phase 19 sensitive-data inventory](docs/architecture/phase-19-offline-sensitive-data-inventory.md) and [ADR-001](docs/architecture/ADR-001-mobile-storage-and-offline-boundaries.md).
 ---
 
 # 75. Phase 20 Ã¢â‚¬â€ Flutter Break-glass + Consent

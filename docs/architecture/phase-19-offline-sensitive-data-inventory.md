@@ -148,51 +148,65 @@ The unresolved states are `queued`, `inFlight`, `retryScheduled`, `reconciliatio
 
 ### 5.6 Implementation and verification gates
 
-The following are requirements, not claims that the behavior already exists:
+The accepted requirements below must be read alongside the current slice dispositions in Section 6. They are not a claim that every runtime mechanism remains unimplemented. Local implementation/test evidence does not by itself clear rollout gates.
 
-- Add and test the 30-day terminal purge policy and a safe trigger for running it.
-- Preserve the implemented default exclusion of optional appointment `reason` and `notes` across every payload-production path; the reviewed producer and focused tests cover producer output and the decrypted queued payload. Confirm that a release candidate preserves this behavior. Any future inclusion requires documented workflow necessity and explicit approval, followed by review of applicable protection, access, retention and deletion requirements.
-- Add and test the 30-day unresolved-operation review guard so aged work cannot continue automatic delivery before review.
-- Verify backend idempotency and reconciliation guarantees for each replayable operation type; unknown or unsupported guarantees must fail closed.
-- Implement and test authorized explicit discard, durable disposition evidence, context ownership checks, and retryable destructive-cleanup failure handling.
-- Implement and test sensitive screen/form invalidation on logout, authentication rejection and user/clinic changes.
-- Verify key dependencies before key deletion, and cover database-purge failure and secure-storage key-removal failure independently.
-- Obtain appropriate platform evidence for backup, restore, reinstall, secure-storage failure and device lifecycle behavior. Unit/widget tests do not substitute for platform integration evidence.
-
+- Preserve and regression-test the 30-day terminal-retention policy, its transactional purge, and the configured maintenance trigger. The current source contains a retention-policy wrapper, the replay worker invokes it, and the scheduler supports startup/resume maintenance.
+- Preserve the default exclusion of appointment `reason` and `notes` across all payload-production paths. Any future inclusion requires documented workflow necessity and explicit approval.
+- Preserve the age-based review guard that excludes unresolved work aged 30 days or more from automatic readiness. Review listing must remain scoped to the active owner and clinic and must not silently delete unresolved work.
+- Verify backend idempotency and reconciliation guarantees for each replayable operation type. Unknown or unsupported guarantees must fail closed.
+- Preserve confirmed-disposition discard, owner/context checks, payload/entry transactional deletion, dependency-aware key cleanup, and explicit reporting of incomplete key removal. The caller must validate the server-issued disposition and applicable authorization before invoking destructive cleanup.
+- Preserve session/view invalidation on logout, definitive authentication rejection and authentication-context changes, together with replay pause/await and retained queue/key semantics.
+- Keep Android manifest and XML backup exclusions as defence-in-depth controls. Integration evidence now covers two Android emulator scenarios; actual backup/restore, transfer, reinstall and other untested lifecycle behavior remain open.
 ### Rollout blockers and verification gates
 
 1. Before rollout, verify that the selected 30-day terminal-retention rule complies with applicable product, legal, contractual, organizational and audit requirements. This is a deployment gate, not an unresolved choice of retention period; any conflict blocks rollout until formally resolved.
 2. Identify the authoritative backend contract and validity window for each operation type's idempotency key. The local 30-day retention choice is not proof of backend deduplication for 30 days.
 3. Destructive discard is permitted only to the currently authenticated original operation owner, in the original user/clinic context, with authoritative permission for that operation type and explicit confirmation. If current permission cannot be verified, fail closed. When a server-side effect is possible, require authoritative reconciliation or an explicitly recorded manual disposition before deletion; local deletion must never be presented as server cancellation.
-4. Do not release age-based retention, unresolved-operation review, or destructive cleanup as implemented until their runtime guards and failure paths have been verified.
+4. Before rollout, verify that the release candidate preserves age-based retention, unresolved-operation review, authorized discard, database-failure handling and secure-storage key-removal failure handling. Local test success is not production-operation evidence.
 5. The default exclusion of optional appointment `reason` and `notes` is implemented and covered by focused local tests at the reviewed source baseline. Confirm that a release candidate preserves the exclusion. Any future inclusion requires documented workflow necessity and explicit approval, followed by review of applicable protection, access, retention and deletion requirements.
 
-## 6. Requirements for remaining slices
+## 6. Slice dispositions and final exit gate
+
+### Slice 1 — security inventory and design
+
+**Disposition: ACCEPTED.** ADR-001 and the sensitive-data inventory establish the approved offline-storage, ownership, retention, cleanup and lifecycle boundaries. Design acceptance does not itself authorize production rollout.
+
+### Slice 2 — protected local storage and credentials
+
+**Disposition: IMPLEMENTED / LOCALLY VERIFIED** for the scoped protections recorded earlier in this inventory. Platform secure storage is used for small secrets, and queued operation bodies use authenticated AES-256-GCM payload encryption with context binding. This is not whole-database SQLite encryption. Previously persisted legacy payloads were not rewritten; keep that limitation explicit.
 
 ### Slice 3 — retention, expiration and deletion
 
-- Enforce the selected 30-day terminal retention rule and its safe purge trigger.
-- Implement the 30-day unresolved-operation review guard without automatic deletion of unresolved work.
-- Require authorization, confirmation and a recorded disposition for explicit discard.
-- Preserve keys while retained payloads depend on them; remove keys only after a dependency check proves removal is safe.
-- Test successful cleanup, database transaction failure and secure-storage deletion failure separately.
+**Disposition: IMPLEMENTED IN SOURCE; preserve regression coverage and rollout limits.**
+
+- The queue store defines a 30-day terminal-retention period measured from the terminal transition (`updatedAt`). The policy wrapper calls a transactional purge that deletes terminal entries and their encrypted payloads together.
+- The replay worker invokes the terminal-retention policy before replay. The scheduler also supports configured maintenance on startup/resume. This does not promise scheduled execution while the application is not running.
+- Ready-operation and next-retry selection exclude unresolved operations at or beyond the 30-day review age. A review listing is scoped to the active user and clinic; unresolved items are not deleted merely because they are old.
+- The queue store implements a confirmed-disposition discard path, rejects context mismatch and acknowledged operations, deletes the entry and payload transactionally, checks key dependencies and reports pending key cleanup when secure-storage deletion fails. A separate context-key cleanup method supports retry after checking for retained payload dependencies.
+- Before rollout, verify the actual backend idempotency/reconciliation contract for each operation type and confirm every destructive caller validates the server disposition and operation-specific authorization. Keep cleanup failure handling in the regression gate.
 
 ### Slice 4 — session invalidation and logout lifecycle
 
-- Stop and await active replay before completing local logout, and keep replay paused afterward.
-- Clear or make inaccessible mounted patient views, forms and session-scoped navigation state after logout, definitive authentication rejection and user/clinic changes.
-- Revalidate the active session and user/clinic ownership before decrypting or delivering retained payloads.
-- Retain queue work across ordinary logout unless the user invokes a separately authorized discard flow.
-- Test interrupted cleanup, failure handling and unknown outcomes; do not report successful invalidation if sensitive data remains reachable.
+**Disposition: IMPLEMENTED / LOCALLY VERIFIED** in Slices 4A–4C. The committed source includes guarded patient navigation, invalidation on authenticated HTTP 401 and logout start, waiting for active replay before local cleanup completes, stale sign-in protection and rejection of refreshed sessions whose user or clinic context changes. The focused Slice 4 regressions passed at their respective gates. The queue and its keys remain retained on ordinary logout. Do not generalize these results to routes or platform flows that were not tested.
 
 ### Slice 5 — device security and final exit gate
 
-- Review device-backed key behavior, backup exposure, restore/reinstall and device lifecycle.
-- Obtain platform integration evidence on a suitable supported device or adequately resourced emulator.
-- Run focused Flutter tests, analyzer and the applicable broader regression gate.
-- Update ADR-001 and the roadmap with evidence-supported status only. Preserve historical baseline and prior test evidence rather than rewriting history.
-- Record remaining limitations, deferred platform checks and explicit non-claims. A passing unit/widget suite alone is not proof of device behavior or production operation.
+**Disposition: ANDROID INTEGRATION TESTS PASSED; PLATFORM EVIDENCE PARTIAL.**
 
+- On the Pixel 4 emulator reporting Android 15 (API 35), `secure_key_value_storage_integration_test.dart` passed **1 test** for write, read through a second adapter, overwrite and delete.
+- On the same emulator, `app_database_integration_test.dart` passed **1 test** for metadata persistence across database close/reopen and schema version 3.
+- The focused local database regression passed **9 tests** and database integration-test analysis reported no issues.
+- Source validation passed for `allowBackup="false"`, both configured backup XML references, and the expected exclusions for legacy backup rules, cloud backup and device transfer.
+
+These tests do not prove actual backup/restore, device transfer, uninstall/reinstall, physical-device behavior, hardware-backed key guarantees, every secure-key failure/migration scenario, whole-database SQLite encryption or protection against compromised devices. Record the final applicable regression result after it is run; do not claim production operation.
+
+### Remaining rollout gates
+
+- Verify the selected retention policy against applicable product, organizational, legal, contractual and audit requirements.
+- Verify the authoritative backend idempotency/reconciliation contract for every operation type before enabling aged or uncertain replay.
+- Preserve evidence for authorized discard, durable disposition, owner/context checks, database deletion failure and secure-storage key-removal failure.
+- Obtain further platform evidence for actual backup/restore, transfer, reinstall, secure-key lifecycle and supported-device behavior where required.
+- Do not describe Phase 19 as production-ready solely because source checks, local tests or emulator integrations passed. These are distinct evidence categories.
 ## 7. Evidence and limitations
 
 ### Slice 2 implementation and local verification evidence (2026-10-16)
@@ -235,10 +249,38 @@ These are local Flutter test results for the named suites. They do not establish
 ### Verification limits
 
 - The original Gate 1 inventory update did not modify application code or run Flutter tests. Subsequent Slice 2 implementation commits and locally executed test evidence are summarized above; this documentation reconciliation does not add runtime verification.
-- Android secure-storage, backup/restore, reinstall, transfer and device-compromise behavior has not been established by this document.
+- Android platform evidence now covers basic secure-storage adapter operations and Drift database close/reopen persistence on an Android 15 (API 35) emulator. Backup/restore, reinstall, device transfer, secure-key failure/migration lifecycle and device-compromise behavior remain unverified.
 - No whole-database SQLite encryption claim is made.
-- The existing terminal purge primitive does not establish the selected 30-day policy or run automatically.
-- The current ready-operation selection does not enforce the 30-day unresolved review guard.
+- The queue store now exposes the 30-day terminal-retention policy and transactional purge; the replay worker invokes the policy and the scheduler supports configured startup/resume maintenance. This does not guarantee periodic work while the app never runs.
+- Current ready-operation and next-retry queries exclude work at or beyond the 30-day review age, and a context-scoped review listing exists. A complete user-facing review/disposition workflow and operation-specific backend contract still require appropriate evidence.
 - A universal backend idempotency-key validity window has not been established by the reviewed client source. Verify each operation type's actual backend contract before enabling aged or uncertain replay.
-- No complete key-deletion lifecycle or dependency-aware destructive-cleanup implementation is claimed.
+- Dependency-aware context-key cleanup and retryable cleanup-pending results exist in the queue store. These source paths do not prove physical key erasure, every platform lifecycle, or that all destructive callers validate backend disposition and authorization correctly.
 - **ADR-001 is Accepted for the design baseline.** This inventory records approved policy and source evidence, not runtime enforcement, platform verification or a production-operation claim.
+
+### Slice 5 platform integration evidence (2026-10-17)
+
+**Execution environment:** Windows development host; Flutter 3.47.7; Dart 3.13.5; Pixel 4 AVD reported as Android 15 (API 35), device ID `emulator-5554`.
+
+**Android integration results — PASS:**
+
+- `flutter test --no-pub integration_test/secure_key_value_storage_integration_test.dart -d emulator-5554`: **1 test passed**. The test exercised platform-plugin writes, reads from a second adapter instance, overwrite, and deletion.
+- `flutter test --no-pub integration_test/app_database_integration_test.dart -d emulator-5554`: **1 test passed**. The test verified the default Drift connection persisted metadata across database close/reopen and that the schema-version assertion matched version 3.
+- The stale schema-version assertions in the database integration test were corrected from 2 to 3 after comparison with `AppDatabase.schemaVersion`.
+- `flutter analyze --no-pub integration_test/app_database_integration_test.dart`: no issues found.
+- Focused local database regression covering `app_database_schema_test.dart`, `app_database_test.dart`, and `migration_test.dart`: **9 tests passed**.
+- `dart format integration_test/app_database_integration_test.dart`: completed; no formatting changes were required.
+
+**Android backup configuration — source check PASS:**
+
+- `AndroidManifest.xml` declares `allowBackup="false"` and references both `@xml/backup_rules` and `@xml/data_extraction_rules`.
+- XML parsing confirmed the expected exclusion entries for the checked legacy backup rules and both cloud-backup and device-transfer groups.
+
+**Evidence boundary and remaining limitations:**
+
+- The secure-storage test covers the tested adapter operations through the Android plugin. It does not independently establish hardware-backed key guarantees, secure-key loss/recovery, algorithm-migration failure behavior, or every OS/device lifecycle path.
+- The database test establishes persistence across close/reopen for the tested metadata value. It does not establish whole-database SQLite encryption.
+- Backup/restore, actual device-to-device transfer, uninstall/reinstall behavior, physical-device behavior, and protection on rooted or compromised devices were not exercised by these tests. The manifest and XML checks remain source-level evidence only for those scenarios.
+- These results are development verification, not production-operation evidence.
+- Phase 19 rollout gates described in Sections 5.6 and 6 remain controlling: the documented retention and review policies, endpoint-specific idempotency/reconciliation contracts, authorized destructive cleanup and disposition evidence, dependency-aware key cleanup, and applicable organizational/legal approval must not be considered cleared by these emulator tests.
+
+**Slice 5 disposition:** the two scoped Android integration tests and the source-level backup configuration check passed. The deferred platform scenarios and wider rollout gates remain explicitly open; this evidence does not assert that Phase 19 is production-ready.
