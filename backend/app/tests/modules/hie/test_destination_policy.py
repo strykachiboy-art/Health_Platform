@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-import socket
+from types import SimpleNamespace
+
+import dns.exception
 
 import pytest
+
 
 from app.modules.hie.providers import destination_policy
 from app.modules.hie.providers.destination_policy import (
@@ -17,9 +20,10 @@ ALLOWED_HOSTS = frozenset({"fhir.partnerhealth.org", "api.epic.com"})
 
 
 def _fake_resolver(*addresses: str):
-    def resolve(hostname: str, port: int):
+    def resolve(hostname: str, port: int, timeout_seconds: float):
         assert hostname == "fhir.partnerhealth.org"
         assert port == 443
+        assert 0 < timeout_seconds <= 5.0
         return addresses
 
     return resolve
@@ -28,8 +32,8 @@ def _fake_resolver(*addresses: str):
 def test_resolves_and_normalizes_public_addresses_with_injected_resolver():
     calls = []
 
-    def resolver(hostname: str, port: int):
-        calls.append((hostname, port))
+    def resolver(hostname: str, port: int, timeout_seconds: float):
+        calls.append((hostname, port, timeout_seconds))
         return (
             "8.8.8.8",
             "2606:4700:4700::1111",
@@ -43,60 +47,243 @@ def test_resolves_and_normalizes_public_addresses_with_injected_resolver():
     )
 
     assert result == frozenset({"8.8.8.8", "2606:4700:4700::1111"})
-    assert calls == [("fhir.partnerhealth.org", 443)]
+    assert calls == [("fhir.partnerhealth.org", 443, 2.0)]
 
 
-def test_system_resolver_uses_getaddrinfo_without_opening_a_connection(monkeypatch):
-    calls = []
+class _FakeDNSAnswer:
+    def __init__(self, *addresses):
+        self.rrset = tuple(addresses) if addresses else None
+        self._records = tuple(
+            SimpleNamespace(address=address)
+            for address in addresses
+        )
 
-    def fake_getaddrinfo(
-        hostname,
-        port,
-        family=0,
-        type=0,
-        proto=0,
-        flags=0,
-    ):
-        calls.append((hostname, port, family, type, proto))
-        return [
-            (
-                socket.AF_INET,
-                socket.SOCK_STREAM,
-                socket.IPPROTO_TCP,
-                "",
-                ("8.8.8.8", 443),
-            ),
-            (
-                socket.AF_INET6,
-                socket.SOCK_STREAM,
-                socket.IPPROTO_TCP,
-                "",
-                ("2606:4700:4700::1111", 443, 0, 0),
-            ),
-        ]
+    def __iter__(self):
+        return iter(self._records)
+
+
+def test_system_resolver_uses_absolute_a_and_aaaa_queries_with_shared_lifetime(
+    monkeypatch,
+):
+    answers = {
+        "A": _FakeDNSAnswer("8.8.8.8"),
+        "AAAA": _FakeDNSAnswer("2606:4700:4700::1111"),
+    }
+    clock = {"value": 10.0}
 
     monkeypatch.setattr(
-        destination_policy.socket,
-        "getaddrinfo",
-        fake_getaddrinfo,
+        destination_policy,
+        "_monotonic",
+        lambda: clock["value"],
+    )
+
+    class FakeResolver:
+        def __init__(self, configure=True):
+            assert configure is True
+            self.timeout = 30.0
+            self.calls = []
+
+        def resolve(
+            self,
+            query_name,
+            record_type,
+            *,
+            search,
+            lifetime,
+            raise_on_no_answer,
+        ):
+            self.calls.append(
+                (
+                    str(query_name),
+                    record_type,
+                    search,
+                    lifetime,
+                    raise_on_no_answer,
+                )
+            )
+            if record_type == "A":
+                clock["value"] = 10.75
+            else:
+                clock["value"] = 10.90
+            return answers[record_type]
+
+    fake_resolver = FakeResolver()
+    monkeypatch.setattr(
+        destination_policy.dns.resolver,
+        "Resolver",
+        lambda configure=True: fake_resolver,
     )
 
     result = resolve_hie_endpoint_ips(
         BASE_URL,
         allowed_hosts=ALLOWED_HOSTS,
+        dns_timeout_seconds=1.25,
     )
 
     assert result == frozenset({"8.8.8.8", "2606:4700:4700::1111"})
-    assert calls == [
-        (
-            "fhir.partnerhealth.org",
-            443,
-            socket.AF_UNSPEC,
-            socket.SOCK_STREAM,
-            socket.IPPROTO_TCP,
-        )
+    assert fake_resolver.timeout == 1.25
+    assert [
+        (call[0], call[1], call[2], call[4])
+        for call in fake_resolver.calls
+    ] == [
+        ("fhir.partnerhealth.org.", "A", False, False),
+        ("fhir.partnerhealth.org.", "AAAA", False, False),
     ]
+    assert fake_resolver.calls[0][3] == pytest.approx(1.25)
+    assert fake_resolver.calls[1][3] == pytest.approx(0.5)
 
+
+def test_system_resolver_fails_closed_when_dns_lifetime_times_out(monkeypatch):
+    class SimulatedLifetimeTimeout(dns.exception.Timeout):
+        pass
+
+    class FakeResolver:
+        timeout = 2.0
+
+        def resolve(
+            self,
+            query_name,
+            record_type,
+            *,
+            search,
+            lifetime,
+            raise_on_no_answer,
+        ):
+            raise SimulatedLifetimeTimeout("simulated DNS timeout")
+
+    monkeypatch.setattr(
+        destination_policy.dns.resolver,
+        "LifetimeTimeout",
+        SimulatedLifetimeTimeout,
+    )
+    monkeypatch.setattr(
+        destination_policy.dns.resolver,
+        "Resolver",
+        lambda configure=True: FakeResolver(),
+    )
+
+    with pytest.raises(
+        HIEEndpointPolicyError,
+        match="configured deadline",
+    ):
+        resolve_hie_endpoint_ips(
+            BASE_URL,
+            allowed_hosts=ALLOWED_HOSTS,
+            dns_timeout_seconds=1.0,
+        )
+
+
+def test_system_resolver_stops_when_first_query_consumes_shared_deadline(
+    monkeypatch,
+):
+    clock = {"value": 0.0}
+    calls = []
+
+    monkeypatch.setattr(
+        destination_policy,
+        "_monotonic",
+        lambda: clock["value"],
+    )
+
+    class FakeResolver:
+        timeout = 2.0
+
+        def resolve(
+            self,
+            query_name,
+            record_type,
+            *,
+            search,
+            lifetime,
+            raise_on_no_answer,
+        ):
+            calls.append((record_type, lifetime))
+            clock["value"] = 1.01
+            return _FakeDNSAnswer("8.8.8.8")
+
+    monkeypatch.setattr(
+        destination_policy.dns.resolver,
+        "Resolver",
+        lambda configure=True: FakeResolver(),
+    )
+
+    with pytest.raises(
+        HIEEndpointPolicyError,
+        match="configured deadline",
+    ):
+        resolve_hie_endpoint_ips(
+            BASE_URL,
+            allowed_hosts=ALLOWED_HOSTS,
+            dns_timeout_seconds=1.0,
+        )
+
+    assert [call[0] for call in calls] == ["A"]
+    assert calls[0][1] == pytest.approx(1.0)
+
+
+def test_system_resolver_fails_closed_when_both_record_types_have_no_answer(
+    monkeypatch,
+):
+    class FakeResolver:
+        timeout = 2.0
+
+        def resolve(
+            self,
+            query_name,
+            record_type,
+            *,
+            search,
+            lifetime,
+            raise_on_no_answer,
+        ):
+            return _FakeDNSAnswer()
+
+    monkeypatch.setattr(
+        destination_policy.dns.resolver,
+        "Resolver",
+        lambda configure=True: FakeResolver(),
+    )
+
+    with pytest.raises(HIEEndpointPolicyError, match="no addresses"):
+        resolve_hie_endpoint_ips(
+            BASE_URL,
+            allowed_hosts=ALLOWED_HOSTS,
+            dns_timeout_seconds=1.0,
+        )
+
+
+@pytest.mark.parametrize(
+    "timeout_seconds",
+    [
+        True,
+        0,
+        -1,
+        5.01,
+        float("nan"),
+        float("inf"),
+        "2",
+        None,
+    ],
+)
+def test_rejects_invalid_dns_timeout_budget(timeout_seconds):
+    with pytest.raises(ValueError, match="DNS timeout"):
+        resolve_hie_endpoint_ips(
+            BASE_URL,
+            allowed_hosts=ALLOWED_HOSTS,
+            resolver=_fake_resolver("8.8.8.8"),
+            dns_timeout_seconds=timeout_seconds,
+        )
+
+
+def test_accepts_maximum_dns_timeout_budget():
+    result = resolve_hie_endpoint_ips(
+        BASE_URL,
+        allowed_hosts=ALLOWED_HOSTS,
+        resolver=_fake_resolver("8.8.8.8"),
+        dns_timeout_seconds=5.0,
+    )
+
+    assert result == frozenset({"8.8.8.8"})
 
 @pytest.mark.parametrize(
     "address",
@@ -152,7 +339,7 @@ def test_rejects_empty_dns_answer_set():
 
 
 def test_fails_closed_when_dns_resolver_raises():
-    def resolver(hostname: str, port: int):
+    def resolver(hostname: str, port: int, timeout_seconds: float):
         raise OSError("simulated resolver failure")
 
     with pytest.raises(HIEEndpointPolicyError, match="DNS resolution failed"):
@@ -166,7 +353,7 @@ def test_fails_closed_when_dns_resolver_raises():
 def test_rejects_non_allowlisted_hostname_before_running_resolver():
     called = []
 
-    def resolver(hostname: str, port: int):
+    def resolver(hostname: str, port: int, timeout_seconds: float):
         called.append((hostname, port))
         return ("8.8.8.8",)
 
