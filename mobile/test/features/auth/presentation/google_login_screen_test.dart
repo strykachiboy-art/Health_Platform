@@ -44,6 +44,22 @@ class _MemorySecureStorage implements SecureKeyValueStorage {
   }
 }
 
+class _GateWriteSecureStorage extends _MemorySecureStorage {
+  final Completer<void> writeStarted = Completer<void>();
+  final Completer<void> releaseWrite = Completer<void>();
+  bool blockNextWrite = false;
+
+  @override
+  Future<void> write({required String key, required String value}) async {
+    if (blockNextWrite) {
+      blockNextWrite = false;
+      writeStarted.complete();
+      await releaseWrite.future;
+    }
+    await super.write(key: key, value: value);
+  }
+}
+
 AuthTokenResponse _session() => const AuthTokenResponse(
   accessToken: _accessToken,
   refreshToken: _refreshToken,
@@ -127,6 +143,72 @@ void main() {
       expect(stored?.accessToken, _accessToken);
       expect(stored?.refreshToken, _refreshToken);
     });
+
+    testWidgets(
+      'invalidation during session persistence cannot reopen protected navigation',
+      (tester) async {
+        final storage = _GateWriteSecureStorage()..blockNextWrite = true;
+        final guard = SessionNavigationGuard()..markSignedOut();
+        addTearDown(guard.dispose);
+
+        final client = MockClient((request) async {
+          expect(request.url.path, '/api/v1/auth/google/mobile');
+          return http.Response(jsonEncode(_successEnvelope()), 200);
+        });
+        addTearDown(client.close);
+
+        final remote = AuthRemoteDataSource(
+          apiClient: ApiClient(
+            config: const BackendConfig(
+              baseUrl: 'http://127.0.0.1:5000',
+              allowInsecureHttp: true,
+            ),
+            client: client,
+          ),
+        );
+        final coordinator = AuthSessionCoordinator(
+          sessionStore: AuthSessionStore(storage: storage),
+          remoteDataSource: remote,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GoogleLoginScreen(
+              acquireGoogleIdToken: () async => _idToken,
+              authRemoteDataSource: remote,
+              sessionCoordinator: coordinator,
+              sessionNavigationGuard: guard,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('google-sign-in-button')));
+        await tester.pump();
+        await storage.writeStarted.future;
+
+        guard.invalidate();
+        final invalidation = coordinator
+            .invalidateAfterDefinitiveAuthenticationRejection();
+        storage.releaseWrite.complete();
+        await invalidation;
+        await tester.pumpAndSettle();
+
+        expect(guard.status, SessionNavigationStatus.invalidated);
+        expect(await AuthSessionStore(storage: storage).read(), isNull);
+        expect(
+          find.byKey(const ValueKey('session-recovery-required')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('authenticated-session')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('google-sign-in-button')),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets('cancellation makes no backend request and stores no session', (
       tester,
@@ -229,6 +311,8 @@ void main() {
     ) async {
       final storage = _MemorySecureStorage();
       final store = AuthSessionStore(storage: storage);
+      final guard = SessionNavigationGuard()..markSessionAvailable();
+      addTearDown(guard.dispose);
       await store.save(_session());
 
       final pauseGate = Completer<void>();
@@ -269,6 +353,7 @@ void main() {
             acquireGoogleIdToken: () async => null,
             authRemoteDataSource: remote,
             sessionCoordinator: coordinator,
+            sessionNavigationGuard: guard,
             onSessionEnding: () async {
               await pauseGate.future;
             },
@@ -283,6 +368,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('sign-out-button')));
       await tester.pump();
       await tester.idle();
+      expect(guard.status, SessionNavigationStatus.invalidated);
+      expect(guard.redirect('/patients/42'), '/login');
       expect(
         requests,
         0,

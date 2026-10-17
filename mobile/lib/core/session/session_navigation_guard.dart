@@ -17,8 +17,12 @@ enum SessionNavigationStatus {
 
 class SessionNavigationGuard extends ChangeNotifier {
   SessionNavigationStatus _status = SessionNavigationStatus.checking;
+  int _revision = 0;
 
   SessionNavigationStatus get status => _status;
+
+  /// Monotonic revision used to reject stale asynchronous authentication results.
+  int get revision => _revision;
 
   bool get canAccessProtectedRoutes =>
       _status == SessionNavigationStatus.sessionAvailable;
@@ -46,6 +50,7 @@ class SessionNavigationGuard extends ChangeNotifier {
   void _setStatus(SessionNavigationStatus next) {
     if (_status == next) return;
     _status = next;
+    _revision++;
     notifyListeners();
   }
 }

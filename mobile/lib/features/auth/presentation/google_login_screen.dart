@@ -150,6 +150,10 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   Future<void> _signIn() async {
     if (_busy || _restoring) return;
 
+    final navigationGuard = widget.sessionNavigationGuard;
+    if (navigationGuard?.requiresLocalRecovery ?? false) return;
+    final navigationRevision = navigationGuard?.revision;
+
     setState(() {
       _busy = true;
       _errorMessage = null;
@@ -175,7 +179,27 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       final authenticated = await widget.sessionCoordinator
           .persistAuthenticatedSession(tokens);
 
-      widget.sessionNavigationGuard?.markSessionAvailable();
+      if (navigationGuard != null &&
+          navigationGuard.revision != navigationRevision) {
+        final currentState =
+            navigationGuard.status == SessionNavigationStatus.signedOut
+            ? const AuthSessionState.signedOut()
+            : const AuthSessionState.recoveryRequired();
+        if (!mounted) return;
+        setState(() {
+          _sessionState = currentState;
+          _busy = false;
+          _errorMessage =
+              currentState.disposition ==
+                  AuthSessionDisposition.recoveryRequired
+              ? 'Session state changed during sign-in. Clear local session data before continuing.'
+              : null;
+          _statusMessage = null;
+        });
+        return;
+      }
+
+      navigationGuard?.markSessionAvailable();
       widget.onSessionChanged?.call();
 
       if (!mounted) return;
@@ -207,6 +231,9 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       _errorMessage = null;
       _statusMessage = null;
     });
+
+    // Close protected navigation immediately, before waiting for replay to stop.
+    widget.sessionNavigationGuard?.invalidate();
 
     try {
       await widget.onSessionEnding?.call();

@@ -36,14 +36,17 @@ AuthTokenResponse _oldSession() => const AuthTokenResponse(
   clinicContextId: null,
 );
 
-Map<String, dynamic> _replacementEnvelope() => {
+Map<String, dynamic> _replacementEnvelope({
+  int userId = 42,
+  int? clinicContextId,
+}) => {
   'success': true,
   'data': {
     'access_token': _newAccessToken,
     'refresh_token': _newRefreshToken,
-    'user_id': 42,
+    'user_id': userId,
     'role': 'DOCTOR',
-    'clinic_context_id': null,
+    'clinic_context_id': clinicContextId,
   },
 };
 
@@ -392,6 +395,97 @@ void main() {
         expect(saved?.refreshPending, isFalse);
         expect(saved?.session.accessToken, _newAccessToken);
         expect(saved?.session.refreshToken, _newRefreshToken);
+        expect(requests, 1);
+      },
+    );
+
+    test(
+      'refresh rejects a changed user identity and clears the session',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (request) async {
+            requests++;
+            expect(request.url.path, '/api/v1/auth/refresh');
+            return http.Response(
+              jsonEncode(_replacementEnvelope(userId: 99)),
+              200,
+            );
+          },
+        );
+
+        final state = await coordinator.refreshSession();
+
+        expect(state.disposition, AuthSessionDisposition.recoveryRequired);
+        expect(state.session, isNull);
+        expect(state.cause, isA<StateError>());
+        expect(
+          storage.values.containsKey(AuthSessionStore.storageKey),
+          isFalse,
+        );
+        expect(requests, 1);
+      },
+    );
+
+    test(
+      'refresh rejects a changed clinic context and clears the session',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (request) async {
+            requests++;
+            expect(request.url.path, '/api/v1/auth/refresh');
+            return http.Response(
+              jsonEncode(_replacementEnvelope(clinicContextId: 3)),
+              200,
+            );
+          },
+        );
+
+        final state = await coordinator.refreshSession();
+
+        expect(state.disposition, AuthSessionDisposition.recoveryRequired);
+        expect(state.session, isNull);
+        expect(state.cause, isA<StateError>());
+        expect(
+          storage.values.containsKey(AuthSessionStore.storageKey),
+          isFalse,
+        );
+        expect(requests, 1);
+      },
+    );
+
+    test(
+      'context-change cleanup failure preserves refresh recovery marker',
+      () async {
+        final storage = _MemorySecureStorage();
+        await _store(storage).save(_oldSession());
+        storage.failDelete = true;
+        var requests = 0;
+        final coordinator = _coordinator(
+          storage: storage,
+          handler: (_) async {
+            requests++;
+            return http.Response(
+              jsonEncode(_replacementEnvelope(userId: 99)),
+              200,
+            );
+          },
+        );
+
+        final state = await coordinator.refreshSession();
+
+        expect(state.disposition, AuthSessionDisposition.recoveryRequired);
+        expect(state.session, isNull);
+        expect(state.cause, isA<StateError>());
+        expect(_pendingMarker(storage), isTrue);
+        expect((await _store(storage).readRecord())?.session.userId, 42);
         expect(requests, 1);
       },
     );

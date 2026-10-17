@@ -197,6 +197,19 @@ class AuthSessionCoordinator {
       return AuthSessionState.recoveryRequired(cause: error);
     }
 
+    if (replacement.userId != stored.session.userId ||
+        replacement.clinicContextId != stored.session.clinicContextId) {
+      final contextChange = StateError(
+        'Refreshed session identity or clinic context changed.',
+      );
+      try {
+        await _sessionStore.clear();
+      } catch (error) {
+        return AuthSessionState.recoveryRequired(cause: error);
+      }
+      return AuthSessionState.recoveryRequired(cause: contextChange);
+    }
+
     try {
       await _sessionStore.save(replacement, refreshPending: false);
     } catch (error) {
