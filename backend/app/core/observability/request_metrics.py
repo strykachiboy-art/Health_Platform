@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 from flask import Flask, g, request
@@ -43,7 +44,11 @@ def init_request_metrics(app: Flask) -> None:
     ):
         return
 
-    logger = app.logger
+    # Keep telemetry enabled without lowering the application-wide logging threshold.
+    logger = logging.getLogger(
+        f"{app.logger.name}.performance"
+    )
+    logger.setLevel(logging.INFO)
 
     @app.before_request
     def _request_metrics_before_request():

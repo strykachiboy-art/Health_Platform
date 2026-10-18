@@ -21,6 +21,7 @@ DEFAULT_RESULTS_DIR = Path("testing") / "results"
 
 PERFORMANCE_PATTERN = re.compile(
     r"performance\.request\s+"
+    r"(?:request_id=\S+\s+)?"
     r"load_test_id=(?P<load_test_id>\S+)\s+"
     r"method=(?P<method>\S+)\s+"
     r"route=(?P<route>\S+)\s+"

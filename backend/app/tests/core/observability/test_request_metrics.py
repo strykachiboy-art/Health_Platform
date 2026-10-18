@@ -583,3 +583,69 @@ def test_request_metrics_does_not_register_twice(
     ]
 
     assert len(records) == 1
+
+
+def test_request_metrics_emits_info_when_parent_logger_is_warning(
+    caplog,
+):
+    from flask import Flask
+    from app.core.observability.request_metrics import (
+        init_request_metrics as init_runtime_request_metrics,
+    )
+
+    app = Flask("test_request_metrics_info_level_regression")
+    app_logger = app.logger
+    root_logger = logging.getLogger()
+    performance_logger = logging.getLogger(
+        f"{app_logger.name}.performance"
+    )
+
+    original_root_level = root_logger.level
+    original_app_level = app_logger.level
+    original_performance_level = performance_logger.level
+    original_capture_level = caplog.handler.level
+
+    load_test_id = "metrics-log-level-regression-001"
+
+    try:
+        # Reset the child logger to prove initialization configures it.
+        performance_logger.setLevel(logging.NOTSET)
+        root_logger.setLevel(logging.WARNING)
+        app_logger.setLevel(logging.WARNING)
+        caplog.handler.setLevel(logging.INFO)
+
+        init_runtime_request_metrics(app)
+
+        @app.get("/__test/observability/metrics-info-level")
+        def request_metrics_info_level_route():
+            return jsonify({"success": True})
+
+        assert performance_logger.level == logging.INFO
+
+        with app.test_client() as test_client:
+            response = test_client.get(
+                "/__test/observability/metrics-info-level",
+                headers={"X-Load-Test-ID": load_test_id},
+            )
+
+        assert response.status_code == 200
+        assert app_logger.level == logging.WARNING
+        assert root_logger.level == logging.WARNING
+
+        records = [
+            record
+            for record in caplog.records
+            if (
+                getattr(record, "performance_event", False)
+                and getattr(record, "load_test_id", None)
+                == load_test_id
+            )
+        ]
+
+        assert len(records) == 1
+        assert records[0].name == performance_logger.name
+    finally:
+        root_logger.setLevel(original_root_level)
+        app_logger.setLevel(original_app_level)
+        performance_logger.setLevel(original_performance_level)
+        caplog.handler.setLevel(original_capture_level)
