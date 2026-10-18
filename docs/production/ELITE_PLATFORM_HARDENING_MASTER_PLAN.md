@@ -607,13 +607,13 @@ Update documentation only after the corresponding evidence exists. Clearly disti
 
 ---
 
-## Phase 17 â€” Operational release and reliability policies
+## Phase 17 — Operational release and reliability policies
 
 This cross-cutting phase makes release safety and ongoing reliability measurable. It refines Phases 2, 5, 9, 11, 14, 15, and 16; it does not replace their implementation work.
 
 **Policy-setting rule:** do not copy arbitrary numeric defaults into every environment. For every interval, timeout, threshold, target, and cadence, record the selected value, rationale, environment, owner, and verification evidence in a versioned operational decision record. Derive values from the Phase 0 baseline, workload measurements, dependency behaviour, clinical/financial risk, and deployment capabilities. A policy is not complete while its required values remain unspecified.
 
-### 17.1 Canary deployment and promotion policy â€” refines Phase 14
+### 17.1 Canary deployment and promotion policy — refines Phase 14
 
 1. Select and document a release mechanism that can keep the stable version available while exposing a controlled subset of traffic to the candidate version. A container restart or ordinary rolling replacement is not, by itself, proof of canary capability.
 2. Define environment-specific traffic stages, minimum observation/bake time at each stage, minimum sample size, and the authority allowed to promote, pause, or roll back.
@@ -625,7 +625,7 @@ This cross-cutting phase makes release safety and ongoing reliability measurable
 
 **Acceptance criteria:** a production-like exercise demonstrates controlled exposure, an intentional failed-canary signal stops promotion, rollback returns traffic to the known-good version, data remains correct, and the promotion/rollback evidence is retained.
 
-### 17.2 Load-balancer health-check contract â€” refines Phases 2 and 11
+### 17.2 Load-balancer health-check contract — refines Phases 2 and 11
 
 For each deployment environment, define and record:
 
@@ -639,7 +639,7 @@ Keep liveness cheap and avoid turning readiness into a source of repeated databa
 
 **Acceptance criteria:** an instance failure and recovery are injected in a production-like environment; measured detection, routing removal, recovery, and draining times satisfy the approved decision record; a slow dependency does not cause probe-driven load amplification or restart flapping.
 
-### 17.3 Graceful-shutdown time budget â€” refines Phases 5 and 11
+### 17.3 Graceful-shutdown time budget — refines Phases 5 and 11
 
 Create an explicit shutdown budget for each workload type. The budget must account for:
 
@@ -654,7 +654,7 @@ Define a consistent timeout hierarchy so routing stops before shutdown, applicat
 
 **Acceptance criteria:** under representative load and a controlled task backlog, the service drains within its budget; requests either complete or fail in a documented retry-safe way; unacknowledged work is recovered; no duplicate payment/clinical side effect is introduced; forced termination is only a final bounded fallback and is recorded.
 
-### 17.4 Multi-instance cache consistency and invalidation â€” refines Phases 2, 4, and 14
+### 17.4 Multi-instance cache consistency and invalidation — refines Phases 2, 4, and 14
 
 1. Inventory actual caches before adding new cache technology. For each cache, record its owner, key format, tenant/security scope, source of truth, TTL, sensitivity, mutation paths, invalidation method, and acceptable staleness. If no cache exists for a data path, document that rather than inventing one.
 2. Namespace keys by environment and schema/data version where rolling deployments can otherwise read incompatible entries. Ensure every key that contains tenant-scoped information includes an appropriate tenant boundary.
@@ -665,7 +665,7 @@ Define a consistent timeout hierarchy so routing stops before shutdown, applicat
 
 **Acceptance criteria:** multi-instance tests prove the documented freshness contract, no cross-tenant cache access occurs, invalidation loss has a bounded recovery path, and deploy/rollback version compatibility is verified.
 
-### 17.5 Alert-fatigue and escalation policy â€” refines Phase 9
+### 17.5 Alert-fatigue and escalation policy — refines Phase 9
 
 1. Page a human only when an alert is urgent, actionable, and represents actual or imminent user/service impact, or a critical security/data-integrity event requiring immediate action.
 2. Give every alert a severity, owner/on-call route, runbook, action to take, and escalation path. Alerts without an action must be dashboards, tickets, or reviewed trend signals instead of pages.
@@ -676,7 +676,7 @@ Define a consistent timeout hierarchy so routing stops before shutdown, applicat
 
 **Acceptance criteria:** a simulated critical incident generates one actionable incident path with the expected escalation; repeated identical events are grouped; non-urgent signals do not page unnecessarily; security and data-integrity alerts cannot be hidden by normal maintenance suppression.
 
-### 17.6 SLO and error-budget policy â€” refines Phases 9 and 14
+### 17.6 SLO and error-budget policy — refines Phases 9 and 14
 
 1. Define service-level indicators around user-visible outcomes, not merely process uptime. Critical workflows (such as authentication, patient/clinical record access and writes, prescribing, and payment outcome integrity) may require distinct indicators and objectives.
 2. For each SLO, document the measurement window, eligible traffic, valid/invalid events, exclusions, data source, owner, target, and error-budget calculation. Establish target values from business risk and measured baseline; do not invent a universal availability target for every workflow.
@@ -687,7 +687,7 @@ Define a consistent timeout hierarchy so routing stops before shutdown, applicat
 
 **Acceptance criteria:** each in-scope SLO is measurable from retained evidence; simulated budget burn triggers the documented escalation/release response; a budget-exhaustion exercise demonstrates that ordinary feature promotion is paused and exceptions remain auditable.
 
-### 17.7 Recurring chaos-engineering and recovery cadence â€” refines Phases 10, 15, and 16
+### 17.7 Recurring chaos-engineering and recovery cadence — refines Phases 10, 15, and 16
 
 Adopt this minimum operating cadence, adjusted only through a documented risk decision:
 
