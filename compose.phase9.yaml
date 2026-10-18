@@ -1,0 +1,32 @@
+services:
+  backend:
+    image: ${PHASE6_APP_IMAGE:?PHASE6_APP_IMAGE is required}
+    volumes: !override
+      - ./runtime/phase9/storage:/data/storage
+      - ./runtime/phase9/backups:/data/backups
+
+  worker:
+    image: ${PHASE6_APP_IMAGE:?PHASE6_APP_IMAGE is required}
+    volumes: !override
+      - ./runtime/phase9/storage:/data/storage
+      - ./runtime/phase9/backups:/data/backups
+
+  beat:
+    image: ${PHASE6_APP_IMAGE:?PHASE6_APP_IMAGE is required}
+    volumes: !override
+      - ./runtime/phase9/storage:/data/storage
+      - ./runtime/phase9/backups:/data/backups
+
+  proxy:
+    ports: !override
+      - "19080:80"
+      - "19443:8443"
+    volumes: !override
+      - ./deployment/nginx/nginx.phase9.conf:/etc/nginx/nginx.conf:ro
+      - ./deployment/nginx/certs:/etc/nginx/certs:ro
+
+volumes:
+  postgres_data:
+    name: clinic-system-phase9-postgres-data
+  redis_data:
+    name: clinic-system-phase9-redis-data

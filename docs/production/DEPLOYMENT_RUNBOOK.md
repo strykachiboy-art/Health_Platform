@@ -85,6 +85,40 @@ Production deployment must verify:
 - health endpoints
 - Socket.IO connectivity where applicable
 
+## Compose configuration and environment inputs
+
+The Phase 6 overlay requires explicit `PHASE6_*` interpolation variables.
+These names are a separate deployment contract from the root `.env` file.
+
+Create a local `.env.phase6` from `.env.phase6.example` when one does not
+already exist. Fill every required blank with the approved environment
+values. The `.env.phase6` file is ignored by Git and must not be committed.
+If a local file already exists, reconcile its variable names manually;
+do not overwrite existing credentials.
+
+Validate the Phase 6 Compose model without printing the rendered
+configuration:
+
+```powershell
+docker compose --env-file .env.phase6 -f compose.yaml -f compose.phase6.yaml config -q
+```
+
+For the local Phase 9 overlay, validate the complete merged model:
+
+```powershell
+docker compose --env-file .env.phase6 -f compose.yaml -f compose.phase6.yaml -f compose.phase9.yaml config -q
+```
+
+The Phase 9 overlay uses localhost ports 19080 and 19443 and mounts
+`deployment/nginx/nginx.phase9.conf`. The overlay and the corresponding
+Nginx configuration are versioned together.
+
+`config -q` validates interpolation and the merged Compose model only.
+It does not start or recreate containers, verify the application image,
+validate actual secret formats, run migrations, or establish production
+readiness. Do not print a rendered `docker compose config` output into
+shared logs because it can contain resolved environment values.
+
 ## Startup
 
 Before accepting traffic:
