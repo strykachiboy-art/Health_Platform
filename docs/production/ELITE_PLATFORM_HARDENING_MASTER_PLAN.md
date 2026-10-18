@@ -607,6 +607,113 @@ Update documentation only after the corresponding evidence exists. Clearly disti
 
 ---
 
+## Phase 17 â€” Operational release and reliability policies
+
+This cross-cutting phase makes release safety and ongoing reliability measurable. It refines Phases 2, 5, 9, 11, 14, 15, and 16; it does not replace their implementation work.
+
+**Policy-setting rule:** do not copy arbitrary numeric defaults into every environment. For every interval, timeout, threshold, target, and cadence, record the selected value, rationale, environment, owner, and verification evidence in a versioned operational decision record. Derive values from the Phase 0 baseline, workload measurements, dependency behaviour, clinical/financial risk, and deployment capabilities. A policy is not complete while its required values remain unspecified.
+
+### 17.1 Canary deployment and promotion policy â€” refines Phase 14
+
+1. Select and document a release mechanism that can keep the stable version available while exposing a controlled subset of traffic to the candidate version. A container restart or ordinary rolling replacement is not, by itself, proof of canary capability.
+2. Define environment-specific traffic stages, minimum observation/bake time at each stage, minimum sample size, and the authority allowed to promote, pause, or roll back.
+3. Compare the canary with the stable version using service-level indicators and a stable control population where the platform supports it. Include request failures, latency percentiles, saturation, readiness, critical clinical workflow correctness, payment outcome integrity, and queue behaviour as applicable.
+4. Define automatic stop/rollback criteria before each rollout. A breached critical safety, integrity, security, or agreed SLO signal blocks promotion even if aggregate traffic metrics look healthy.
+5. Keep old and new application versions compatible with shared schema, events, cache formats, and queued tasks during the rollout. Use expand-and-contract migrations and feature flags where appropriate; do not depend on an unsafe database rollback.
+6. Define rollback ownership, maximum decision time, and the verified route back to the stable artifact. Preserve evidence and perform post-deployment smoke tests before declaring success.
+7. If the selected deployment cannot safely split traffic, record the gap and choose a supported deployment mechanism before claiming canary deployment is implemented.
+
+**Acceptance criteria:** a production-like exercise demonstrates controlled exposure, an intentional failed-canary signal stops promotion, rollback returns traffic to the known-good version, data remains correct, and the promotion/rollback evidence is retained.
+
+### 17.2 Load-balancer health-check contract â€” refines Phases 2 and 11
+
+For each deployment environment, define and record:
+
+- Probe type and endpoint: liveness versus readiness; active versus passive detection; and which component owns the check.
+- Probe interval, per-probe timeout, consecutive failure threshold, recovery-success threshold, startup grace, and removal/re-entry behaviour.
+- The maximum time from an instance becoming unhealthy to stopping new traffic, plus the traffic-drain period.
+- Which dependencies readiness checks test, how each probe is bounded, and how check traffic behaves during a dependency outage.
+- The consequences of a failed probe, including when to stop routing, restart a process, or leave the process running but not ready.
+
+Keep liveness cheap and avoid turning readiness into a source of repeated database/Redis load during an outage. The current readiness route checks PostgreSQL, Redis, and backup-encryption configuration; measure and bound that work before selecting a high-frequency probe. Distinguish NGINX Open Source passive upstream failure handling from active health checking supplied by a different supported product or orchestrator; do not claim active checks unless the chosen component actually performs them.
+
+**Acceptance criteria:** an instance failure and recovery are injected in a production-like environment; measured detection, routing removal, recovery, and draining times satisfy the approved decision record; a slow dependency does not cause probe-driven load amplification or restart flapping.
+
+### 17.3 Graceful-shutdown time budget â€” refines Phases 5 and 11
+
+Create an explicit shutdown budget for each workload type. The budget must account for:
+
+1. Ingress deregistration and traffic-drain time.
+2. Maximum permitted in-flight HTTP request duration and response completion.
+3. Socket.IO/WebSocket disconnection or reconnect behaviour.
+4. Gunicorn graceful worker shutdown and final resource cleanup.
+5. Celery task completion, acknowledgement, retry/requeue, and worker-loss recovery.
+6. A safety margin before the container/runtime's hard termination deadline.
+
+Define a consistent timeout hierarchy so routing stops before shutdown, application graceful deadlines fit inside the container stop-grace period, and the hard kill deadline does not pre-empt intended recovery. Bound long-running tasks or give them an explicit resumable/recoverable contract. Do not wait indefinitely for a queue backlog to drain during a deployment. Align orchestration `stop_grace_period`, Gunicorn lifecycle settings, task time limits, and worker shutdown behaviour with the documented budget.
+
+**Acceptance criteria:** under representative load and a controlled task backlog, the service drains within its budget; requests either complete or fail in a documented retry-safe way; unacknowledged work is recovered; no duplicate payment/clinical side effect is introduced; forced termination is only a final bounded fallback and is recorded.
+
+### 17.4 Multi-instance cache consistency and invalidation â€” refines Phases 2, 4, and 14
+
+1. Inventory actual caches before adding new cache technology. For each cache, record its owner, key format, tenant/security scope, source of truth, TTL, sensitivity, mutation paths, invalidation method, and acceptable staleness. If no cache exists for a data path, document that rather than inventing one.
+2. Namespace keys by environment and schema/data version where rolling deployments can otherwise read incompatible entries. Ensure every key that contains tenant-scoped information includes an appropriate tenant boundary.
+3. Choose invalidation per cache: explicit invalidation, short TTL, version/generation keys, refresh, or no caching for correctness-sensitive data. Define ordering with database commits so a failed transaction cannot publish invalid state.
+4. For invalidation that must survive process restart or message loss, use a durable event/outbox or a reconciliation/TTL safety mechanism. Do not rely on ephemeral pub/sub alone as the sole correctness guarantee.
+5. Define deploy-time handling for incompatible cached objects and serialization changes. A new release must not depend on an old replica understanding a new cache format during a rolling or canary deployment.
+6. Test update/read races across two instances, tenant isolation, invalidation delivery failure, replica restart, and cache rebuild. Decide explicitly whether stale reads are allowed for each data class; critical clinical, authorization, inventory, and financial decisions must use an authoritative correctness boundary.
+
+**Acceptance criteria:** multi-instance tests prove the documented freshness contract, no cross-tenant cache access occurs, invalidation loss has a bounded recovery path, and deploy/rollback version compatibility is verified.
+
+### 17.5 Alert-fatigue and escalation policy â€” refines Phase 9
+
+1. Page a human only when an alert is urgent, actionable, and represents actual or imminent user/service impact, or a critical security/data-integrity event requiring immediate action.
+2. Give every alert a severity, owner/on-call route, runbook, action to take, and escalation path. Alerts without an action must be dashboards, tickets, or reviewed trend signals instead of pages.
+3. Group related alerts by incident, deduplicate repeated signals, use bounded notification intervals, and define acknowledgement/escalation deadlines. Preserve the underlying event evidence.
+4. Define time-bounded maintenance silences and suppression ownership. Never silently suppress critical security, clinical-safety, data-integrity, backup/restore, or deployment-rollback signals through a broad blanket rule.
+5. Alert on user-visible SLO symptoms as well as actionable resource exhaustion; do not create pages for every raw cause if one symptom alert already represents the same incident.
+6. Review alert volume, false positives, unactionable pages, missed incidents, and time-to-acknowledge on a regular schedule. Each change to a paging rule must be tested and have an owner.
+
+**Acceptance criteria:** a simulated critical incident generates one actionable incident path with the expected escalation; repeated identical events are grouped; non-urgent signals do not page unnecessarily; security and data-integrity alerts cannot be hidden by normal maintenance suppression.
+
+### 17.6 SLO and error-budget policy â€” refines Phases 9 and 14
+
+1. Define service-level indicators around user-visible outcomes, not merely process uptime. Critical workflows (such as authentication, patient/clinical record access and writes, prescribing, and payment outcome integrity) may require distinct indicators and objectives.
+2. For each SLO, document the measurement window, eligible traffic, valid/invalid events, exclusions, data source, owner, target, and error-budget calculation. Establish target values from business risk and measured baseline; do not invent a universal availability target for every workflow.
+3. Define budget burn-rate warning and critical thresholds, who receives each signal, and whether it pauses a rollout, blocks promotion, opens an incident, or changes release priority.
+4. When a critical release signal breaches its canary threshold, stop promotion or roll back. When the agreed error budget is exhausted, pause ordinary feature releases and prioritize reliability work until the policy's recovery condition is met.
+5. Document narrowly scoped exceptions for urgent security fixes, regulatory obligations, and critical defect remediation. Exceptions require a named approver, explicit risk statement, mitigation, and recorded decision; they do not silently waive verification gates.
+6. Review SLOs and error-budget policy after incidents and when service architecture or clinical risk changes. Use the policy to make reliability trade-offs, not to punish individuals.
+
+**Acceptance criteria:** each in-scope SLO is measurable from retained evidence; simulated budget burn triggers the documented escalation/release response; a budget-exhaustion exercise demonstrates that ordinary feature promotion is paused and exceptions remain auditable.
+
+### 17.7 Recurring chaos-engineering and recovery cadence â€” refines Phases 10, 15, and 16
+
+Adopt this minimum operating cadence, adjusted only through a documented risk decision:
+
+- **Every relevant change/release:** run the focused deterministic fault-injection and recovery tests associated with the changed boundary.
+- **Monthly, non-production:** execute at least one controlled experiment against a high-risk dependency or boundary, rotating across worker loss, Redis degradation, database connectivity, outbound provider failure, network impairment, and instance removal as relevant.
+- **Quarterly, non-production game day:** exercise a cross-domain failure and recovery workflow, including incident roles, evidence capture, communication, and the appropriate backup/restore or rollback scenario.
+- **Production experiments:** prohibited by default until non-production exercises, monitoring, rollback/abort controls, ownership, and approvals are proven. Any later production experiment needs explicit authorization, smallest practical blast radius, suitable timing, and an immediate abort path.
+
+Every experiment must declare a steady-state hypothesis, expected signals, affected scope, test identities/data, start/stop window, abort thresholds, responsible operator, recovery steps, and retained evidence. Stop immediately if clinical/financial correctness, tenant isolation, data integrity, security, or an agreed SLO is threatened. Assign every finding an owner and due date, add regression coverage, and rerun the failed experiment before closure. A calendar event or a fault command without measurable hypotheses and evidence does not count as a completed chaos exercise.
+
+**Acceptance criteria:** the cadence is scheduled and owned; a representative experiment is executed end-to-end in non-production; abort and recovery paths are verified; findings are tracked to closure; production experiments remain gated by explicit authorization.
+
+### 17.8 Operational decision record and policy review
+
+For each policy above, retain: policy owner, approved values and rationale, environment/topology, last review date, source revision, test/runtime evidence, runbook link, exceptions, and next review date. Review after major architecture changes, material incidents, SLO changes, and at least quarterly. Keep the decision record free of credentials and patient data.
+
+### 17.9 Reference guidance
+
+Use these references as design guidance, then record Clinic System Pro-specific decisions and evidence rather than copying another organization's thresholds blindly:
+
+- AWS Builders Library, *Automating safe, hands-off deployments*: https://d1.awsstatic.com/builderslibrary/pdfs/automating-safe-hands-off-deployments-clareliguori.pdf
+- Google SRE Workbook, *Error Budget Policy*: https://sre.google/workbook/error-budget-policy/
+- Google SRE Workbook, *Monitoring*: https://sre.google/workbook/monitoring/
+- Google SRE Workbook, *On-Call Engineer Best Practices*: https://sre.google/workbook/on-call/
+- Principles of Chaos Engineering: https://principlesofchaos.org/
+
 ## Recommended implementation order
 
 Execute the roadmap in controlled slices:
@@ -667,6 +774,13 @@ Do not start all phases simultaneously. Each slice must have bounded scope, expl
 - [ ] Security, workflow, load, and fault-injection gates have passed.
 - [ ] Release and rollback evidence is recorded.
 - [ ] Remaining limitations and operational risks are explicit.
+- [ ] Canary traffic promotion, bake-time, stop criteria, and rollback have been exercised for the chosen deployment topology.
+- [ ] Load-balancer health-check type, interval, timeout, failure/recovery thresholds, startup grace, and draining policy are explicit and verified.
+- [ ] HTTP, Socket.IO, Gunicorn/container, and Celery shutdown budgets are aligned and tested under load.
+- [ ] The actual cache inventory and multi-instance freshness/invalidation contract are documented and tested where caches exist.
+- [ ] Alert severity, deduplication, escalation, suppression, ownership, and fatigue review are operational.
+- [ ] Critical SLOs and error-budget actions are approved and tested through an exercise.
+- [ ] Chaos exercises have a defined cadence, hypothesis, bounded blast radius, abort criteria, retained evidence, and remediation ownership.
 
 ## Final principle
 
