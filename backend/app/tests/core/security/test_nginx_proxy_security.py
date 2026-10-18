@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 PROXY_CONFIGS = (
     ("nginx.conf", 8443),
     ("nginx.phase6.conf", 18443),
+    ("nginx.phase9.conf", 19443),
 )
 
 
