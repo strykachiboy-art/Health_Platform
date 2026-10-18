@@ -1,7 +1,8 @@
 # Clinic System Pro — Phase 0 Baseline Supplement
 
-**Evidence date:** 2026-10-18  
-**Disposition:** **CLOSED WITH DOCUMENTED LIMITATION**  
+**Evidence date:** 2026-10-18
+
+**Disposition:** **CLOSED WITH DOCUMENTED LIMITATION**
 **Execution classification:** Local Docker production-like workload; not production-operated evidence.
 
 ## 1. Accepted target run
