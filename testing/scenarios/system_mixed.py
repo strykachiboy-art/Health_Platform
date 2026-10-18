@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 
 from locust import HttpUser, between, task
@@ -17,10 +18,37 @@ class SystemMixedUser(HttpUser):
     load_test_id = get_load_test_id()
 
     def on_start(self) -> None:
-        result = login(
-            self,
-            self.load_test_id,
-        )
+        ca_bundle = os.getenv("LOCUST_TLS_CA_BUNDLE")
+        if ca_bundle:
+            if not os.path.isfile(ca_bundle):
+                raise RuntimeError(
+                    "LOCUST_TLS_CA_BUNDLE must point to an existing certificate file"
+                )
+            self.client.trust_env = False
+            self.client.verify = ca_bundle
+
+        tokens_file = os.getenv("LOCUST_SYSTEM_MIXED_TOKENS_FILE")
+        preauthenticated_tokens = None
+        if tokens_file:
+            if not os.path.isfile(tokens_file):
+                raise RuntimeError("LOCUST_SYSTEM_MIXED_TOKENS_FILE must point to an existing JSON file")
+            try:
+                with open(tokens_file, "r", encoding="utf-8") as tokens_stream:
+                    preauthenticated_tokens = json.load(tokens_stream)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Unable to load pre-authenticated Locust tokens") from exc
+            if not isinstance(preauthenticated_tokens, dict):
+                raise RuntimeError("Pre-authenticated Locust tokens must be a JSON object")
+            for token_name in ("access_token", "clinical_token"):
+                token_value = preauthenticated_tokens.get(token_name)
+                if not isinstance(token_value, str) or not token_value.strip():
+                    raise RuntimeError(f"Pre-authenticated token is missing or invalid: {token_name}")
+            result = {"access_token": preauthenticated_tokens["access_token"]}
+        else:
+            result = login(
+                self,
+                self.load_test_id,
+            )
 
         if not result:
             raise RuntimeError(
@@ -31,8 +59,8 @@ class SystemMixedUser(HttpUser):
             result["access_token"]
         )
 
-        self.access_control_token: str | None = None
-        self.clinical_token: str | None = None
+        self.access_control_token: str | None = preauthenticated_tokens.get("access_control_token") if preauthenticated_tokens else None
+        self.clinical_token: str | None = preauthenticated_tokens["clinical_token"] if preauthenticated_tokens else None
 
         self.staff_id = self._positive_int_env(
             "LOCUST_STAFF_ID",
@@ -636,6 +664,18 @@ class SystemMixedUser(HttpUser):
     def _get_access_control_token(
         self,
     ) -> str | None:
+        include_access_control = (
+            os.getenv(
+                "LOCUST_SYSTEM_MIXED_INCLUDE_ACCESS_CONTROL",
+                "false",
+            )
+            .strip()
+            .lower()
+            in {"1", "true", "yes", "on"}
+        )
+        if not include_access_control:
+            return None
+
         if self.access_control_token is not None:
             return self.access_control_token
 
