@@ -22,7 +22,7 @@ def _make_integration(
         clinic_id=clinic_id,
         provider="test-hie-provider",
         status=HIEIntegrationStatus.ACTIVE,
-        endpoint_url="https://hie.example.com",
+        endpoint_url="https://fhir.partnerhealth.org/fhir/r4",
         organization_id="ORG-001",
         facility_id="FAC-001",
     )

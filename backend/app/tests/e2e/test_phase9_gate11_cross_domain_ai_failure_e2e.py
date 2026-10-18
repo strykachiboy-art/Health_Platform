@@ -412,7 +412,7 @@ def test_gate11_cross_domain_ai_failure_preserves_lab_and_hie_state(
             json={
                 "provider": provider_name,
                 "endpoint_url": (
-                    "https://gate11-slice4-hie.example"
+                    "https://fhir.partnerhealth.org/fhir/r4"
                 ),
                 "organization_id": "G11-S4-ORG",
                 "facility_id": "G11-S4-FACILITY",

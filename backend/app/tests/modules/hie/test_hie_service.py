@@ -68,7 +68,7 @@ def make_integration(
     clinic_id=1,
     provider="test-hie-provider",
     status=HIEIntegrationStatus.ACTIVE,
-    endpoint_url="https://hie.example.com",
+    endpoint_url=None,
     organization_id="ORG-001",
     facility_id="FAC-001",
     last_sync_at=None,
@@ -531,6 +531,7 @@ def test_validate_integration_accepts_provider_neutral_name():
 
 
 def test_get_provider_resolves_provider_through_registry(
+    app,
     monkeypatch,
 ):
     provider = object()
@@ -547,7 +548,7 @@ def test_get_provider_resolves_provider_through_registry(
 
     integration = make_integration(
         provider="TEST-HIE-PROVIDER",
-        endpoint_url="https://provider.example.com",
+        endpoint_url="https://fhir.partnerhealth.org/fhir/r4",
     )
 
     result = hie_service._get_provider(
@@ -2449,6 +2450,7 @@ def test_get_hie_integration_success(
 
 
 def test_create_hie_integration_success(
+    app,
     monkeypatch,
     no_transaction,
 ):
@@ -2481,7 +2483,7 @@ def test_create_hie_integration_success(
     result = hie_service.create_hie_integration(
         clinic_id=8,
         provider=" TEST-HIE-PROVIDER ",
-        endpoint_url="  https://hie.example.com  ",
+        endpoint_url="https://FHIR.PartnerHealth.org/fhir/r4",
         organization_id=" ORG-8 ",
         facility_id=" FAC-8 ",
     )
@@ -2490,7 +2492,7 @@ def test_create_hie_integration_success(
     assert result.clinic_id == 8
     assert result.provider == "test-hie-provider"
     assert result.status == HIEIntegrationStatus.PENDING
-    assert result.endpoint_url == "https://hie.example.com"
+    assert result.endpoint_url == "https://fhir.partnerhealth.org/fhir/r4"
     assert result.organization_id == "ORG-8"
     assert result.facility_id == "FAC-8"
 
@@ -2635,6 +2637,7 @@ def test_create_hie_integration_rejects_blank_facility_id(
 
 
 def test_update_hie_integration_success(
+    app,
     monkeypatch,
     no_transaction,
 ):
@@ -2659,7 +2662,7 @@ def test_update_hie_integration_success(
         integration_id=20,
         provider=" TEST-HIE-PROVIDER ",
         status=HIEIntegrationStatus.ACTIVE,
-        endpoint_url=" https://new.example.com ",
+        endpoint_url="https://api.epic.com/fhir/r4",
         organization_id=" ORG-NEW ",
         facility_id=" FAC-NEW ",
     )
@@ -2667,7 +2670,7 @@ def test_update_hie_integration_success(
     assert result is integration
     assert result.provider == "test-hie-provider"
     assert result.status == HIEIntegrationStatus.ACTIVE
-    assert result.endpoint_url == "https://new.example.com"
+    assert result.endpoint_url == "https://api.epic.com/fhir/r4"
     assert result.organization_id == "ORG-NEW"
     assert result.facility_id == "FAC-NEW"
 

@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from flask import current_app, has_app_context
+
+from app.config import Config
 from app.core.auth.user.models.user_model import User
 from app.core.enums.hie_enums import (
     HIEIntegrationStatus,
@@ -24,6 +27,10 @@ from app.modules.hie.providers.exceptions import (
     HIEProviderHTTPError,
     classify_hie_failure,
 )
+from app.modules.hie.providers.endpoint_policy import (
+    HIEEndpointPolicyError,
+    validate_hie_endpoint_url,
+)
 from app.modules.hie.providers.registry import (
     get_provider,
     is_provider_registered,
@@ -42,6 +49,37 @@ HIE_QUERY_ROLES = (
     Role.LAB_TECHNICIAN,
     Role.PHARMACIST,
 )
+
+
+def _validate_configured_hie_endpoint_url(
+    endpoint_url: Optional[str],
+) -> Optional[str]:
+    if endpoint_url is None:
+        return None
+
+    if has_app_context():
+        allowed_hosts = current_app.config.get(
+            "HIE_ALLOWED_ENDPOINT_HOSTS"
+        )
+    else:
+        allowed_hosts = Config.HIE_ALLOWED_ENDPOINT_HOSTS
+
+    if isinstance(allowed_hosts, str):
+        allowed_hosts = tuple(
+            host.strip()
+            for host in allowed_hosts.split(",")
+        )
+
+    try:
+        return validate_hie_endpoint_url(
+            endpoint_url,
+            allowed_hosts=allowed_hosts,
+        )
+    except HIEEndpointPolicyError as exc:
+        raise ValidationError(
+            "HIE endpoint does not satisfy the configured "
+            "outbound endpoint policy"
+        ) from exc
 
 
 def _validate_positive_int(
@@ -310,6 +348,10 @@ def _validate_integration(
             "HIE integration provider is not configured"
         )
 
+    _validate_configured_hie_endpoint_url(
+        getattr(integration, "endpoint_url", None)
+    )
+
 
 def _get_provider(
     integration: HIEIntegration,
@@ -322,9 +364,13 @@ def _get_provider(
         integration.provider or ""
     ).strip().lower()
 
+    endpoint_url = _validate_configured_hie_endpoint_url(
+        getattr(integration, "endpoint_url", None)
+    )
+
     return get_provider(
         provider_name,
-        endpoint=integration.endpoint_url,
+        endpoint=endpoint_url,
     )
 
 
@@ -1081,10 +1127,14 @@ def create_hie_integration(
                 endpoint_url
             )
 
-        endpoint_url = endpoint_url.strip()
+        if not endpoint_url.strip():
+            raise ValidationError(
+                "Endpoint URL cannot be empty"
+            )
 
-        if not endpoint_url:
-            endpoint_url = None
+        endpoint_url = _validate_configured_hie_endpoint_url(
+            endpoint_url
+        )
 
     if organization_id is not None:
         if not isinstance(
@@ -1203,12 +1253,7 @@ def update_hie_integration(
             "integration cannot be activated or switched while active"
         )
 
-    if provider is not None:
-        integration.provider = provider
-
-    if status is not None:
-        integration.status = status
-
+    validated_endpoint_url: Optional[str] = None
     if endpoint_url is not None:
         if not isinstance(
             endpoint_url,
@@ -1218,14 +1263,31 @@ def update_hie_integration(
                 endpoint_url
             )
 
-        endpoint_url = endpoint_url.strip()
-
-        if not endpoint_url:
+        if not endpoint_url.strip():
             raise ValidationError(
                 "Endpoint URL cannot be empty"
             )
 
-        integration.endpoint_url = endpoint_url
+        validated_endpoint_url = _validate_configured_hie_endpoint_url(
+            endpoint_url
+        )
+    elif (
+        effective_status == HIEIntegrationStatus.ACTIVE
+        and integration.endpoint_url is not None
+    ):
+        # An activation or update must not preserve a stale unsafe URL.
+        _validate_configured_hie_endpoint_url(
+            integration.endpoint_url
+        )
+
+    if provider is not None:
+        integration.provider = provider
+
+    if status is not None:
+        integration.status = status
+
+    if endpoint_url is not None:
+        integration.endpoint_url = validated_endpoint_url
 
     if organization_id is not None:
         if not isinstance(

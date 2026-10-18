@@ -204,7 +204,7 @@ def test_hie_external_integration_e2e(
             json={
                 "provider": provider_name,
                 "endpoint_url": (
-                    "https://phase8-g15-hie.example"
+                    "https://fhir.partnerhealth.org/fhir/r4"
                 ),
                 "organization_id": "E2E-ORG-15",
                 "facility_id": "E2E-FACILITY-15",

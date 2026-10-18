@@ -624,7 +624,15 @@ def test_gate11_cross_domain_network_failure_recovers_with_retryable_hie_submiss
         "http://localhost",
     )
     monkeypatch.setenv(
+        "HIE_ALLOWED_ENDPOINT_HOSTS",
+        "fhir.partnerhealth.org",
+    )
+    monkeypatch.setenv(
         "INTEGRATION_ENCRYPTION_KEY",
+        Fernet.generate_key().decode(),
+    )
+    monkeypatch.setenv(
+        "BACKUP_ENCRYPTION_KEY",
         Fernet.generate_key().decode(),
     )
 
@@ -697,7 +705,7 @@ def test_gate11_cross_domain_network_failure_recovers_with_retryable_hie_submiss
                 "/api/v1/hie/integrations",
                 json={
                     "provider": provider_name,
-                    "endpoint_url": server.endpoint,
+                    "endpoint_url": "https://fhir.partnerhealth.org/fhir/r4",
                     "organization_id": (
                         "G11-S9-ORG"
                     ),

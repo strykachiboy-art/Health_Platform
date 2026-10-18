@@ -194,6 +194,15 @@ class Config:
     )
 
     # ------------------------------------------------------------------
+    # HIE Endpoint Policy
+    # ------------------------------------------------------------------
+    # Comma-separated operator-approved DNS hostnames. Empty fails closed.
+    HIE_ALLOWED_ENDPOINT_HOSTS = os.environ.get(
+        "HIE_ALLOWED_ENDPOINT_HOSTS",
+        "",
+    )
+
+    # ------------------------------------------------------------------
     # Integration Encryption
     # ------------------------------------------------------------------
 
@@ -260,6 +269,12 @@ class ProductionConfig(Config):
 
 class TestingConfig(Config):
     TESTING = True
+
+    # Synthetic hosts used by deterministic HIE tests only.
+    HIE_ALLOWED_ENDPOINT_HOSTS = (
+        "fhir.partnerhealth.org",
+        "api.epic.com",
+    )
 
     JWT_SECRET_KEY = os.environ.get(
         "TEST_JWT_SECRET_KEY",

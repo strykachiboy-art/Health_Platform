@@ -131,7 +131,7 @@ def _create_active_integration(
         json={
             "provider": provider_name,
             "endpoint_url": (
-                "https://phase9-slice3-hie.example"
+                "https://fhir.partnerhealth.org/fhir/r4"
             ),
             "organization_id": "SLICE3-ORG",
             "facility_id": "SLICE3-FACILITY",

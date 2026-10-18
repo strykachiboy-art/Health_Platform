@@ -79,6 +79,10 @@ def create_app(config_name=None):
         cors_origins = os.environ.get(
             "CORS_ALLOWED_ORIGINS"
         )
+        hie_allowed_endpoint_hosts = os.environ.get(
+            "HIE_ALLOWED_ENDPOINT_HOSTS",
+            "",
+        )
 
         backup_encryption_key = os.environ.get(
             "BACKUP_ENCRYPTION_KEY"
@@ -158,6 +162,9 @@ def create_app(config_name=None):
         app.config["CELERY_RESULT_BACKEND"] = redis_url
         app.config["RATELIMIT_STORAGE_URI"] = redis_url
         app.config["CORS_ALLOWED_ORIGINS"] = cors_origins
+        app.config["HIE_ALLOWED_ENDPOINT_HOSTS"] = (
+            hie_allowed_endpoint_hosts
+        )
         app.config["BACKUP_ENCRYPTION_KEY"] = backup_encryption_key
         app.config["BACKUP_ENCRYPTION_KEY_VERSION"] = (
             backup_encryption_key_version
