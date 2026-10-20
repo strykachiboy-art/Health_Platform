@@ -1,8 +1,8 @@
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from pydantic import ValidationError as PydanticValidationError
 
-from app.extensions import db
+from app.extensions import db, limiter
 
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
@@ -538,6 +538,12 @@ def initialize_payment_route():
 @billing_bp.route(
     "/webhooks/<int:clinic_id>/<gateway>",
     methods=["POST"],
+)
+@limiter.limit(
+    lambda: current_app.config.get(
+        "PAYMENT_WEBHOOK_RATE_LIMIT",
+        "300 per minute",
+    )
 )
 def payment_webhook_route(
     clinic_id,

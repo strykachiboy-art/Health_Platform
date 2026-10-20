@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[5]
+
+
+def _backend_service_block() -> str:
+    compose = (REPOSITORY_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^  backend:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\s*$|^volumes:\s*$)",
+        compose,
+    )
+    assert match is not None, "backend service block must exist"
+    return match.group("body")
+
+
+def test_backend_keeps_image_command_and_explicit_compose_stop_budget():
+    backend = _backend_service_block()
+    dockerfile = (
+        REPOSITORY_ROOT / "backend" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "stop_grace_period: 40s" in backend
+    assert re.search(r"(?m)^\s*command\s*:", backend) is None
+    assert re.search(
+        r'^CMD\s+\["gunicorn",\s*"--worker-class",\s*"gevent",'
+        r'\s*"--workers",\s*"1".*"wsgi:app"\]\s*$',
+        dockerfile,
+        re.MULTILINE,
+    )
+
+
+def test_phase9_nginx_keeps_dynamic_backend_resolution_and_retry():
+    nginx_path = (
+        REPOSITORY_ROOT / "deployment" / "nginx" / "nginx.phase9.conf"
+    )
+    nginx = nginx_path.read_text(encoding="utf-8")
+
+    assert re.search(
+        r"resolver\s+127\.0\.0\.11\s+valid=10s\s+ipv6=off;",
+        nginx,
+    )
+    assert re.search(
+        r"server\s+backend:5000\s+resolve\s+max_fails=2\s+fail_timeout=10s;",
+        nginx,
+    )
+    assert re.search(
+        r"proxy_next_upstream\s+error\s+timeout\s+http_502\s+http_503\s+http_504;",
+        nginx,
+    )
+    assert re.search(r"proxy_next_upstream_tries\s+2;", nginx)
+
+    # Do not automatically retry non-idempotent requests after they have
+    # been sent upstream; this avoids introducing a broad duplicate-write risk.
+    retry_directive = re.search(
+        r"(?m)^\s*proxy_next_upstream\s+([^;]+);",
+        nginx,
+    )
+    assert retry_directive is not None
+    assert "non_idempotent" not in retry_directive.group(1)

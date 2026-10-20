@@ -1,0 +1,7 @@
+﻿clinic-system-phase9-backend-1,0.05%,194.1MiB / 3.784GiB,5.01%,102kB / 110kB,24.6kB / 0B
+clinic-system-phase9-backend-2,0.05%,182.3MiB / 3.784GiB,4.71%,5.12kB / 6.71kB,168kB / 0B
+clinic-system-phase9-proxy-1,0.00%,3.746MiB / 3.784GiB,0.10%,317kB / 498kB,16.8MB / 32.8kB
+clinic-system-phase9-postgres-1,18.06%,69.05MiB / 3.784GiB,1.78%,184kB / 2.67MB,60.6MB / 1.29MB
+clinic-system-phase9-redis-1,0.41%,21.27MiB / 3.784GiB,0.55%,15.5MB / 14.7MB,71.3MB / 2.37MB
+clinic-system-phase9-worker-1,0.47%,620.4MiB / 3.784GiB,16.01%,17MB / 15.3MB,52.5MB / 53.2kB
+clinic-system-phase9-beat-1,0.00%,192.1MiB / 3.784GiB,4.96%,119kB / 134kB,29MB / 647kB

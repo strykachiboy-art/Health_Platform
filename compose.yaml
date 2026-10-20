@@ -25,16 +25,21 @@ services:
       retries: 10
 
   backend:
+    # Preserve the image's existing Gunicorn command; keep an explicit 40s container stop grace period.
+    stop_grace_period: 40s
     build:
       context: ./backend
     environment:
       FLASK_ENV: production
       PORT: 5000
+      # Drain control stays disabled until a strong token is provisioned.
+      PHASE9_BACKEND_DRAIN_TOKEN: ${PHASE9_BACKEND_DRAIN_TOKEN:-}
       SECRET_KEY: phase6-development-secret
       JWT_SECRET_KEY: phase6-development-jwt-secret
       DATABASE_URL: postgresql://clinic:clinic_phase6@postgres:5432/clinic_system
       REDIS_URL: redis://redis:6379/0
       CORS_ALLOWED_ORIGINS: http://localhost:3000
+      PAYMENT_WEBHOOK_RATE_LIMIT: "${PAYMENT_WEBHOOK_RATE_LIMIT:-300 per minute}"
       STORAGE_ROOT: /data/storage
       BACKUP_ROOT: /data/backups
       BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}

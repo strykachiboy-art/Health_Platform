@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import math
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from weakref import WeakSet
 from typing import Any
 
 from celery.signals import (
+    before_task_publish,
     task_postrun,
     task_prerun,
     task_retry,
@@ -34,6 +36,7 @@ DEFAULT_INSPECT_TIMEOUT = 1.0
 DEFAULT_LONG_RUNNING_THRESHOLD_SECONDS = 10.0
 
 _REGISTERED_CELERY_APPS: WeakSet = WeakSet()
+TASK_PUBLISHED_AT_HEADER = "clinic_published_at"
 _TASK_START_TIMES: dict[str, float] = {}
 
 
@@ -313,6 +316,121 @@ def _record_task_runtime(
         return
 
 
+def _handle_before_task_publish(
+    sender=None,
+    headers=None,
+    **kwargs,
+) -> None:
+    """Stamp task publication time without making metrics a publish dependency."""
+    if not isinstance(headers, dict):
+        return
+
+    try:
+        headers[TASK_PUBLISHED_AT_HEADER] = time.time()
+    except Exception:
+        # Observability must never prevent task publication.
+        return
+
+
+def _get_task_published_at(task) -> float | None:
+    """Read a valid producer timestamp from task message headers."""
+    try:
+        request = getattr(task, "request", None)
+        headers = getattr(request, "headers", None)
+
+        if not isinstance(headers, Mapping):
+            return None
+
+        value = headers.get(TASK_PUBLISHED_AT_HEADER)
+
+        if isinstance(value, bool):
+            return None
+
+        published_at = float(value)
+    except Exception:
+        return None
+
+    if not math.isfinite(published_at) or published_at <= 0:
+        return None
+
+    return published_at
+
+
+def _record_task_queue_age(
+    task,
+    published_at: float,
+) -> None:
+    """Record publication-to-start delay in aggregate and per-task metrics."""
+    if not _task_is_registered(task):
+        return
+
+    try:
+        if isinstance(published_at, bool):
+            return
+
+        published_at = float(published_at)
+
+        if not math.isfinite(published_at) or published_at <= 0:
+            return
+
+        observed_at = time.time()
+        age_seconds = observed_at - published_at
+
+        # A negative age indicates clock skew or an invalid timestamp.
+        if not math.isfinite(age_seconds) or age_seconds < 0:
+            return
+
+        queue_age_ms = age_seconds * 1000.0
+
+        metric_keys = (
+            CELERY_AGGREGATE_KEY,
+            _task_metric_key(_task_name(task)),
+        )
+    except Exception:
+        return
+
+    for key in metric_keys:
+        _increment_redis_metric(key, "queue_age_samples")
+        _increment_redis_metric(
+            key,
+            "queue_age_ms_total",
+            queue_age_ms,
+        )
+        _set_redis_metric(
+            key,
+            "last_queue_age_ms",
+            queue_age_ms,
+        )
+        _set_redis_metric(
+            key,
+            "last_queue_age_observed_at",
+            observed_at,
+        )
+
+    redis = _get_redis_client()
+
+    if redis is None:
+        return
+
+    for key in metric_keys:
+        try:
+            current_max = _to_float(
+                redis.hget(key, "max_queue_age_ms")
+            )
+
+            if not math.isfinite(current_max) or current_max < 0:
+                current_max = 0.0
+
+            if queue_age_ms > current_max:
+                _set_redis_metric(
+                    key,
+                    "max_queue_age_ms",
+                    queue_age_ms,
+                )
+        except Exception:
+            # Failed metric reads must not affect task execution.
+            continue
+
 def _handle_task_prerun(
     task_id=None,
     task=None,
@@ -326,6 +444,13 @@ def _handle_task_prerun(
 
     if not task_id:
         return
+
+    published_at = _get_task_published_at(task)
+    if published_at is not None:
+        _record_task_queue_age(
+            task=task,
+            published_at=published_at,
+        )
 
     _TASK_START_TIMES[str(task_id)] = (
         time.perf_counter()
@@ -430,6 +555,14 @@ def init_celery_metrics(
 
     _REGISTERED_CELERY_APPS.add(
         celery_app
+    )
+
+    before_task_publish.connect(
+        _handle_before_task_publish,
+        weak=False,
+        dispatch_uid=(
+            "clinic_celery_metrics_before_task_publish"
+        ),
     )
 
     task_prerun.connect(
@@ -635,6 +768,41 @@ def _find_long_running_tasks(
     return results
 
 
+def _queue_age_metric_fields(
+    values: Mapping[str, Any],
+) -> dict[str, int | float]:
+    """Build queue-age statistics from a Redis metrics hash."""
+    samples = max(
+        0,
+        _to_int(values.get("queue_age_samples")),
+    )
+    total_ms = _to_float(values.get("queue_age_ms_total"))
+    last_ms = _to_float(values.get("last_queue_age_ms"))
+    max_ms = _to_float(values.get("max_queue_age_ms"))
+    observed_at = _to_float(
+        values.get("last_queue_age_observed_at")
+    )
+
+    if not math.isfinite(total_ms) or total_ms < 0:
+        total_ms = 0.0
+    if not math.isfinite(last_ms) or last_ms < 0:
+        last_ms = 0.0
+    if not math.isfinite(max_ms) or max_ms < 0:
+        max_ms = 0.0
+    if not math.isfinite(observed_at) or observed_at < 0:
+        observed_at = 0.0
+
+    return {
+        "queue_age_samples": samples,
+        "queue_age_ms_total": total_ms,
+        "average_queue_age_ms": (
+            total_ms / samples if samples else 0.0
+        ),
+        "last_queue_age_ms": last_ms,
+        "max_queue_age_ms": max_ms,
+        "last_queue_age_observed_at": observed_at,
+    }
+
 def _collect_task_metrics(
     client,
 ) -> dict[str, dict[str, Any]]:
@@ -711,6 +879,7 @@ def _collect_task_metrics(
                     )
                 ),
                 "runtime_ms_total": runtime_total,
+                **_queue_age_metric_fields(values),
                 "average_runtime_ms": (
                     runtime_total / executed
                     if executed
@@ -867,6 +1036,10 @@ def collect_celery_metrics(
     )
 
     queue_depths: dict[str, int] = {}
+    queue_depths_healthy = (
+        client is not None and bool(configured_queues)
+    )
+    queue_depth_errors: dict[str, str] = {}
 
     if client is not None:
         for queue_name in configured_queues:
@@ -883,11 +1056,21 @@ def collect_celery_metrics(
                 )
 
             try:
-                queue_depths[queue_name] = _to_int(
-                    client.llen(queue_name)
-                )
-            except Exception:
-                queue_depths[queue_name] = 0
+                raw_depth = client.llen(queue_name)
+
+                if (
+                    isinstance(raw_depth, bool)
+                    or not isinstance(raw_depth, int)
+                    or raw_depth < 0
+                ):
+                    raise ValueError(
+                        "Redis LLEN returned an invalid queue depth"
+                    )
+
+                queue_depths[queue_name] = raw_depth
+            except Exception as exc:
+                queue_depths_healthy = False
+                queue_depth_errors[queue_name] = type(exc).__name__
 
     long_running_tasks = (
         _find_long_running_tasks(
@@ -945,6 +1128,7 @@ def collect_celery_metrics(
                         )
                     ),
                     "runtime_ms_total": runtime_total,
+                    **_queue_age_metric_fields(values),
                     "average_runtime_ms": (
                         runtime_total / executed
                         if executed
@@ -975,6 +1159,7 @@ def collect_celery_metrics(
         "healthy": (
             broker_healthy
             and worker_count > 0
+            and queue_depths_healthy
         ),
         "broker_healthy": broker_healthy,
         "workers_healthy": (
@@ -997,6 +1182,8 @@ def collect_celery_metrics(
         "scheduled_tasks": scheduled_tasks,
         "worker_utilization_percent": utilization,
         "queue_depths": queue_depths,
+        "queue_depths_healthy": queue_depths_healthy,
+        "queue_depth_errors": queue_depth_errors,
         "registered_task_counts": {
             worker: len(tasks)
             for worker, tasks in (

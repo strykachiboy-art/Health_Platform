@@ -1,0 +1,26 @@
+﻿ M backend/app/config.py
+ M backend/app/core/auth/user/routes/auth_routes.py
+ M backend/app/core/observability/celery_metrics.py
+ M backend/app/modules/billing/routes/billing_route.py
+ M backend/app/modules/billing/services/gateways/flutterwave_gateway.py
+ M backend/app/modules/billing/services/gateways/paystack_gateway.py
+ M backend/app/tests/core/observability/test_celery_metrics.py
+ M compose.yaml
+ M deployment/nginx/nginx.conf
+ M deployment/nginx/nginx.phase6.conf
+ M deployment/nginx/nginx.phase9.conf
+?? apply_hie_bounded_dns_patch.ps1
+?? backend/app/tests/core/auth/user/test_google_oauth_rate_limits.py
+?? backend/app/tests/modules/billing/gateways/test_flutterwave_redirect_policy.py
+?? backend/app/tests/modules/billing/gateways/test_paystack_redirect_policy.py
+?? backend/app/tests/modules/billing/test_payment_webhook_rate_limit.py
+?? mobile/android/build/reports/problems/problems-report.html
+?? phase19-slice3a-maintenance-trigger.ps1
+?? testing/results/system-mixed-phase0-10u2r30-20261018-204454-53207e07-infrastructure.txt
+?? testing/results/system-mixed-phase0-10u2r30-20261018-204454-53207e07-proxy-audit.stderr.tmp
+?? testing/results/system-mixed-phase0-10u2r30-20261018-204454-53207e07-proxy-audit.stdout.tmp
+?? testing/results/system-mixed-phase0-10u2r30-20261018-204454-53207e07.json
+?? testing/results/system-mixed-phase0-10u2r30-20261018-204454-53207e07_locust_exceptions.csv
+?? testing/results/system-mixed-phase0-10u2r30-20261018-204454-53207e07_locust_failures.csv
+?? testing/results/system-mixed-phase0-10u2r30-20261018-204454-53207e07_locust_stats.csv
+?? testing/results/system-mixed-phase0-10u2r30-20261018-204454-53207e07_locust_stats_history.csv

@@ -134,6 +134,12 @@ class Config:
     RATELIMIT_STORAGE_URI = REDIS_URL
 
     RATELIMIT_HEADERS_ENABLED = True
+    # Configurable per-IP ceiling for the public payment-provider webhook.
+    # Tune against observed provider delivery bursts before deployment.
+    PAYMENT_WEBHOOK_RATE_LIMIT = os.environ.get(
+        "PAYMENT_WEBHOOK_RATE_LIMIT",
+        "300 per minute",
+    )
 
     # ------------------------------------------------------------------
     # HTTP Security

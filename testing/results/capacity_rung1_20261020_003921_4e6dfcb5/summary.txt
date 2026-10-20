@@ -1,0 +1,15 @@
+﻿run_id=system-mixed-capacity-rung1-20261019T223921Z-4e6dfcb5
+status=FAILED_OR_INCOMPLETE
+git_branch=feat/hie-endpoint-allowlist-enforcement
+git_head=a2d7695fbf7434e42326d67739f7abf910c4b77a
+worktree_dirty=True
+locust_exit_code=
+locust_requests=38
+locust_failures=0
+server_run_id_log_lines=38
+server_performance_record_lines=38
+resource_guard_triggered=False
+http_load_started=True
+source_files_modified_by_runner=NO
+git_commit=NOT_PERFORMED
+error=

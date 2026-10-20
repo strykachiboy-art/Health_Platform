@@ -222,6 +222,12 @@ def google_mobile_login():
 
 
 @auth_bp.get("/google")
+@limiter.limit(
+    lambda: current_app.config.get(
+        "AUTH_GOOGLE_RATE_LIMIT",
+        "10 per minute",
+    )
+)
 def google_login():
     try:
         authorization_url, state = (
@@ -247,6 +253,12 @@ def google_login():
 
 
 @auth_bp.get("/google/callback")
+@limiter.limit(
+    lambda: current_app.config.get(
+        "AUTH_GOOGLE_RATE_LIMIT",
+        "10 per minute",
+    )
+)
 def google_callback():
     google_error = request.args.get(
         "error"

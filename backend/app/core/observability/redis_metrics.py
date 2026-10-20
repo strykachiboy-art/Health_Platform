@@ -24,6 +24,73 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _non_negative_int(value: Any) -> int | None:
+    """Parse capacity integers without converting invalid values to zero."""
+    if type(value) is int:
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized and normalized.isascii() and normalized.isdecimal():
+            return int(normalized)
+    return None
+
+
+def _collect_memory_capacity_metrics(
+    memory_info: dict[str, Any],
+    memory_config: dict[str, Any],
+    *,
+    config_error_type: str | None = None,
+) -> dict[str, Any]:
+    """Report a Redis memory limit separately from Redis connectivity."""
+    used_memory = _non_negative_int(memory_info.get("used_memory"))
+    max_memory = _non_negative_int(memory_config.get("maxmemory"))
+
+    raw_policy = memory_config.get("maxmemory-policy")
+    memory_policy = (
+        raw_policy.strip().lower()
+        if isinstance(raw_policy, str) and raw_policy.strip()
+        else None
+    )
+
+    if config_error_type is not None:
+        reason = "redis_capacity_config_unavailable"
+    elif used_memory is None and max_memory is None:
+        reason = "invalid_used_memory_and_maxmemory"
+    elif used_memory is None:
+        reason = "invalid_used_memory"
+    elif max_memory is None:
+        reason = "invalid_maxmemory"
+    elif memory_policy is None:
+        reason = "invalid_maxmemory_policy"
+    else:
+        reason = "ok"
+
+    usage_ratio = None
+    remaining_bytes = None
+
+    # maxmemory=0 means no Redis-level memory limit is configured.
+    if (
+        used_memory is not None
+        and max_memory is not None
+        and max_memory > 0
+    ):
+        usage_ratio = used_memory / max_memory
+        remaining_bytes = max(0, max_memory - used_memory)
+
+    return {
+        "memory_capacity_metrics_healthy": reason == "ok",
+        "memory_capacity_metrics_reason": reason,
+        "max_memory_bytes": max_memory,
+        "max_memory_policy": memory_policy,
+        "memory_limit_configured": (
+            max_memory > 0 if max_memory is not None else None
+        ),
+        "memory_limit_usage_ratio": usage_ratio,
+        "memory_limit_remaining_bytes": remaining_bytes,
+        "memory_capacity_config_error_type": config_error_type,
+    }
+
+
 def _collect_keyspace_metrics(
     info: dict[str, Any],
 ) -> dict[str, int]:
@@ -110,6 +177,24 @@ def collect_redis_metrics(
     stats_info = redis.info("stats")
     cpu_info = redis.info("cpu")
 
+    # Capacity settings can be inaccessible under Redis ACLs. Record that
+    # limitation without pretending capacity data is complete.
+    memory_config_error_type = None
+    try:
+        memory_config = redis.config_get("maxmemory*")
+        if not isinstance(memory_config, dict):
+            memory_config = {}
+            memory_config_error_type = "InvalidConfigResult"
+    except Exception as exc:
+        memory_config = {}
+        memory_config_error_type = type(exc).__name__
+
+    memory_capacity_metrics = _collect_memory_capacity_metrics(
+        memory_info,
+        memory_config,
+        config_error_type=memory_config_error_type,
+    )
+
     keyspace_metrics = _collect_keyspace_metrics(
         server_info
     )
@@ -181,6 +266,7 @@ def collect_redis_metrics(
                 "mem_fragmentation_ratio"
             )
         ),
+        **memory_capacity_metrics,
         "instantaneous_ops_per_sec": _to_int(
             stats_info.get(
                 "instantaneous_ops_per_sec"

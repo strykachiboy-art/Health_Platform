@@ -16,6 +16,14 @@ from app.modules.billing.services.gateways.base_gateway import (
 )
 
 
+def _is_redirect_response(response: requests.Response) -> bool:
+    status_code = getattr(response, "status_code", None)
+    return (
+        isinstance(status_code, int)
+        and not isinstance(status_code, bool)
+        and 300 <= status_code < 400
+    )
+
 class FlutterwaveGateway(PaymentGatewayBase):
     BASE_URL = "https://api.flutterwave.com/v3"
 
@@ -190,12 +198,18 @@ class FlutterwaveGateway(PaymentGatewayBase):
                 headers=self._headers(),
                 json=payload,
                 timeout=30,
+                allow_redirects=False,
             )
         except requests.RequestException as exc:
             raise GatewayUnknownOutcomeError(
                 "Flutterwave payment initialization "
                 f"failed: {exc}"
             ) from exc
+
+        if _is_redirect_response(response):
+            raise GatewayUnknownOutcomeError(
+                "Flutterwave payment initialization returned an unexpected redirect"
+            )
 
         try:
             response_data = response.json()
@@ -263,12 +277,18 @@ class FlutterwaveGateway(PaymentGatewayBase):
                 f"{transaction_id}/verify",
                 headers=self._headers(),
                 timeout=30,
+                allow_redirects=False,
             )
         except requests.RequestException as exc:
             raise RuntimeError(
                 "Flutterwave payment verification "
                 f"failed: {exc}"
             ) from exc
+
+        if _is_redirect_response(response):
+            raise RuntimeError(
+                "Flutterwave payment verification returned an unexpected redirect"
+            )
 
         try:
             response_data = response.json()

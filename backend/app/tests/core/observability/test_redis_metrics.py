@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -9,6 +10,10 @@ from app.core.observability import redis_metrics
 
 def _redis_mock() -> Mock:
     redis = Mock()
+    redis.config_get.return_value = {
+        "maxmemory": "0",
+        "maxmemory-policy": "noeviction",
+    }
 
     redis.info.side_effect = [
         {
@@ -84,6 +89,13 @@ def test_collect_redis_metrics_returns_core_metrics():
     assert result["used_memory_peak_bytes"] == 2048
     assert result["used_memory_rss_bytes"] == 4096
     assert result["memory_fragmentation_ratio"] == 1.25
+    assert result["max_memory_bytes"] == 0
+    assert result["max_memory_policy"] == "noeviction"
+    assert result["memory_limit_configured"] is False
+    assert result["memory_limit_usage_ratio"] is None
+    assert result["memory_limit_remaining_bytes"] is None
+    assert result["memory_capacity_metrics_healthy"] is True
+    assert result["memory_capacity_metrics_reason"] == "ok"
 
     assert result["instantaneous_ops_per_sec"] == 75
     assert result["total_commands_processed"] == 10000
@@ -91,6 +103,118 @@ def test_collect_redis_metrics_returns_core_metrics():
     assert result["rejected_connections"] == 3
     assert result["evicted_keys"] == 4
     assert result["expired_keys"] == 15
+
+
+def test_collect_redis_metrics_calculates_memory_limit_utilization():
+    redis = _redis_mock()
+    redis.config_get.return_value = {
+        "maxmemory": "8192",
+        "maxmemory-policy": "allkeys-lru",
+    }
+
+    result = redis_metrics.collect_redis_metrics(client=redis)
+
+    assert result["memory_capacity_metrics_healthy"] is True
+    assert result["max_memory_bytes"] == 8192
+    assert result["max_memory_policy"] == "allkeys-lru"
+    assert result["memory_limit_configured"] is True
+    assert result["memory_limit_usage_ratio"] == pytest.approx(0.125)
+    assert result["memory_limit_remaining_bytes"] == 7168
+
+
+@pytest.mark.parametrize(
+    ("config", "expected_reason"),
+    [
+        ({"maxmemory-policy": "noeviction"}, "invalid_maxmemory"),
+        (
+            {"maxmemory": "unlimited", "maxmemory-policy": "noeviction"},
+            "invalid_maxmemory",
+        ),
+        (
+            {"maxmemory": "-1", "maxmemory-policy": "noeviction"},
+            "invalid_maxmemory",
+        ),
+        ({"maxmemory": "8192"}, "invalid_maxmemory_policy"),
+    ],
+)
+def test_collect_redis_metrics_marks_invalid_capacity_config_unhealthy(
+    config, expected_reason
+):
+    redis = _redis_mock()
+    redis.config_get.return_value = config
+
+    result = redis_metrics.collect_redis_metrics(client=redis)
+
+    assert result["healthy"] is True
+    assert result["memory_capacity_metrics_healthy"] is False
+    assert result["memory_capacity_metrics_reason"] == expected_reason
+
+    if expected_reason == "invalid_maxmemory_policy":
+        assert result["max_memory_bytes"] == 8192
+        assert result["memory_limit_usage_ratio"] == pytest.approx(0.125)
+    else:
+        assert result["max_memory_bytes"] is None
+        assert result["memory_limit_usage_ratio"] is None
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    [None, -1, True, 1.5, "NaN", "1.5"],
+)
+def test_collect_redis_metrics_marks_invalid_used_memory(invalid_value):
+    redis = _redis_mock()
+    responses = list(redis.info.side_effect)
+    responses[1]["used_memory"] = invalid_value
+    redis.info.side_effect = responses
+
+    result = redis_metrics.collect_redis_metrics(client=redis)
+
+    assert result["healthy"] is True
+    assert result["memory_capacity_metrics_healthy"] is False
+    assert result["memory_capacity_metrics_reason"] == "invalid_used_memory"
+    assert result["memory_limit_usage_ratio"] is None
+    assert result["memory_limit_remaining_bytes"] is None
+
+
+def test_collect_redis_metrics_handles_restricted_capacity_config():
+    redis = _redis_mock()
+    redis.config_get.side_effect = PermissionError(
+        "private configuration diagnostic"
+    )
+
+    result = redis_metrics.collect_redis_metrics(client=redis)
+
+    assert result["healthy"] is True
+    assert result["memory_capacity_metrics_healthy"] is False
+    assert (
+        result["memory_capacity_metrics_reason"]
+        == "redis_capacity_config_unavailable"
+    )
+    assert result["memory_capacity_config_error_type"] == "PermissionError"
+    assert "private configuration diagnostic" not in repr(result)
+
+
+def test_collect_redis_metrics_propagates_redis_command_failure():
+    redis = _redis_mock()
+    redis.ping.side_effect = TimeoutError("private Redis diagnostic")
+
+    with pytest.raises(TimeoutError):
+        redis_metrics.collect_redis_metrics(client=redis)
+
+    redis.info.assert_not_called()
+
+
+def test_collect_redis_metrics_timestamp_is_current_and_timezone_aware():
+    redis = _redis_mock()
+    before = datetime.now(timezone.utc)
+
+    result = redis_metrics.collect_redis_metrics(client=redis)
+
+    after = datetime.now(timezone.utc)
+    observed_at = datetime.fromisoformat(result["timestamp"])
+
+    assert observed_at.tzinfo is not None
+    assert before <= observed_at <= after
 
 
 def test_collect_redis_metrics_calculates_cache_hit_ratio():

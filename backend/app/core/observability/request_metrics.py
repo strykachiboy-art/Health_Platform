@@ -6,6 +6,9 @@ import time
 from flask import Flask, g, request
 
 from app import extensions
+from app.core.observability.api_request_metrics import (
+    record_api_request_metric,
+)
 from app.core.observability.failure_events import (
     record_failure_event,
 )
@@ -110,6 +113,18 @@ def init_request_metrics(app: Flask) -> None:
 
         if request.url_rule is not None:
             route = request.url_rule.rule
+
+        # Shared telemetry is best-effort; metric failures must not affect
+        # an API response.
+        try:
+            record_api_request_metric(
+                client=extensions.redis_client,
+                route=route,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            pass
 
         response_size_bytes = (
             response.calculate_content_length()

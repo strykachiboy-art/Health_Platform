@@ -23,6 +23,9 @@ from app.core.observability import (
     init_db_metrics,
     init_request_metrics,
 )
+from app.core.autoscaling.drain_state import (
+    init_backend_drain,
+)
 from app.core.observability.request_context import (
     init_request_context,
 )
@@ -186,6 +189,7 @@ def create_app(config_name=None):
     init_request_context(app)
     init_tracing(app)
     init_request_metrics(app)
+    init_backend_drain(app)
 
     with app.app_context():
         from app import models_registry  # noqa: F401

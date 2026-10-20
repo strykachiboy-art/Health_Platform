@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from flask import request, session
+
+from app.core.autoscaling.drain_state import (
+    reserve_socket_connection,
+    release_socket_connection,
+)
 from flask_jwt_extended import decode_token
 from flask_socketio import emit, join_room, leave_room
 
@@ -160,6 +165,15 @@ def _get_conversation_id(
     namespace=CHAT_NAMESPACE,
 )
 def handle_connect(auth=None):
+    sid = request.sid
+
+    # Reserve the connection before authentication to close the race where
+    # a drain begins while the connection handler is still executing.
+    if not reserve_socket_connection(sid):
+        return False
+
+    session["backend_drain_socket_tracked"] = True
+
     try:
         user_id, clinic_id = _authenticate_socket(
             auth
@@ -181,12 +195,14 @@ def handle_connect(auth=None):
                 "user_id": user_id,
                 "clinic_id": clinic_id,
             },
-            room=request.sid,
+            room=sid,
         )
 
         return True
 
     except Exception:
+        session.pop("backend_drain_socket_tracked", None)
+        release_socket_connection(sid)
         return False
 
 
@@ -204,6 +220,9 @@ def handle_disconnect():
         "chat_clinic_id",
         None,
     )
+
+    if session.pop("backend_drain_socket_tracked", False):
+        release_socket_connection(request.sid)
 
 
 @socketio.on(
