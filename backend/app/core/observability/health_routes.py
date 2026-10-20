@@ -119,6 +119,18 @@ def liveness():
 
 @health_bp.get("/ready")
 def readiness():
+    state = current_app.extensions.get(DRAIN_STATE_KEY)
+    if (
+        isinstance(state, BackendDrainState)
+        and state.snapshot()["draining"]
+    ):
+        return jsonify(
+            {
+                "success": False,
+                "status": "draining",
+            }
+        ), 503
+
     result = health.collect_readiness()
 
     if result["ready"]:

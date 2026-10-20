@@ -181,3 +181,45 @@ def test_init_backend_drain_is_idempotent(monkeypatch):
     second = init_backend_drain(app)
 
     assert first is second
+
+def test_readiness_reports_not_ready_while_draining(monkeypatch):
+    app = make_app(monkeypatch)
+
+    # Isolate the readiness contract from the database/Redis state of
+    # this unit-test app. The real dependency readiness checks stay intact.
+    monkeypatch.setattr(
+        "app.core.observability.health.collect_readiness",
+        lambda: {
+            "timestamp": "test",
+            "ready": True,
+            "database": {"healthy": True},
+            "redis": {"healthy": True},
+            "backup_encryption": {"healthy": True},
+        },
+    )
+
+    client = app.test_client()
+
+    ready_before = client.get("/health/ready")
+    assert ready_before.status_code == 200
+    assert ready_before.json["status"] == "ready"
+
+    drain = client.post("/health/drain", headers=bearer())
+    assert drain.status_code == 200
+    assert drain.json["draining"] is True
+
+    ready_during = client.get("/health/ready")
+    assert ready_during.status_code == 503
+    assert ready_during.json["status"] == "draining"
+
+    # Liveness and drain-status must stay reachable while draining.
+    live = client.get("/health/live")
+    assert live.status_code == 200
+
+    status = client.get(
+        "/health/drain-status",
+        headers=bearer(),
+    )
+    assert status.status_code == 200
+    assert status.json["draining"] is True
+    assert status.json["ready_for_retirement"] is True
