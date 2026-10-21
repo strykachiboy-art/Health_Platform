@@ -68,6 +68,7 @@ def _invoice_response(
     patient_id=10,
     appointment_id=None,
     invoice_number="INV-1-20260907-ABC12345",
+    currency="NGN",
     total_amount="100.00",
     amount_paid="0.00",
     status=InvoiceStatus.ISSUED,
@@ -85,6 +86,7 @@ def _invoice_response(
         patient_id=patient_id,
         appointment_id=appointment_id,
         invoice_number=invoice_number,
+        currency=currency,
         total_amount=total_amount,
         amount_paid=amount_paid,
         status=status,
@@ -317,6 +319,7 @@ def test_create_invoice_success(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": 20,
             "appointment_id": 30,
             "due_date": "2026-09-30",
@@ -397,6 +400,7 @@ def test_create_invoice_uses_authenticated_clinic(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": 20,
             "items": [
                 {
@@ -430,6 +434,7 @@ def test_create_invoice_rejects_invalid_payload(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": -1,
             "items": [],
         },
@@ -461,6 +466,7 @@ def test_create_invoice_rejects_missing_items(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": 20,
         },
     )
@@ -490,6 +496,7 @@ def test_create_invoice_rejects_invalid_item_quantity(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": 20,
             "items": [
                 {
@@ -522,6 +529,7 @@ def test_create_invoice_rejects_negative_unit_price(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": 20,
             "items": [
                 {
@@ -554,6 +562,7 @@ def test_create_invoice_rejects_unknown_field(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": 20,
             "unknown": "blocked",
             "items": [
@@ -626,6 +635,7 @@ def test_create_invoice_returns_domain_error(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": 20,
             "items": [
                 {
@@ -1531,6 +1541,7 @@ def test_create_invoice_forwards_idempotency_key_and_authenticated_user(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": 20,
             "items": [
                 {
@@ -1583,6 +1594,7 @@ def test_create_invoice_rejects_blank_idempotency_key(
         "/api/v1/billing/invoices",
         headers=headers,
         json={
+            "currency": "NGN",
             "patient_id": 20,
             "items": [
                 {

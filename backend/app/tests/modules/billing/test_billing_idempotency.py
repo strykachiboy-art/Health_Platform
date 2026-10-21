@@ -92,6 +92,7 @@ def test_create_invoice_idempotency_replays_and_conflicts(
     payload = {
         "clinic_id": clinic.id,
         "patient_id": patient.id,
+        "currency": "NGN",
         "items": [
             {
                 "description": "Consultation",
@@ -194,6 +195,7 @@ def test_record_payment_idempotency_replays_and_conflicts(
         invoice = billing_service.create_invoice(
             clinic_id=clinic.id,
             patient_id=patient.id,
+            currency="NGN",
             items=[
                 {
                     "description": "Consultation",

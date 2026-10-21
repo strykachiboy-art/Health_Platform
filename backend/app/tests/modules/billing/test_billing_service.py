@@ -1164,6 +1164,7 @@ def test_create_invoice_success(
         invoice = billing_service.create_invoice(
             clinic_id=clinic.id,
             patient_id=patient.id,
+            currency="NGN",
             items=[
                 {
                     "description": "Consultation",
@@ -1287,6 +1288,7 @@ def test_create_invoice_with_appointment(
         invoice = billing_service.create_invoice(
             clinic_id=clinic.id,
             patient_id=patient.id,
+            currency="NGN",
             appointment_id=appointment.id,
             items=[
                 {
@@ -1329,6 +1331,7 @@ def test_create_invoice_requires_insurance_provider_for_claim(
             billing_service.create_invoice(
                 clinic_id=clinic.id,
                 patient_id=patient.id,
+                currency="NGN",
                 is_insurance_claim=True,
                 items=[
                     {
@@ -1359,6 +1362,7 @@ def test_create_invoice_normalizes_insurance_provider(
         invoice = billing_service.create_invoice(
             clinic_id=clinic.id,
             patient_id=patient.id,
+            currency="NGN",
             is_insurance_claim=True,
             insurance_provider="  NHIA  ",
             items=[
@@ -1395,6 +1399,7 @@ def test_create_invoice_clears_provider_for_non_insurance_claim(
         invoice = billing_service.create_invoice(
             clinic_id=clinic.id,
             patient_id=patient.id,
+            currency="NGN",
             is_insurance_claim=False,
             insurance_provider=(
                 "Private Insurance"
@@ -1434,6 +1439,7 @@ def test_create_invoice_rejects_non_boolean_insurance_flag(
             billing_service.create_invoice(
                 clinic_id=clinic.id,
                 patient_id=patient.id,
+                currency="NGN",
                 is_insurance_claim="true",
                 items=[
                     {
@@ -1725,6 +1731,7 @@ def _make_payment_invoice(
         invoice_number=(
             "INV-10-20260907-ABC12345"
         ),
+        currency="NGN",
         total_amount=total,
         amount_paid=paid,
         status=status,

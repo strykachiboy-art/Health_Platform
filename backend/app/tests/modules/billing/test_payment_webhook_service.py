@@ -71,11 +71,13 @@ def _make_invoice(
     *,
     total=Decimal("100.00"),
     paid=Decimal("0.00"),
+    currency="NGN",
 ):
     invoice = Invoice(
         clinic_id=clinic.id,
         patient_id=patient.id,
         invoice_number=f"WEBHOOK-{clinic.id}-1",
+        currency=currency,
         total_amount=total,
         amount_paid=paid,
         status=(

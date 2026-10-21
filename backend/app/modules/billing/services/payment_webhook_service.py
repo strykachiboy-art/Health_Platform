@@ -528,6 +528,24 @@ def _mark_payment_successful(
             f"Invoice {payment.invoice_id} not found"
         )
 
+    if (
+        not isinstance(invoice.currency, str)
+        or not invoice.currency.strip()
+        or not isinstance(payment.currency, str)
+        or not payment.currency.strip()
+    ):
+        raise ConflictError(
+            "Invoice or payment currency is unknown; cannot finalize payment"
+        )
+
+    if (
+        invoice.currency.strip().upper()
+        != payment.currency.strip().upper()
+    ):
+        raise ConflictError(
+            "Payment currency does not match the invoice currency"
+        )
+
     if invoice.status == InvoiceStatus.CANCELLED:
         raise ConflictError(
             "Cannot finalize a payment for a cancelled invoice"

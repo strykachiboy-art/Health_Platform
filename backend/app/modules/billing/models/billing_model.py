@@ -66,6 +66,12 @@ class Invoice(db.Model):
         index=True,
     )
 
+    # Nullable only for legacy invoices whose currency is unknown.
+    currency = db.Column(
+        db.String(3),
+        nullable=True,
+    )
+
     total_amount = db.Column(
         db.Numeric(10, 2),
         nullable=False,

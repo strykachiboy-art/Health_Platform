@@ -167,6 +167,26 @@ def _normalize_optional_string(
     return value
 
 
+def _normalize_currency(value):
+    if not isinstance(value, str):
+        raise ValidationError(
+            "Currency must be explicitly specified"
+        )
+
+    value = value.strip().upper()
+
+    if (
+        len(value) != 3
+        or not value.isascii()
+        or not value.isalpha()
+    ):
+        raise ValidationError(
+            "Currency must be a 3-letter ASCII code"
+        )
+
+    return value
+
+
 def _validate_boolean(
     value,
     field_name,
@@ -431,7 +451,9 @@ def create_invoice(
     insurance_provider=None,
     idempotency_key=None,
     idempotency_user_id=None,
+    currency=None,
 ):
+    currency = _normalize_currency(currency)
     idempotency_record = None
 
     if idempotency_key is not None:
@@ -452,6 +474,7 @@ def create_invoice(
                 "due_date": due_date,
                 "is_insurance_claim": is_insurance_claim,
                 "insurance_provider": insurance_provider,
+                "currency": currency,
             },
         )
 
@@ -552,6 +575,7 @@ def create_invoice(
                 clinic_id
             )
         ),
+        currency=currency,
         status=InvoiceStatus.ISSUED,
         due_date=due_date,
         is_insurance_claim=(
@@ -615,6 +639,7 @@ def create_invoice(
                 else None
             ),
             "total_amount": str(total),
+            "currency": currency,
             "amount_paid": str(
                 invoice.amount_paid
             ),
@@ -799,6 +824,24 @@ def record_payment(
                     "Idempotency record references another clinic"
                 )
 
+            if (
+                not isinstance(existing_invoice.currency, str)
+                or not existing_invoice.currency.strip()
+                or not isinstance(existing_payment.currency, str)
+                or not existing_payment.currency.strip()
+            ):
+                raise ConflictError(
+                    "Invoice or payment currency is unknown; cannot replay payment"
+                )
+
+            if (
+                _normalize_currency(existing_invoice.currency)
+                != _normalize_currency(existing_payment.currency)
+            ):
+                raise ConflictError(
+                    "Payment currency does not match the invoice currency"
+                )
+
             return existing_payment
 
     _validate_positive_id(
@@ -819,6 +862,16 @@ def record_payment(
         clinic_id=clinic_id,
         lock=True,
     )
+
+    if (
+        not isinstance(invoice.currency, str)
+        or not invoice.currency.strip()
+    ):
+        raise ConflictError(
+            "Invoice currency is unknown; cannot record payment"
+        )
+
+    currency = _normalize_currency(invoice.currency)
 
     if (
         invoice.status
@@ -929,6 +982,7 @@ def record_payment(
     payment = Payment(
         invoice_id=invoice.id,
         amount=amount,
+        currency=currency,
         method=method,
         status=PaymentStatus.SUCCESSFUL,
         gateway=gateway,
@@ -973,6 +1027,7 @@ def record_payment(
             "amount_paid": str(
                 invoice.amount_paid
             ),
+            "currency": currency,
             "status": invoice.status.value,
             "payment_method": method.value,
             "payment_gateway": (

@@ -113,6 +113,12 @@ class CreateInvoiceRequest(BaseModel):
         gt=0,
     )
 
+    currency: str = Field(
+        ...,
+        min_length=3,
+        max_length=3,
+    )
+
     appointment_id: StrictInt | None = Field(
         default=None,
         gt=0,
@@ -131,6 +137,25 @@ class CreateInvoiceRequest(BaseModel):
         ...,
         min_length=1,
     )
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(
+        cls,
+        value: str,
+    ) -> str:
+        value = value.strip().upper()
+
+        if (
+            len(value) != 3
+            or not value.isascii()
+            or not value.isalpha()
+        ):
+            raise ValueError(
+                "Currency must be a 3-letter ASCII code"
+            )
+
+        return value
 
     @field_validator("insurance_provider")
     @classmethod
@@ -191,6 +216,7 @@ class InvoiceResponse(BaseModel):
     appointment_id: StrictInt | None
 
     invoice_number: str
+    currency: str | None = None
 
     total_amount: Decimal
     amount_paid: Decimal
@@ -221,6 +247,7 @@ class OutstandingInvoiceResponse(BaseModel):
     appointment_id: StrictInt | None
 
     invoice_number: str
+    currency: str | None = None
 
     total_amount: Decimal
     amount_paid: Decimal
@@ -460,6 +487,7 @@ class PaymentResponse(BaseModel):
     invoice_id: StrictInt
 
     amount: Decimal
+    currency: str | None = None
 
     method: PaymentMethod
     status: PaymentStatus

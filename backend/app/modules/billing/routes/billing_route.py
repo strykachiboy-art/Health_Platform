@@ -322,6 +322,7 @@ def create_invoice_route():
                 clinic_id=clinic_id,
                 patient_id=payload.patient_id,
                 actor_user_id=_current_user().id,
+                currency=payload.currency,
                 appointment_id=payload.appointment_id,
                 due_date=payload.due_date,
                 is_insurance_claim=(
@@ -343,6 +344,7 @@ def create_invoice_route():
                 clinic_id=clinic_id,
                 patient_id=payload.patient_id,
                 actor_user_id=current_user.id,
+                currency=payload.currency,
                 appointment_id=payload.appointment_id,
                 due_date=payload.due_date,
                 is_insurance_claim=(

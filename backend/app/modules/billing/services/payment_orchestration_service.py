@@ -91,7 +91,11 @@ def _normalize_currency(currency):
 
     currency = currency.strip().upper()
 
-    if len(currency) != 3 or not currency.isalpha():
+    if (
+        len(currency) != 3
+        or not currency.isascii()
+        or not currency.isalpha()
+    ):
         raise ValidationError(
             "Currency must be a 3-letter code"
         )
@@ -203,6 +207,27 @@ def _get_or_create_pending_payment(
                 "another clinic"
             )
 
+        if (
+            not isinstance(existing_invoice.currency, str)
+            or not existing_invoice.currency.strip()
+            or not isinstance(existing_payment.currency, str)
+            or not existing_payment.currency.strip()
+        ):
+            raise ConflictError(
+                "Invoice or payment currency is unknown; cannot replay payment"
+            )
+
+        invoice_currency = _normalize_currency(existing_invoice.currency)
+        payment_currency = _normalize_currency(existing_payment.currency)
+
+        if (
+            invoice_currency != payment_currency
+            or _normalize_currency(currency) != invoice_currency
+        ):
+            raise ConflictError(
+                "Payment currency does not match the invoice currency"
+            )
+
         return existing_payment, False
 
     _validate_positive_id(
@@ -223,6 +248,22 @@ def _get_or_create_pending_payment(
         clinic_id=clinic_id,
         lock=True,
     )
+
+    if (
+        not isinstance(invoice.currency, str)
+        or not invoice.currency.strip()
+    ):
+        raise ConflictError(
+            "Invoice currency is unknown; cannot initialize payment"
+        )
+
+    invoice_currency = _normalize_currency(invoice.currency)
+    currency = _normalize_currency(currency)
+
+    if currency != invoice_currency:
+        raise ValidationError(
+            "Payment currency must match the invoice currency"
+        )
 
     if invoice.status == InvoiceStatus.CANCELLED:
         raise ConflictError(
@@ -568,6 +609,24 @@ def _finalize_payment_success(
     if invoice is None:
         raise NotFoundError(
             f"Invoice {payment.invoice_id} not found"
+        )
+
+    if (
+        not isinstance(invoice.currency, str)
+        or not invoice.currency.strip()
+        or not isinstance(payment.currency, str)
+        or not payment.currency.strip()
+    ):
+        raise ConflictError(
+            "Invoice or payment currency is unknown; cannot finalize payment"
+        )
+
+    if (
+        _normalize_currency(invoice.currency)
+        != _normalize_currency(payment.currency)
+    ):
+        raise ConflictError(
+            "Payment currency does not match the invoice currency"
         )
 
     amount_paid = Decimal(
