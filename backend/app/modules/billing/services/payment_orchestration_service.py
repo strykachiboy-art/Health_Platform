@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
@@ -861,20 +862,111 @@ def _is_failed_provider_result(result):
     }
 
 
+STRIPE_IDEMPOTENCY_REPLAY_SAFE_WINDOW = timedelta(hours=22)
+
+
+def _stripe_idempotency_replay_is_safe(payment, *, now=None):
+    """Conservatively bound Stripe POST replay by local payment age.
+
+    Stripe may prune idempotency keys after at least 24 hours. The 22-hour
+    window leaves margin for clock skew and for the payment row being created
+    before the first request reaches Stripe. A missing or future timestamp
+    fails closed and permits only non-mutating recovery/search.
+    """
+    created_at = getattr(payment, "created_at", None)
+    if not isinstance(created_at, datetime):
+        return False
+
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None or current_time.utcoffset() is None:
+        current_time = current_time.replace(tzinfo=timezone.utc)
+    if created_at.tzinfo is None or created_at.utcoffset() is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+
+    age = current_time.astimezone(timezone.utc) - created_at.astimezone(timezone.utc)
+    return timedelta(0) <= age < STRIPE_IDEMPOTENCY_REPLAY_SAFE_WINDOW
+
+
 def _reconcile_pending_payment(
     *,
     clinic_id,
     payment,
     actor_user_id,
+    idempotency_key=None,
 ):
     gateway = get_payment_gateway(
         payment.gateway,
         clinic_id=clinic_id,
     )
 
+    recovered_verification_reference = None
+
+    if (
+        payment.gateway == PaymentGateway.STRIPE
+        and not payment.gateway_transaction_id
+    ):
+        recover_payment_intent_id = getattr(
+            gateway,
+            "recover_payment_intent_id",
+            None,
+        )
+
+        if callable(recover_payment_intent_id):
+            customer_email = None
+            invoice = getattr(payment, "invoice", None)
+
+            if invoice is None:
+                try:
+                    invoice = db.session.get(
+                        Invoice,
+                        payment.invoice_id,
+                    )
+                except Exception:
+                    invoice = None
+
+            if invoice is not None:
+                try:
+                    customer_email = _patient_email_for_invoice(invoice)
+                except Exception:
+                    customer_email = None
+
+            try:
+                recovered_transaction_id = recover_payment_intent_id(
+                    reference=payment.reference,
+                    amount=payment.amount,
+                    currency=payment.currency,
+                    customer_email=customer_email,
+                    idempotency_key=idempotency_key,
+                    clinic_id=clinic_id,
+                    invoice_id=payment.invoice_id,
+                    payment_id=payment.id,
+                    allow_idempotent_replay=(
+                        _stripe_idempotency_replay_is_safe(payment)
+                    ),
+                )
+            except Exception:
+                recovered_transaction_id = None
+
+            if (
+                not isinstance(recovered_transaction_id, str)
+                or not recovered_transaction_id.strip()
+            ):
+                return _outcome(
+                    payment,
+                    "pending",
+                    "Stripe PaymentIntent could not yet be recovered; payment remains pending",
+                )
+
+            # Do not persist or settle from recovery alone. This ID is only the
+            # locator for the subsequent, authoritative Stripe retrieval.
+            recovered_verification_reference = (
+                recovered_transaction_id.strip()
+            )
+
     try:
         verification_reference = (
-            _verification_reference(payment)
+            recovered_verification_reference
+            or _verification_reference(payment)
         )
 
         result = gateway.verify_payment(
@@ -1017,6 +1109,7 @@ def orchestrate_payment(
             clinic_id=clinic_id,
             payment=payment,
             actor_user_id=actor_user_id,
+            idempotency_key=idempotency_key,
         )
 
     gateway_client = get_payment_gateway(
@@ -1045,13 +1138,26 @@ def orchestrate_payment(
         invoice
     )
 
+    initialization_kwargs = {
+        "reference": payment.reference,
+        "amount": payment.amount,
+        "currency": currency,
+        "customer_email": customer_email,
+        "idempotency_key": idempotency_key,
+    }
+
+    if payment.gateway == PaymentGateway.STRIPE:
+        # Stable local identity makes Search API fallback unambiguous. These
+        # fields contain internal numeric identifiers, not patient data.
+        initialization_kwargs["metadata"] = {
+            "clinic_id": clinic_id,
+            "clinic_payment_id": payment.id,
+            "invoice_id": payment.invoice_id,
+        }
+
     try:
         result = gateway_client.initialize_payment(
-            reference=payment.reference,
-            amount=payment.amount,
-            currency=currency,
-            customer_email=customer_email,
-            idempotency_key=idempotency_key,
+            **initialization_kwargs,
         )
     except GatewayRejectedError as exc:
         payment = _finalize_payment_failure(

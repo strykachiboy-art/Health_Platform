@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -752,6 +753,279 @@ def test_initialize_payment_rejects_invalid_payment_intent(
             currency="USD",
             customer_email="user@example.com",
         )
+
+
+# ---------------------------------------------------------------------------
+# Unknown-outcome recovery
+# ---------------------------------------------------------------------------
+
+
+def test_recover_payment_intent_id_replays_original_idempotency_key(
+    gateway,
+    monkeypatch,
+):
+    intent = Mock()
+    intent.id = "pi_replayed_123"
+    intent.status = "succeeded"
+    intent.client_secret = "secret_replayed"
+
+    mock_create = Mock(return_value=intent)
+    monkeypatch.setattr(gateway, "_create_payment_intent", mock_create)
+
+    recovered = gateway.recover_payment_intent_id(
+        reference="REF-RECOVER",
+        amount=Decimal("125.50"),
+        currency="NGN",
+        customer_email="patient@example.com",
+        idempotency_key="original-idempotency-key",
+        clinic_id=7,
+        invoice_id=20,
+        payment_id=30,
+        allow_idempotent_replay=True,
+    )
+
+    assert recovered == "pi_replayed_123"
+    mock_create.assert_called_once()
+    params = mock_create.call_args.kwargs
+    assert params["idempotency_key"] == "original-idempotency-key"
+    assert params["metadata"] == {
+        "reference": "REF-RECOVER",
+        "clinic_id": "7",
+        "clinic_payment_id": "30",
+        "invoice_id": "20",
+    }
+
+
+def test_recover_payment_intent_id_falls_back_to_legacy_request_shape(
+    gateway,
+    monkeypatch,
+):
+    # Initialization wraps Stripe's explicit idempotency mismatch. Recovery
+    # must inspect the cause chain before trying the legacy request shape.
+    stripe_idempotency_error = stripe_gateway.stripe.IdempotencyError(
+        "Idempotency key reused with different parameters",
+        http_status=400,
+    )
+    wrapped_error = RuntimeError("wrapped Stripe rejection")
+    wrapped_error.__cause__ = stripe_idempotency_error
+
+    initialize = Mock(
+        side_effect=[
+            wrapped_error,
+            {"transaction_id": "pi_legacy_456"},
+        ]
+    )
+    search = Mock(return_value=None)
+    monkeypatch.setattr(gateway, "initialize_payment", initialize)
+    monkeypatch.setattr(gateway, "_search_payment_intent_id_for_payment", search)
+
+    recovered = gateway.recover_payment_intent_id(
+        reference="REF-LEGACY",
+        amount=Decimal("100"),
+        currency="USD",
+        customer_email="patient@example.com",
+        idempotency_key="legacy-idempotency-key",
+        clinic_id=7,
+        invoice_id=20,
+        payment_id=30,
+        allow_idempotent_replay=True,
+    )
+
+    assert recovered == "pi_legacy_456"
+    assert initialize.call_count == 2
+    assert initialize.call_args_list[0].kwargs["metadata"] == {
+        "clinic_id": 7,
+        "clinic_payment_id": 30,
+        "invoice_id": 20,
+    }
+    assert initialize.call_args_list[1].kwargs["metadata"] is None
+    search.assert_not_called()
+
+
+def test_search_payment_intent_requires_one_exact_local_match(
+    gateway,
+    monkeypatch,
+):
+    intent = SimpleNamespace(
+        id="pi_search_match",
+        amount=12550,
+        currency="ngn",
+        metadata={
+            "reference": "REF-SEARCH",
+            "clinic_id": "7",
+            "invoice_id": "20",
+            "clinic_payment_id": "30",
+        },
+    )
+    search = Mock(return_value=SimpleNamespace(data=[intent], has_more=False))
+    gateway._client = SimpleNamespace(
+        v1=SimpleNamespace(
+            payment_intents=SimpleNamespace(search=search),
+        ),
+    )
+
+    recovered = gateway._search_payment_intent_id_for_payment(
+        reference="REF-SEARCH",
+        amount=Decimal("125.50"),
+        currency="NGN",
+        clinic_id=7,
+        invoice_id=20,
+        payment_id=30,
+    )
+
+    assert recovered == "pi_search_match"
+    query = search.call_args.args[0]
+    assert query["limit"] == stripe_gateway.STRIPE_PAYMENT_INTENT_SEARCH_LIMIT
+    assert query["query"] == (
+        'metadata["clinic_id"]:"7" AND '
+        'metadata["clinic_payment_id"]:"30" AND '
+        'metadata["invoice_id"]:"20"'
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("metadata", {"reference": "WRONG-REFERENCE", "clinic_id": "7", "invoice_id": "20", "clinic_payment_id": "30"}),
+        ("metadata", {"reference": "REF-SEARCH", "clinic_id": "7", "invoice_id": "20", "clinic_payment_id": "999"}),
+        ("amount", 1),
+        ("currency", "usd"),
+    ],
+)
+def test_search_payment_intent_rejects_candidate_with_mismatched_identity_or_amount(
+    gateway,
+    field,
+    value,
+):
+    attributes = {
+        "id": "pi_wrong_match",
+        "amount": 12550,
+        "currency": "ngn",
+        "metadata": {
+            "reference": "REF-SEARCH",
+            "clinic_id": "7",
+            "invoice_id": "20",
+            "clinic_payment_id": "30",
+        },
+    }
+    attributes[field] = value
+    intent = SimpleNamespace(**attributes)
+    search = Mock(return_value=SimpleNamespace(data=[intent], has_more=False))
+    gateway._client = SimpleNamespace(
+        v1=SimpleNamespace(
+            payment_intents=SimpleNamespace(search=search),
+        ),
+    )
+
+    recovered = gateway._search_payment_intent_id_for_payment(
+        reference="REF-SEARCH",
+        amount=Decimal("125.50"),
+        currency="NGN",
+        clinic_id=7,
+        invoice_id=20,
+        payment_id=30,
+    )
+
+    assert recovered is None
+
+
+@pytest.mark.parametrize(
+    "data,has_more",
+    [
+        ([], False),
+        ([SimpleNamespace(id="pi_a"), SimpleNamespace(id="pi_b")], False),
+        ([SimpleNamespace(id="pi_a")], True),
+    ],
+)
+def test_search_payment_intent_fails_closed_for_miss_ambiguity_or_more_pages(
+    gateway,
+    monkeypatch,
+    data,
+    has_more,
+):
+    search = Mock(return_value=SimpleNamespace(data=data, has_more=has_more))
+    gateway._client = SimpleNamespace(
+        v1=SimpleNamespace(
+            payment_intents=SimpleNamespace(search=search),
+        ),
+    )
+
+    recovered = gateway._search_payment_intent_id_for_payment(
+        reference="REF-SEARCH",
+        amount=Decimal("100"),
+        currency="USD",
+        clinic_id=7,
+        invoice_id=20,
+        payment_id=30,
+    )
+
+    assert recovered is None
+
+
+def test_recover_payment_intent_id_does_not_legacy_replay_after_transient_error(
+    gateway,
+    monkeypatch,
+):
+    initialize = Mock(
+        side_effect=GatewayUnknownOutcomeError("Stripe network outcome is unknown")
+    )
+    search = Mock(return_value=None)
+    monkeypatch.setattr(gateway, "initialize_payment", initialize)
+    monkeypatch.setattr(gateway, "_search_payment_intent_id_for_payment", search)
+
+    recovered = gateway.recover_payment_intent_id(
+        reference="REF-TRANSIENT",
+        amount=Decimal("100"),
+        currency="USD",
+        customer_email="patient@example.com",
+        idempotency_key="original-idempotency-key",
+        clinic_id=7,
+        invoice_id=20,
+        payment_id=30,
+        allow_idempotent_replay=True,
+    )
+
+    assert recovered is None
+    initialize.assert_called_once()
+    assert initialize.call_args.kwargs["metadata"] == {
+        "clinic_id": 7,
+        "clinic_payment_id": 30,
+        "invoice_id": 20,
+    }
+    search.assert_called_once_with(
+        reference="REF-TRANSIENT",
+        amount=Decimal("100"),
+        currency="USD",
+        clinic_id=7,
+        invoice_id=20,
+        payment_id=30,
+    )
+
+
+def test_stale_payment_recovery_never_replays_create_request(
+    gateway,
+    monkeypatch,
+):
+    initialize = Mock(side_effect=AssertionError("stale recovery must not POST"))
+    search = Mock(return_value="pi_search_only")
+    monkeypatch.setattr(gateway, "initialize_payment", initialize)
+    monkeypatch.setattr(gateway, "_search_payment_intent_id_for_payment", search)
+
+    recovered = gateway.recover_payment_intent_id(
+        reference="REF-STALE",
+        amount=Decimal("100"),
+        currency="USD",
+        customer_email="patient@example.com",
+        idempotency_key="old-idempotency-key",
+        clinic_id=7,
+        invoice_id=20,
+        payment_id=30,
+        allow_idempotent_replay=False,
+    )
+
+    assert recovered == "pi_search_only"
+    initialize.assert_not_called()
+    search.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.core.enums.billing_enums import (
@@ -43,6 +44,9 @@ class FakeGateway:
         self.verify_error = verify_error
         self.initialize_calls = []
         self.verify_calls = []
+        self.recovery_calls = []
+        self.recovery_result = None
+        self.recovery_error = None
 
     def initialize_payment(self, **kwargs):
         self.initialize_calls.append(kwargs)
@@ -59,6 +63,14 @@ class FakeGateway:
             raise self.verify_error
 
         return self.verify_result
+
+    def recover_payment_intent_id(self, **kwargs):
+        self.recovery_calls.append(kwargs)
+
+        if self.recovery_error is not None:
+            raise self.recovery_error
+
+        return self.recovery_result
 
 
 def make_payment(
@@ -384,6 +396,107 @@ def test_initialization_forwards_idempotency_key(
     assert gateway.initialize_calls[0]["idempotency_key"] == (
         "provider-idempotency-1"
     )
+
+
+def test_stripe_idempotency_replay_window_fails_closed_for_old_or_missing_age():
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+
+    payment = make_payment(
+        gateway=PaymentGateway.STRIPE,
+        transaction_id=None,
+    )
+    payment.created_at = now - timedelta(hours=21)
+    assert orchestration._stripe_idempotency_replay_is_safe(payment, now=now)
+
+    payment.created_at = now - timedelta(hours=22)
+    assert not orchestration._stripe_idempotency_replay_is_safe(payment, now=now)
+
+    payment.created_at = None
+    assert not orchestration._stripe_idempotency_replay_is_safe(payment, now=now)
+
+    payment.created_at = now + timedelta(seconds=1)
+    assert not orchestration._stripe_idempotency_replay_is_safe(payment, now=now)
+
+
+def test_retry_pending_stripe_payment_recovers_id_then_verifies_before_settlement(
+    monkeypatch,
+):
+    payment = make_payment(
+        gateway=PaymentGateway.STRIPE,
+        reference="PAY-STRIPE-RECOVERY",
+        transaction_id=None,
+    )
+    now = datetime.now(timezone.utc)
+    payment.created_at = now - timedelta(minutes=5)
+
+    gateway = FakeGateway(
+        verify_result={
+            "provider": "stripe",
+            "reference": "PAY-STRIPE-RECOVERY",
+            "transaction_id": "pi_recovered_123",
+            "status": "succeeded",
+            "paid": True,
+            "amount": 100,
+            "currency": "NGN",
+        }
+    )
+    gateway.recovery_result = "pi_recovered_123"
+
+    successful_payment = make_payment(
+        status=PaymentStatus.SUCCESSFUL,
+        gateway=PaymentGateway.STRIPE,
+        reference="PAY-STRIPE-RECOVERY",
+        transaction_id="pi_recovered_123",
+    )
+
+    def persist_transaction(**kwargs):
+        payment.gateway_transaction_id = kwargs["gateway_transaction_id"]
+        return payment
+
+    monkeypatch.setattr(
+        orchestration,
+        "_get_or_create_pending_payment",
+        lambda **kwargs: (payment, False),
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "get_payment_gateway",
+        lambda *args, **kwargs: gateway,
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "_persist_provider_transaction",
+        persist_transaction,
+    )
+    monkeypatch.setattr(
+        orchestration,
+        "_finalize_payment_success",
+        lambda **kwargs: successful_payment,
+    )
+
+    result = orchestration.orchestrate_payment(
+        clinic_id=1,
+        invoice_id=10,
+        amount=100,
+        method="card",
+        gateway="stripe",
+        currency="NGN",
+        reference="PAY-STRIPE-RECOVERY",
+        idempotency_key="stripe-recovery-key",
+        idempotency_user_id=1,
+        actor_user_id=1,
+    )
+
+    assert result["outcome"] == "successful"
+    assert result["payment"] is successful_payment
+    assert len(gateway.recovery_calls) == 1
+    recovery_call = gateway.recovery_calls[0]
+    assert recovery_call["idempotency_key"] == "stripe-recovery-key"
+    assert recovery_call["allow_idempotent_replay"] is True
+    assert recovery_call["payment_id"] == payment.id
+    assert gateway.verify_calls == [{"reference": "pi_recovered_123"}]
+    assert payment.gateway_transaction_id == "pi_recovered_123"
+
 
 def test_provider_reference_mismatch_is_rejected_safely(
     monkeypatch,

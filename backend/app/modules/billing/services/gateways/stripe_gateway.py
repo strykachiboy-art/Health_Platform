@@ -14,6 +14,42 @@ from app.modules.billing.services.gateways.base_gateway import (
 
 STRIPE_HTTP_TIMEOUT_SECONDS = 30
 STRIPE_MAX_NETWORK_RETRIES = 0
+STRIPE_PAYMENT_INTENT_SEARCH_LIMIT = 100
+
+
+def _stripe_object_field(value: object, name: str, default=None):
+    if isinstance(value, dict):
+        return value.get(name, default)
+
+    getter = getattr(value, "get", None)
+    if callable(getter):
+        try:
+            return getter(name, default)
+        except (AttributeError, TypeError):
+            pass
+
+    return getattr(value, name, default)
+
+
+def _is_stripe_idempotency_error(error: BaseException) -> bool:
+    """Recognize Stripe's explicit idempotency-key parameter mismatch.
+
+    Gateway initialization wraps Stripe exceptions, so inspect the exception
+    cause/context chain instead of treating every wrapped failure as a mismatch.
+    """
+    error_type = getattr(stripe, "IdempotencyError", None)
+    if not isinstance(error_type, type):
+        return False
+
+    current = error
+    seen: set[int] = set()
+    while isinstance(current, BaseException) and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, error_type):
+            return True
+        current = current.__cause__ or current.__context__
+
+    return False
 
 
 def _build_stripe_http_client():
@@ -399,6 +435,179 @@ class StripeGateway(PaymentGatewayBase):
                 None,
             ),
         }
+
+    def _search_payment_intent_id_for_payment(
+        self,
+        *,
+        reference: str,
+        amount: Decimal,
+        currency: str,
+        clinic_id: int,
+        invoice_id: int,
+        payment_id: int,
+    ) -> str | None:
+        """Return only one exact local-payment match from Stripe Search.
+
+        Stripe Search is eventually consistent, so an empty, ambiguous,
+        paginated, or malformed response is a miss???not proof of failure.
+        The caller must retrieve and verify the candidate before settlement.
+        """
+        identifiers = (clinic_id, invoice_id, payment_id)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in identifiers
+        ):
+            return None
+
+        try:
+            reference = self._normalize_reference(reference)
+            currency = self._normalize_currency(currency)
+            expected_amount = self._to_smallest_unit(
+                Decimal(str(amount)),
+                currency,
+            )
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+        query = (
+            f'metadata["clinic_id"]:"{clinic_id}" AND '
+            f'metadata["clinic_payment_id"]:"{payment_id}" AND '
+            f'metadata["invoice_id"]:"{invoice_id}"'
+        )
+
+        response = self._client.v1.payment_intents.search(
+            {
+                "query": query,
+                "limit": STRIPE_PAYMENT_INTENT_SEARCH_LIMIT,
+            }
+        )
+
+        if _stripe_object_field(response, "has_more", False):
+            return None
+
+        results = _stripe_object_field(response, "data")
+        if not isinstance(results, (list, tuple)) or len(results) != 1:
+            return None
+
+        intent = results[0]
+        raw_metadata = _stripe_object_field(intent, "metadata", {}) or {}
+        try:
+            metadata = dict(raw_metadata)
+        except (TypeError, ValueError):
+            return None
+
+        if (
+            metadata.get("reference") != reference
+            or metadata.get("clinic_id") != str(clinic_id)
+            or metadata.get("clinic_payment_id") != str(payment_id)
+            or metadata.get("invoice_id") != str(invoice_id)
+        ):
+            return None
+
+        raw_amount = _stripe_object_field(intent, "amount")
+        if (
+            isinstance(raw_amount, bool)
+            or not isinstance(raw_amount, int)
+            or raw_amount != expected_amount
+        ):
+            return None
+
+        raw_currency = _stripe_object_field(intent, "currency")
+        if not isinstance(raw_currency, str) or raw_currency.lower() != currency:
+            return None
+
+        transaction_id = _stripe_object_field(intent, "id")
+        if not isinstance(transaction_id, str) or not transaction_id.strip():
+            return None
+
+        return transaction_id.strip()
+
+    def recover_payment_intent_id(
+        self,
+        *,
+        reference: str,
+        amount: Decimal,
+        currency: str,
+        customer_email: str | None,
+        idempotency_key: str | None,
+        clinic_id: int,
+        invoice_id: int,
+        payment_id: int,
+        allow_idempotent_replay: bool,
+    ) -> str | None:
+        """Recover the PaymentIntent locator without treating it as success.
+
+        Within the conservative age window, replay the same POST idempotency
+        key first. Try current metadata, then the legacy metadata shape used
+        before local payment identifiers were attached. Outside the window,
+        never repeat the POST: Search is read-only and may return a temporary
+        miss because Stripe Search is eventually consistent.
+        """
+        replay_key_is_valid = (
+            isinstance(idempotency_key, str)
+            and bool(idempotency_key.strip())
+        )
+
+        if (
+            allow_idempotent_replay is True
+            and replay_key_is_valid
+            and isinstance(customer_email, str)
+            and bool(customer_email.strip())
+        ):
+            tracked_metadata = {
+                "clinic_id": clinic_id,
+                "clinic_payment_id": payment_id,
+                "invoice_id": invoice_id,
+            }
+
+            # First replay the current request shape. The second shape supports
+            # a still-replayable request created before tracking metadata was
+            # added. Stripe rejects parameter mismatch for retained keys.
+            for replay_index, replay_metadata in enumerate(
+                (tracked_metadata, None)
+            ):
+                try:
+                    replay_result = self.initialize_payment(
+                        reference=reference,
+                        amount=amount,
+                        currency=currency,
+                        customer_email=customer_email,
+                        metadata=replay_metadata,
+                        idempotency_key=idempotency_key,
+                    )
+                except Exception as exc:
+                    # Change request shape only when Stripe explicitly reports
+                    # that this idempotency key was reused with different params.
+                    if replay_index == 0 and _is_stripe_idempotency_error(exc):
+                        continue
+                    # Transient, unknown, and other rejected outcomes must not
+                    # trigger a second POST with different parameters.
+                    break
+
+                transaction_id = (
+                    replay_result.get("transaction_id")
+                    if isinstance(replay_result, dict)
+                    else None
+                )
+                if isinstance(transaction_id, str) and transaction_id.strip():
+                    return transaction_id.strip()
+
+                # A malformed/unusable response is not evidence of parameter
+                # mismatch. Do not make a second POST with another shape.
+                break
+
+        try:
+            return self._search_payment_intent_id_for_payment(
+                reference=reference,
+                amount=amount,
+                currency=currency,
+                clinic_id=clinic_id,
+                invoice_id=invoice_id,
+                payment_id=payment_id,
+            )
+        except Exception:
+            # Search outages and eventual-consistency misses remain pending.
+            return None
 
     def verify_payment(
         self,
