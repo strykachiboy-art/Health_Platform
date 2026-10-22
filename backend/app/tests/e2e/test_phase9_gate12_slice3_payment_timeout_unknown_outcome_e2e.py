@@ -97,6 +97,7 @@ def test_gate12_slice3_payment_timeout_unknown_outcome_reconciles_one_settlement
         "/api/v1/billing/invoices",
         json={
             "patient_id": patient.id,
+            "currency": "NGN",
             "items": [
                 {
                     "description": (
