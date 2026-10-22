@@ -5,6 +5,7 @@ from decimal import Decimal
 from unittest.mock import Mock
 
 import pytest
+import stripe
 
 from app.modules.billing.services.gateways.base_gateway import (
     GatewayUnknownOutcomeError,
@@ -173,21 +174,28 @@ def test_verification_http_requests_stream_response_bodies(provider, monkeypatch
     assert response.closed is True
 
 
-def test_stripe_http_adapter_bounds_response_and_closes_stream():
-    response = StreamingResponse(
-        headers={"Content-Length": str(MAX_PROVIDER_RESPONSE_BYTES + 1)}
+def test_stripe_http_adapter_propagates_response_limit_from_pinned_transport(monkeypatch):
+    request_mock = Mock(side_effect=ProviderResponseTooLargeError("too large"))
+    monkeypatch.setattr(
+        "app.modules.billing.services.gateways.stripe_gateway.request_payment_provider",
+        request_mock,
     )
-    session = FakeSession(response)
     client = BoundedStripeRequestsClient(timeout=30)
-    client._verify_ssl_certs = False
-    client._thread_local.session = session
 
     with pytest.raises(ProviderResponseTooLargeError):
         client.request("GET", "https://api.stripe.com/v1/payment_intents", {})
 
-    assert response.closed is True
-    assert response.iterated is False
-    assert len(session.calls) == 1
+    request_mock.assert_called_once_with(
+        provider="stripe",
+        method="GET",
+        url="https://api.stripe.com/v1/payment_intents",
+        headers={},
+        data=None,
+        timeout=30,
+        verify_ssl_certs=True,
+        proxy=None,
+        ca_bundle_path=stripe.ca_bundle_path,
+    )
 
 
 def test_stripe_initialization_classifies_oversized_response_as_unknown(monkeypatch):

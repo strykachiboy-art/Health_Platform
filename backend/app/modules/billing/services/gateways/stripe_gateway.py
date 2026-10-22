@@ -7,7 +7,9 @@ import stripe
 
 from app.modules.billing.services.gateways.response_utils import (
     ProviderResponseTooLargeError,
-    read_response_body_limited,
+)
+from app.modules.billing.services.gateways.provider_transport import (
+    request_payment_provider,
 )
 
 from app.modules.billing.services.gateways.base_gateway import (
@@ -58,47 +60,27 @@ def _is_stripe_idempotency_error(error: BaseException) -> bool:
 
 
 class BoundedStripeRequestsClient(stripe.RequestsClient):
-    """Stripe RequestsClient adapter that bounds normal response bodies."""
+    """Stripe HTTP adapter with pinned destination and bounded response bodies."""
 
     def request(self, method, url, headers, post_data=None):
-        kwargs = {
-            "stream": True,
-            "timeout": self._timeout,
-            "verify": (
-                stripe.ca_bundle_path
-                if self._verify_ssl_certs
-                else False
-            ),
-        }
-        if self._proxy:
-            kwargs["proxies"] = self._proxy
-
-        if getattr(self._thread_local, "session", None) is None:
-            self._thread_local.session = (
-                self._session or self.requests.Session()
-            )
-
         try:
-            response = self._thread_local.session.request(
-                method,
-                url,
+            response = request_payment_provider(
+                provider="stripe",
+                method=method,
+                url=url,
                 headers=headers,
                 data=post_data,
-                **kwargs,
+                timeout=self._timeout,
+                verify_ssl_certs=self._verify_ssl_certs,
+                proxy=self._proxy,
+                ca_bundle_path=stripe.ca_bundle_path,
             )
-        except Exception as exc:
-            self._handle_request_error(exc)
-
-        status_code = response.status_code
-        response_headers = response.headers
-        try:
-            body = read_response_body_limited(response)
         except ProviderResponseTooLargeError:
             raise
         except Exception as exc:
             self._handle_request_error(exc)
 
-        return body, status_code, response_headers
+        return response.body, response.status_code, response.headers
 
 
 def _build_stripe_http_client():

@@ -6,7 +6,7 @@ import json
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-import requests
+import requests as _requests
 
 from app.modules.billing.services.gateways.response_utils import (
     read_json_response_limited,
@@ -17,6 +17,12 @@ from app.modules.billing.services.gateways.base_gateway import (
     GatewayUnknownOutcomeError,
     PaymentGatewayBase,
 )
+
+from app.modules.billing.services.gateways.provider_transport import (
+    requests_for_provider,
+)
+
+requests = requests_for_provider("paystack", _requests)
 
 
 def _is_redirect_response(response: requests.Response) -> bool:
