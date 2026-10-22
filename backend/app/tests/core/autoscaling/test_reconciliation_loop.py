@@ -32,7 +32,7 @@ def decision(action=ScalingAction.SCALE_OUT, current=2, target=3):
     )
 
 
-def preview(*, accepted=True, current=2, target=3):
+def preview(*, accepted=True, current=2, target=3, reason=None):
     return ScalePreviewResult(
         status=(
             ScalePreviewStatus.DRY_RUN_ACCEPTED
@@ -40,9 +40,13 @@ def preview(*, accepted=True, current=2, target=3):
             else ScalePreviewStatus.REFUSED
         ),
         reason=(
-            "dry_run_validated_no_infrastructure_change"
-            if accepted
-            else "compose_scale_plan_unsafe"
+            reason
+            if reason is not None
+            else (
+                "dry_run_validated_no_infrastructure_change"
+                if accepted
+                else "compose_scale_plan_unsafe"
+            )
         ),
         current_replicas=current,
         target_replicas=target,
@@ -60,6 +64,7 @@ def cycle_result(
     target=3,
     accepted=True,
     reason="test_cycle",
+    preview_reason=None,
 ):
     decision_value = decision(action, current, target)
     cycle = AutoscalingCycleResult(
@@ -67,7 +72,12 @@ def cycle_result(
         reason=reason,
         decision=decision_value,
         preview=(
-            preview(accepted=accepted, current=current, target=target)
+            preview(
+                accepted=accepted,
+                current=current,
+                target=target,
+                reason=preview_reason,
+            )
             if status
             in {
                 AutoscalingCycleStatus.PREVIEW_ACCEPTED,
@@ -123,8 +133,8 @@ class FakeActuator:
         )
 
 
-def actuation(*, succeeded=True, may_ack=True, observed=3):
-    status = "applied" if succeeded else "failed"
+def actuation(*, succeeded=True, may_ack=True, observed=3, status=None):
+    status = status or ("applied" if succeeded else "failed")
     return SimpleNamespace(
         succeeded=succeeded,
         may_acknowledge_decision=may_ack,
@@ -186,28 +196,65 @@ def test_scale_out_is_applied_then_acknowledged():
     assert acknowledgements == [(True, AT)]
 
 
-def test_scale_in_is_deferred_and_never_bypasses_drain_gate():
+def test_scale_in_missing_drain_preview_routes_through_live_actuator():
     selected = cycle_result(
         action=ScalingAction.SCALE_IN,
         status=AutoscalingCycleStatus.PREVIEW_REFUSED,
         current=3,
         target=2,
         accepted=False,
-        reason="scale_in_drain_not_confirmed",
+        reason="scale_in_requires_drain_preparation",
+        preview_reason="scale_in_drain_not_confirmed",
     )
     loop, controller, actuator, acknowledgements = make_loop(
-        controller_results=[selected, selected],
+        controller_results=[selected],
     )
 
-    first = loop.run_once(evaluated_at=AT)
-    second = loop.run_once(
-        evaluated_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+    result = loop.run_once(evaluated_at=AT)
+
+    assert result.status is ReconciliationStatus.ACTUATION_APPLIED
+    assert len(actuator.calls) == 1
+    assert actuator.calls[0].action is ScalingAction.SCALE_IN
+    assert controller.calls[0][1] is False
+    assert acknowledgements == [(True, AT)]
+
+
+def test_scale_in_other_preview_refusal_is_known_no_mutation():
+    refused = cycle_result(
+        action=ScalingAction.SCALE_IN,
+        status=AutoscalingCycleStatus.PREVIEW_REFUSED,
+        current=3,
+        target=2,
+        accepted=False,
+        reason="unsafe_scale_in_plan",
+        preview_reason="compose_scale_plan_unsafe",
+    )
+    loop, controller, actuator, acknowledgements = make_loop(
+        controller_results=[refused],
     )
 
-    assert first.status is ReconciliationStatus.SCALE_IN_DEFERRED
-    assert second.status is ReconciliationStatus.SCALE_IN_DEFERRED
+    result = loop.run_once(evaluated_at=AT)
+
+    assert result.status is ReconciliationStatus.PREVIEW_BLOCKED
+    assert result.reason == "preview_not_accepted_no_mutation"
     assert actuator.calls == []
-    assert acknowledgements == []
+    assert acknowledgements == [(False, AT)]
+
+
+def test_known_actuator_refusal_is_acknowledged_not_reported_uncertain():
+    loop, controller, actuator, acknowledgements = make_loop(
+        controller_results=[cycle_result()],
+        actuator=FakeActuator([
+            actuation(succeeded=False, may_ack=True, status="refused")
+        ]),
+    )
+
+    result = loop.run_once(evaluated_at=AT)
+
+    assert result.status is ReconciliationStatus.ACTUATION_REFUSED
+    assert result.reason == "actuation_refused_no_mutation"
+    assert len(actuator.calls) == 1
+    assert acknowledgements == [(False, AT)]
 
 
 def test_preview_refusal_for_scale_out_is_acknowledged_as_no_mutation():

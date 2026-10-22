@@ -1,4 +1,10 @@
 services:
+  # Local host-run autoscaler only: Redis is published on loopback,
+  # not on a LAN interface. Do not use this mapping as a public endpoint.
+  redis:
+    ports: !override
+      - "127.0.0.1:16379:6379"
+
   backend:
     image: ${PHASE6_APP_IMAGE:?PHASE6_APP_IMAGE is required}
     volumes: !override
@@ -24,9 +30,12 @@ services:
     volumes: !override
       - ./deployment/nginx/nginx.phase9.conf:/etc/nginx/nginx.conf:ro
       - ./deployment/nginx/certs:/etc/nginx/certs:ro
+      - ./runtime/phase9/nginx-upstream:/etc/nginx/upstreams:ro
 
 volumes:
   postgres_data:
+    external: true
     name: clinic-system-phase9-postgres-data
   redis_data:
+    external: true
     name: clinic-system-phase9-redis-data

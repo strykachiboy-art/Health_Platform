@@ -27,8 +27,11 @@ class AutoscalingPolicy:
     cooldown_seconds: float
     max_metrics_age_seconds: float
     max_observation_gap_seconds: float
+    allow_scale_in: bool = True
 
     def __post_init__(self) -> None:
+        if type(self.allow_scale_in) is not bool:
+            raise ValueError("allow_scale_in must be a bool")
         if type(self.min_replicas) is not int or self.min_replicas < 1:
             raise ValueError("min_replicas must be an integer >= 1")
         if (
@@ -246,6 +249,10 @@ class AutoscalingDecisionEngine:
         if ratio <= self.policy.scale_in_load_ratio:
             self._high_demand_since = None
 
+            if not self.policy.allow_scale_in:
+                self._low_demand_since = None
+                return self._hold("scale_in_disabled", replicas, ratio)
+
             if self._low_demand_since is None:
                 self._low_demand_since = observed_at
 
@@ -314,6 +321,16 @@ class AutoscalingDecisionEngine:
 
         self._pending_target_replicas = None
         self._pending_recommendation_at = None
+        self._reset_streaks()
+
+    def restore_last_successful_scale(self, at: datetime | None) -> None:
+        """Restore a durable cooldown anchor before accepting observations."""
+        if at is not None:
+            _require_aware_datetime("at", at)
+        if self._pending_target_replicas is not None:
+            raise RuntimeError("cannot restore cooldown while a decision is pending")
+        self._last_successful_scale_at = at
+        self._last_sample_at = None
         self._reset_streaks()
 
     def _cooldown_active(self, now: datetime) -> bool:

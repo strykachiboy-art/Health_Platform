@@ -122,10 +122,32 @@ def test_records_fleet_demand_and_health_telemetry_separately():
     assert result["reason"] == "ok"
     assert result["telemetry_samples"] == 2
     assert result["request_count"] == 1
+    assert result["effective_window_seconds"] == pytest.approx(30.0)
     assert result["requests_per_second"] == pytest.approx(1 / 30)
     assert result["errors_5xx"] == 0
     assert result["average_duration_ms"] == pytest.approx(80.0)
     assert result["estimated_p95_duration_ms"] == 100.0
+
+
+def test_request_rate_uses_the_elapsed_bucket_coverage():
+    redis = FakeRedis()
+
+    # Three selected buckets cover BASE-20 through BASE+7: 27 elapsed
+    # seconds. A constant 34 requests/second must remain 34 RPS instead
+    # of being diluted by dividing those counts by the nominal 30 s.
+    for second in range(-20, 7):
+        for _ in range(34):
+            assert record(redis, at=BASE + second) is True
+
+    result = collect_api_request_metrics(
+        client=redis,
+        now=BASE + 7,
+    )
+
+    assert result["healthy"] is True
+    assert result["request_count"] == 34 * 27
+    assert result["effective_window_seconds"] == pytest.approx(27.0)
+    assert result["requests_per_second"] == pytest.approx(34.0)
 
 
 def test_5xx_rate_and_open_ended_latency_are_reported_without_guessing():

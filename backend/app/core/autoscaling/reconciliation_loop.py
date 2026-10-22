@@ -1,11 +1,12 @@
 """Controlled autoscaling orchestration with fail-closed reconciliation.
 
-The loop is disabled by default. It serializes calls within this process,
-acts only on an accepted scale-out preview, and never blindly retries an
-operation whose result is uncertain.
+Scale-out requires an accepted dry-run preview. Scale-in may proceed only when
+its initial preview is refused for the precise missing-drain confirmation; the
+live actuator must then confirm drain before re-previewing and scaling. Unknown
+outcomes remain pending and are never blindly retried as infrastructure changes.
 
-Scale-in remains deferred until drain preparation is integrated before the
-coordinator's preview gate. This module does not configure application startup.
+A lease-guarded runtime persists operation intent before actuation and blocks a
+new controller while an unresolved operation requires reconciliation.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable
 
+from app.core.autoscaling.compose_adapter import ScalePreviewStatus
 from app.core.autoscaling.coordinator import AutoscalingCycleStatus
 from app.core.autoscaling.decision_engine import ScalingAction, ScalingDecision
 
@@ -34,6 +36,7 @@ class ReconciliationStatus(str, Enum):
     PREVIEW_BLOCKED = "preview_blocked"
     ACTUATION_APPLIED = "actuation_applied"
     ACTUATION_FAILED = "actuation_failed"
+    ACTUATION_REFUSED = "actuation_refused"
     RECONCILED_APPLIED = "reconciled_applied"
     UNCERTAIN = "uncertain"
     SCALE_IN_DEFERRED = "scale_in_deferred"
@@ -69,9 +72,10 @@ class AutoscalingReconciliationLoop:
     ``acknowledge_scale_result`` should be wired to the coordinator's
     ``record_scale_result`` method.
 
-    The nonblocking lock prevents overlapping iterations on this instance;
-    it is not a distributed leader-election mechanism. Run only one enabled
-    controller instance until distributed ownership is implemented.
+    The nonblocking lock prevents overlapping iterations on this instance.
+    Distributed ownership is supplied by the outer Redis lease runner; this
+    loop-local lock is not a substitute for that lease or the durable operation
+    intent barrier.
     """
 
     def __init__(
@@ -118,6 +122,9 @@ class AutoscalingReconciliationLoop:
         self._pending_decision: ScalingDecision | None = None
         self._pending_kind: str | None = None
         self._confirmed_result: bool | None = None
+        self._pending_actuation_result: Any = None
+        self._pending_blocked = False
+        self._pending_reconciled = False
 
     def run_once(
         self,
@@ -153,7 +160,12 @@ class AutoscalingReconciliationLoop:
             # A known actuator outcome whose acknowledgement failed may be
             # retried as an acknowledgement only, never as another mutation.
             if self._pending_kind == "acknowledge_known_result":
-                return self._retry_known_acknowledgement(at)
+                return self._retry_known_acknowledgement(
+                    at,
+                    actuation_result=self._pending_actuation_result,
+                    blocked=self._pending_blocked,
+                    reconciled=self._pending_reconciled,
+                )
 
             controller_result, cycle, error_type = self._run_controller(at)
 
@@ -214,20 +226,10 @@ class AutoscalingReconciliationLoop:
                     controller_result=controller_result,
                 )
 
-            # Do not bypass the coordinator's drain-confirmation gate.
-            # Keep this recommendation pending for explicit reconciliation.
-            if decision.action is ScalingAction.SCALE_IN:
-                self._pending_decision = decision
-                self._pending_kind = "scale_in_deferred"
-
-                return ReconciliationResult(
-                    ReconciliationStatus.SCALE_IN_DEFERRED,
-                    "scale_in_requires_pre_preview_drain_coordination",
-                    evaluated_at=at,
-                    controller_result=controller_result,
-                )
-
-            if decision.action is not ScalingAction.SCALE_OUT:
+            if decision.action not in {
+                ScalingAction.SCALE_OUT,
+                ScalingAction.SCALE_IN,
+            }:
                 return ReconciliationResult(
                     ReconciliationStatus.ERROR,
                     "unsupported_scale_action",
@@ -241,14 +243,33 @@ class AutoscalingReconciliationLoop:
                 and preview is not None
                 and getattr(preview, "ok", False) is True
             )
+            scale_in_drain_gate = (
+                decision.action is ScalingAction.SCALE_IN
+                and cycle_status is AutoscalingCycleStatus.PREVIEW_REFUSED
+                and preview is not None
+                and getattr(preview, "status", None) is ScalePreviewStatus.REFUSED
+                and getattr(preview, "reason", None) == "scale_in_drain_not_confirmed"
+            )
 
-            if not preview_accepted:
-                # No live actuator command has been issued. Acknowledge this
-                # known no-mutation outcome as failed so the demand window can
-                # be reevaluated instead of deadlocking on a stale proposal.
+            # The only scale-in preview refusal allowed to reach the live
+            # actuator is the exact missing-drain gate. The actuator itself
+            # must drain, verify zero active HTTP/socket work, re-preview with
+            # drain confirmation, and re-check inventory before applying scale.
+            if (
+                decision.action is ScalingAction.SCALE_IN
+                and not scale_in_drain_gate
+            ) or (
+                decision.action is ScalingAction.SCALE_OUT
+                and not preview_accepted
+            ):
+                # No live actuator command has been issued. This is a known
+                # no-mutation outcome, not an uncertain external operation.
                 self._pending_decision = decision
                 self._pending_kind = "acknowledge_known_result"
                 self._confirmed_result = False
+                self._pending_actuation_result = None
+                self._pending_blocked = True
+                self._pending_reconciled = False
                 return self._retry_known_acknowledgement(
                     at,
                     controller_result=controller_result,
@@ -296,6 +317,9 @@ class AutoscalingReconciliationLoop:
 
             self._confirmed_result = succeeded
             self._pending_kind = "acknowledge_known_result"
+            self._pending_actuation_result = actuation
+            self._pending_blocked = False
+            self._pending_reconciled = False
 
             acknowledged = self._retry_known_acknowledgement(
                 at,
@@ -364,11 +388,28 @@ class AutoscalingReconciliationLoop:
         self._clear_pending()
 
         if blocked:
+            reason = (
+                "preview_not_accepted_no_mutation"
+            )
             return ReconciliationResult(
                 ReconciliationStatus.PREVIEW_BLOCKED,
-                "scale_out_preview_not_accepted_no_mutation",
+                reason,
                 evaluated_at=at,
                 controller_result=controller_result,
+            )
+
+        if (
+            not succeeded
+            and not reconciled
+            and getattr(getattr(actuation_result, "status", None), "value", None)
+            == "refused"
+        ):
+            return ReconciliationResult(
+                ReconciliationStatus.ACTUATION_REFUSED,
+                "actuation_refused_no_mutation",
+                evaluated_at=at,
+                controller_result=controller_result,
+                actuation_result=actuation_result,
             )
 
         return ReconciliationResult(
@@ -422,6 +463,9 @@ class AutoscalingReconciliationLoop:
         ):
             self._pending_kind = "acknowledge_known_result"
             self._confirmed_result = True
+            self._pending_actuation_result = None
+            self._pending_blocked = False
+            self._pending_reconciled = True
             return self._retry_known_acknowledgement(
                 at,
                 controller_result=controller_result,
@@ -441,6 +485,9 @@ class AutoscalingReconciliationLoop:
         self._pending_decision = None
         self._pending_kind = None
         self._confirmed_result = None
+        self._pending_actuation_result = None
+        self._pending_blocked = False
+        self._pending_reconciled = False
 
     def run_forever(self, stop_event: Any) -> None:
         """Run periodic cycles when explicitly enabled and owned by one process.

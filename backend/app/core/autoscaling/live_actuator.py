@@ -11,7 +11,7 @@ import urllib.request
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from app.core.autoscaling.compose_adapter import (
     BACKEND_SERVICE_NAME,
@@ -20,6 +20,10 @@ from app.core.autoscaling.compose_adapter import (
     ScalePreviewStatus,
 )
 from app.core.autoscaling.decision_engine import ScalingAction, ScalingDecision
+from app.core.autoscaling.nginx_routing import (
+    NginxBackendRoutingAdapter,
+    RouteOperationResult,
+)
 
 
 class ScaleActuationStatus(str, Enum):
@@ -52,6 +56,9 @@ class ScaleActuationResult:
         return self.status in {
             ScaleActuationStatus.APPLIED,
             ScaleActuationStatus.FAILED,
+            # REFUSED is a known no-mutation outcome; never retry the same
+            # operation merely because its preconditions were not met.
+            ScaleActuationStatus.REFUSED,
         }
 
 
@@ -281,6 +288,9 @@ class ComposeLiveScalingActuator:
         *,
         live_enabled: bool = False,
         drain_adapter: DockerExecBackendDrainAdapter | None = None,
+        scale_in_enabled: bool = False,
+        routing_adapter: NginxBackendRoutingAdapter | None = None,
+        before_scale_command: Callable[[], bool] | None = None,
         runner: Callable = subprocess.run,
     ) -> None:
         if not callable(getattr(preview_adapter, "preview", None)):
@@ -289,6 +299,10 @@ class ComposeLiveScalingActuator:
             raise ValueError("live_enabled must be bool")
         if not callable(runner):
             raise TypeError("runner must be callable")
+        if before_scale_command is not None and not callable(before_scale_command):
+            raise TypeError("before_scale_command must be callable when provided")
+        if type(scale_in_enabled) is not bool:
+            raise TypeError("scale_in_enabled must be bool")
 
         config = getattr(preview_adapter, "config", None)
         project = getattr(preview_adapter, "project_name", None)
@@ -304,12 +318,21 @@ class ComposeLiveScalingActuator:
             raise ValueError("Preview adapter must expose a consistent project and root")
         if drain_adapter is not None and drain_adapter.project_name != project:
             raise ValueError("Drain and Compose adapters must target the same project")
+        if routing_adapter is not None and routing_adapter.project_name != project:
+            raise ValueError("Routing and Compose adapters must target the same project")
+        if live_enabled and before_scale_command is None:
+            raise ValueError(
+                "live actuation requires a durable scale-command phase callback"
+            )
 
         self.preview_adapter = preview_adapter
         self.project_name = project
         self.project_root = root
         self.live_enabled = live_enabled
         self.drain_adapter = drain_adapter
+        self.scale_in_enabled = scale_in_enabled
+        self.routing_adapter = routing_adapter
+        self.before_scale_command = before_scale_command
         self._runner = runner
 
     def apply(self, decision: ScalingDecision) -> ScaleActuationResult:
@@ -337,6 +360,11 @@ class ComposeLiveScalingActuator:
             )
 
         scale_in = decision.action is ScalingAction.SCALE_IN
+        if scale_in and not self.scale_in_enabled:
+            return self._result(
+                ScaleActuationStatus.REFUSED, "scale_in_disabled",
+                current, target,
+            )
         config = getattr(self.preview_adapter, "config", None)
         minimum, maximum = getattr(config, "min_replicas", None), getattr(config, "max_replicas", None)
 
@@ -357,6 +385,11 @@ class ComposeLiveScalingActuator:
                 ScaleActuationStatus.REFUSED, "scale_in_drain_unavailable",
                 current, target,
             )
+        if scale_in and self.routing_adapter is None:
+            return self._result(
+                ScaleActuationStatus.REFUSED, "scale_in_routing_unavailable",
+                current, target,
+            )
 
         expected_image, error = self._resolved_backend_image()
         if error:
@@ -375,6 +408,29 @@ class ComposeLiveScalingActuator:
         if scale_in:
             drain_target = f"{self.project_name}-backend-{current}"
             try:
+                route_result = self.routing_adapter.withdraw(drain_target)
+            except Exception:
+                route_result = RouteOperationResult(
+                    False, None, "route_adapter_exception"
+                )
+            if not isinstance(route_result, RouteOperationResult):
+                route_result = RouteOperationResult(
+                    False, None, "invalid_route_result"
+                )
+            if not route_result.confirmed:
+                if route_result.prior_state_restored is True:
+                    return self._result(
+                        ScaleActuationStatus.FAILED,
+                        "route_withdrawal_failed_prior_routes_restored",
+                        current, target, exit_code=route_result.exit_code,
+                    )
+                return self._result(
+                    ScaleActuationStatus.UNCERTAIN,
+                    "route_withdrawal_outcome_uncertain_recovery_required",
+                    current, target, exit_code=route_result.exit_code,
+                )
+
+            try:
                 drained = self.drain_adapter.drain_and_confirm(drain_target)
             except Exception:
                 drained = DrainOperationResult(False, None, "drain_adapter_exception")
@@ -382,14 +438,15 @@ class ComposeLiveScalingActuator:
                 drained = DrainOperationResult(False, None, "invalid_drain_result")
             if not drained.confirmed:
                 if drained.restored is True:
-                    return self._result(
-                        ScaleActuationStatus.FAILED,
-                        "drain_not_confirmed_and_undrain_confirmed",
-                        current, target, exit_code=drained.exit_code,
-                    )
+                    if self._restore_routing(drain_target):
+                        return self._result(
+                            ScaleActuationStatus.FAILED,
+                            "drain_not_confirmed_and_routes_restored",
+                            current, target, exit_code=drained.exit_code,
+                        )
                 return self._result(
                     ScaleActuationStatus.UNCERTAIN,
-                    "drain_not_confirmed_and_undrain_uncertain",
+                    "drain_not_confirmed_route_restoration_uncertain",
                     current, target, exit_code=drained.exit_code,
                 )
 
@@ -438,9 +495,39 @@ class ComposeLiveScalingActuator:
         # The command is the live equivalent of the adapter's scale dry-run,
         # differing only by the dry-run flag.
         command = [
-            *self._compose_base(), "scale", "--no-deps",
+            *self._compose_base(),
+            "up",
+            "-d",
+            "--no-deps",
+            "--no-recreate",
+            "--no-build",
+            "--scale",
             f"{BACKEND_SERVICE_NAME}={target}",
+            BACKEND_SERVICE_NAME,
         ]
+        # The durable phase change is a hard gate: if Redis cannot confirm it,
+        # no Compose scale command is issued. For scale-in, undo the earlier drain.
+        if self.before_scale_command is None:
+            return self._abort_after_drain(
+                drain_target, current, target,
+                "durable_scale_command_phase_callback_missing",
+                status=ScaleActuationStatus.FAILED,
+                observed=len(inventory_after_preview),
+            )
+        try:
+            phase_confirmed = self.before_scale_command()
+        except Exception:
+            phase_confirmed = False
+        if phase_confirmed is not True:
+            # A false callback can mean a definite refusal or a lost Redis reply
+            # after the phase CAS committed. Do not undo drain or acknowledge the
+            # operation here: preserve the journal and require explicit recovery.
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN,
+                "durable_scale_command_phase_not_confirmed_recovery_required",
+                current, target, observed=len(inventory_after_preview),
+            )
+
         operation, operation_error = self._invoke(command, timeout=120)
         exit_code = operation.returncode if operation is not None else None
 
@@ -460,6 +547,17 @@ class ComposeLiveScalingActuator:
                 current, target, observed=len(after), exit_code=exit_code,
             )
 
+        # A failed/timed-out subprocess invocation is not proof that the
+        # Docker daemon did nothing. An immediate old-state snapshot may race
+        # with an in-flight daemon operation. Preserve the journal and, for
+        # scale-in, keep the backend drained until explicit recovery resolves it.
+        if operation is None or operation_error is not None:
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN,
+                "scale_command_execution_outcome_unknown",
+                current, target, observed=len(after), exit_code=exit_code,
+            )
+
         if self._inventory_matches(after, current, expected_image):
             if operation_error is None and exit_code == 0:
                 # A successful CLI exit and unchanged containers disagree.
@@ -470,10 +568,10 @@ class ComposeLiveScalingActuator:
                     current, target, observed=len(after), exit_code=exit_code,
                 )
 
-            if drain_target is not None and not self._cancel_drain(drain_target):
+            if drain_target is not None and not self._cancel_drain_and_restore_routing(drain_target):
                 return self._result(
                     ScaleActuationStatus.UNCERTAIN,
-                    "scale_failed_but_undrain_uncertain",
+                    "scale_failed_but_undrain_or_route_restore_uncertain",
                     current, target, observed=len(after), exit_code=exit_code,
                 )
 
@@ -491,6 +589,156 @@ class ComposeLiveScalingActuator:
             current, target, observed=len(after), exit_code=exit_code,
         )
 
+    def reconcile_pending_operation(
+        self, operation: Mapping[str, object]
+    ) -> ScaleActuationResult:
+        """Resolve a persisted intent from actual fleet state without scaling.
+
+        Scale-in recovery may undrain the retiring instance only after the
+        original replica topology and image are verified. Every ambiguous state
+        keeps the durable recovery barrier in place.
+        """
+        if not isinstance(operation, Mapping):
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN, "pending_operation_invalid",
+                None, None,
+            )
+        action = operation.get("action")
+        current = operation.get("current_replicas")
+        target = operation.get("target_replicas")
+        schema_version = operation.get("schema_version")
+        phase = operation.get("phase", "unknown")
+        config = getattr(self.preview_adapter, "config", None)
+        minimum = getattr(config, "min_replicas", None)
+        maximum = getattr(config, "max_replicas", None)
+        if (
+            action not in {"scale_out", "scale_in"}
+            or type(schema_version) is not int
+            or schema_version not in {1, 2}
+            or (schema_version == 1 and phase != "unknown")
+            or (
+                schema_version == 2
+                and phase not in {"preparing", "scale_command_started"}
+            )
+            or type(current) is not int
+            or type(target) is not int
+            or type(minimum) is not int
+            or type(maximum) is not int
+            or minimum < 1
+            or maximum < minimum
+            or not minimum <= current <= maximum
+            or not minimum <= target <= maximum
+            or current < 1
+            or target != current + (1 if action == "scale_out" else -1)
+            or target < 1
+        ):
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN, "pending_operation_invalid_transition",
+                current if type(current) is int else None,
+                target if type(target) is int else None,
+            )
+
+        expected_image, error = self._resolved_backend_image()
+        if error or expected_image is None:
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN, "recovery_compose_image_unavailable",
+                current, target,
+            )
+        rows, inventory_error = self._read_inventory()
+        if inventory_error or rows is None:
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN, "recovery_inventory_unavailable",
+                current, target,
+            )
+
+        # If the exact target fleet is healthy, the external action completed.
+        if self._inventory_matches(rows, target, expected_image):
+            return self._result(
+                ScaleActuationStatus.APPLIED, "pending_operation_target_state_verified",
+                current, target, observed=len(rows),
+            )
+
+        if action == "scale_out":
+            if self._inventory_matches(rows, current, expected_image):
+                if phase == "preparing":
+                    # The CLI call is forbidden until the durable phase CAS succeeds.
+                    return self._result(
+                        ScaleActuationStatus.FAILED,
+                        "pending_scale_out_command_not_started_original_state_verified",
+                        current, target, observed=len(rows),
+                    )
+                return self._result(
+                    ScaleActuationStatus.UNCERTAIN,
+                    "pending_scale_out_original_state_but_command_outcome_unproven",
+                    current, target, observed=len(rows),
+                )
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN, "pending_scale_out_state_ambiguous",
+                current, target, observed=len(rows),
+            )
+
+        if phase != "preparing":
+            # A started or legacy-unknown scale-in may still be in flight. Do not
+            # undrain or clear its journal just because one snapshot shows old count.
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN,
+                "pending_scale_in_command_outcome_unproven",
+                current, target, observed=len(rows),
+            )
+
+        if not self._inventory_topology_matches(rows, current, expected_image):
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN, "pending_scale_in_topology_ambiguous",
+                current, target, observed=len(rows),
+            )
+
+        retiring_name = f"{self.project_name}-backend-{current}"
+        surviving = [row for row in rows if row.name != retiring_name]
+        if any(
+            "(healthy)" not in row.status or "(unhealthy)" in row.status
+            for row in surviving
+        ):
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN,
+                "pending_scale_in_surviving_replica_unhealthy",
+                current, target, observed=len(rows),
+            )
+        if self.drain_adapter is None:
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN,
+                "pending_scale_in_drain_recovery_unavailable",
+                current, target, observed=len(rows),
+            )
+        if self.routing_adapter is None:
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN,
+                "pending_scale_in_routing_recovery_unavailable",
+                current, target, observed=len(rows),
+            )
+        if not self._cancel_drain_and_restore_routing(retiring_name):
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN,
+                "pending_scale_in_undrain_or_route_restore_not_confirmed",
+                current, target, observed=len(rows),
+            )
+        restored, restored_error = self._read_inventory()
+        if (
+            restored_error
+            or restored is None
+            or not self._inventory_matches(restored, current, expected_image)
+        ):
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN,
+                "pending_scale_in_original_state_not_healthy_after_undrain",
+                current, target,
+                observed=len(restored) if restored is not None else None,
+            )
+        return self._result(
+            ScaleActuationStatus.FAILED,
+            "pending_scale_in_command_not_started_original_state_restored",
+            current, target, observed=len(restored),
+        )
+
     def _abort_after_drain(
         self, name, current, target, reason, *,
         status=ScaleActuationStatus.FAILED, exit_code=None, observed=None,
@@ -500,7 +748,7 @@ class ComposeLiveScalingActuator:
                 status, reason, current, target,
                 observed=observed, exit_code=exit_code,
             )
-        if self._cancel_drain(name):
+        if self._cancel_drain_and_restore_routing(name):
             return self._result(
                 status, reason, current, target,
                 observed=observed, exit_code=exit_code,
@@ -515,6 +763,19 @@ class ComposeLiveScalingActuator:
             return self.drain_adapter.undrain(name) is True
         except Exception:
             return False
+
+    def _restore_routing(self, name: str) -> bool:
+        if self.routing_adapter is None:
+            return False
+        try:
+            result = self.routing_adapter.restore(name)
+        except Exception:
+            return False
+        return isinstance(result, RouteOperationResult) and result.confirmed is True
+
+    def _cancel_drain_and_restore_routing(self, name: str) -> bool:
+        # Restore the backend to ready state before returning it to proxy routing.
+        return self._cancel_drain(name) and self._restore_routing(name)
 
     def _compose_base(self) -> list[str]:
         args = [
@@ -592,6 +853,21 @@ class ComposeLiveScalingActuator:
             row.image == image and row.state == "running"
             and "(healthy)" in row.status and "(unhealthy)" not in row.status
             for row in rows
+        )
+
+    def _inventory_topology_matches(self, rows, count: int, image: str) -> bool:
+        """Check exact names/image/running state while allowing the target to drain."""
+        if type(count) is not int or count < 1 or rows is None or len(rows) != count:
+            return False
+        expected = {f"{self.project_name}-backend-{i}" for i in range(1, count + 1)}
+        names = [row.name for row in rows]
+        return (
+            len(set(names)) == len(names)
+            and set(names) == expected
+            and all(
+                row.image == image and row.state == "running"
+                for row in rows
+            )
         )
 
     @staticmethod

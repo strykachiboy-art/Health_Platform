@@ -228,6 +228,29 @@ def test_result_cannot_be_acknowledged_without_pending_action():
         )
 
 
+def test_restored_successful_scale_timestamp_preserves_cooldown_after_restart():
+    engine = AutoscalingDecisionEngine(make_policy(cooldown_seconds=20))
+    last_scale = T0 + timedelta(seconds=10)
+    engine.restore_last_successful_scale(last_scale)
+
+    # Cooldown is evaluated only after the sustained-demand window is met.
+    first = sample(engine, 11, 0.95, replicas=2)
+    assert first.action is ScalingAction.HOLD
+    assert first.reason == "scale_out_window_not_met"
+
+    result = sample(engine, 21, 0.95, replicas=2)
+
+    assert result.action is ScalingAction.HOLD
+    assert result.reason == "cooldown_active"
+    assert engine.pending_target_replicas is None
+
+
+def test_restored_successful_scale_timestamp_requires_aware_datetime():
+    engine = AutoscalingDecisionEngine(make_policy())
+    with pytest.raises(ValueError, match="timezone-aware"):
+        engine.restore_last_successful_scale(datetime(2026, 10, 20, 10, 0))
+
+
 def test_invalid_or_out_of_bounds_replica_count_holds():
     engine = AutoscalingDecisionEngine(make_policy())
 

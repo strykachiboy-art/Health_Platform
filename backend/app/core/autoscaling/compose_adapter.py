@@ -46,15 +46,31 @@ def _scale_dry_run_plan_is_safe(
         return False
 
     if decision.action is ScalingAction.SCALE_OUT:
+        if type(decision.current_replicas) is not int:
+            return False
         expected_name = f"{project_name}-backend-{decision.target_replicas}"
+        surviving_replica_count = decision.current_replicas
         allowed_actions = {"creating", "created", "starting", "started"}
         completion_action = "started"
     elif decision.action is ScalingAction.SCALE_IN:
+        if type(decision.target_replicas) is not int:
+            return False
         expected_name = f"{project_name}-backend-{decision.current_replicas}"
+        surviving_replica_count = decision.target_replicas
         allowed_actions = {"stopping", "stopped", "removing", "removed"}
         completion_action = "removed"
     else:
         return False
+
+    if surviving_replica_count < 1:
+        return False
+
+    # Compose dry-run output may report surviving containers as "Running".
+    # That is a no-op only for the exact replica names expected to remain.
+    surviving_names = {
+        f"{project_name}-backend-{replica}"
+        for replica in range(1, surviving_replica_count + 1)
+    }
 
     resource_change_actions = {
         "building", "built", "creating", "created", "recreating", "recreated",
@@ -77,8 +93,11 @@ def _scale_dry_run_plan_is_safe(
             name = fields[0].strip(" ,:;")
             action = fields[1].strip(" ,:;").lower()
 
-            # Refuse any other container or lifecycle operation, including
-            # a recreation of a surviving backend.
+            # Permit only no-op Running statuses for the known survivors.
+            if action == "running" and name in surviving_names:
+                continue
+
+            # All lifecycle mutations must target the single intended replica.
             if name != expected_name or action not in allowed_actions:
                 return False
 
@@ -518,10 +537,15 @@ class ComposeScalingAdapter:
         # There is intentionally no non-dry-run alternative in Gate B.
         scale_command = [
             *base,
-            "scale",
             "--dry-run",
+            "up",
+            "-d",
             "--no-deps",
+            "--no-recreate",
+            "--no-build",
+            "--scale",
             f"{BACKEND_SERVICE_NAME}={target}",
+            BACKEND_SERVICE_NAME,
         ]
         scale_result, error = self._invoke(scale_command)
 

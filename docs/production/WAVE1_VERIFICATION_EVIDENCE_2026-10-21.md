@@ -15,10 +15,11 @@ authenticated cross-instance Socket.IO delivery, JWT revocation across
 replicas, backend ingress isolation, and the current API-tier database
 connection budget.
 
-Automatic scale-out and scale-in are **not verified**. The repository's
-autoscaling controller/coordinator and Compose adapter are preview-only.
-The agreed next step is to implement a controlled live actuator and automatic
-reconciliation loop, then prove both scaling directions before Phase 2.
+At the original evidence date (2026-10-21), automatic scale-out and scale-in
+were not verified. That statement describes the earlier state of the inspected
+controller/coordinator/Compose adapter and is superseded for local live-scaling
+status by the 2026-10-22 evidence addendum in Section 13. Production operation
+is still not claimed.
 
 ## 2. Backup and migration
 
@@ -66,7 +67,9 @@ Safe manual retirement and recovery:
 
 Result: `SAFE_RETIREMENT_AND_RECOVERY=PASS`
 
-This proves manual retirement and recovery, not automatic scale-in.
+This section establishes manual retirement and recovery. Automatic scale-in
+was separately exercised through the live controller on 2026-10-22; see
+Section 13.
 
 ## 4. Shared Redis and distributed login rate limiting
 
@@ -243,13 +246,16 @@ open until the intended background processes and concurrency are verified.
 
 ## 10. Autoscaling status
 
-GitHub source inspection found the autoscaling decision engine, API controller,
-coordinator, and Compose scaling adapter. The controller/coordinator/adapter
-are preview-only; the Compose adapter validates a dry-run instead of applying
-a live scale operation.
+The original 2026-10-21 source inspection found the autoscaling decision
+engine, API controller, coordinator, and Compose adapter in a preview-only
+state; the inspected Compose adapter validated a dry-run instead of applying
+a live operation. That assessment predates the subsequent local live runner,
+actuator, and Nginx routing work recorded in Section 13. Read this as the
+historical state, not as the current local implementation status.
 
-No automatic controller was demonstrated adding or removing replicas in
-response to workload.
+At the time of the original report on 2026-10-21, no automatic controller
+had been demonstrated adding or removing replicas in response to workload.
+The subsequent controller-driven live transitions are recorded in Section 13.
 
 - Load balancing: VERIFIED in local runtime.
 - Manual drain and recovery: VERIFIED in local runtime.
@@ -261,13 +267,14 @@ response to workload.
 - Backend ingress isolation: VERIFIED in local runtime.
 - Current API-tier connection pool ceiling: VERIFIED.
 - Full platform/future maximum connection budget: OPEN.
-- Automatic scale-out/scale-in: NOT VERIFIED.
+- Automatic scale-out/scale-in: LIVE-VERIFIED in local runtime on 2026-10-22; see Section 13. The precise 300-second scale-in window semantics remain not independently verified by that run.
 - Production operation: NOT CLAIMED.
 
-Next agreed step: implement a controlled live actuator and automatic
-reconciliation loop; prove scale-out and safe scale-in with health, routing,
-drain, database-capacity, failure-handling, and recovery evidence. Review
-that evidence before proceeding to Phase 2.
+Historical next step at the time of the original report: implement a
+controlled live actuator and automatic reconciliation loop, then prove
+scale-out and safe scale-in. The local scale-out/in and routing results are
+now documented in Section 13. Full platform and future maximum connection
+capacity remain open; production operation is not claimed.
 
 ## 11. Source references
 
@@ -286,8 +293,123 @@ that evidence before proceeding to Phase 2.
 This report documents local runtime evidence and source references. It does
 not assert production deployment.
 
-- The report remains a local untracked file until reviewed.
+- This report has been updated locally with the 2026-10-22 autoscaling evidence addendum.
 - No files are staged automatically.
 - No commit or push is authorized by this script.
 - Existing modifications and untracked artifacts must be preserved.
 - The migration must not be repeated for report preparation.
+
+## 13. Wave 1 autoscaling live-verification addendum (2026-10-22)
+
+This addendum supersedes the original autoscaling status statements in
+Sections 1 and 10 for the local live execution described below. It does not
+convert local verification into production operation.
+
+### Environment and safety controls
+
+- Environment: local Docker Compose development host.
+- Application image: `clinic-system-phase9:wave1-local-20261021-r1`.
+- Image ID: `sha256:fb3c3ce062966c1e894c6fad1106a3ad6ffa66b03253a0161e38e291b6dcc203`.
+- The host-run controller used the live runner, Redis coordination lease,
+  Compose scaling actuator, backend drain support, and Nginx runtime upstream
+  routing adapter.
+- Live scale-in was explicitly enabled only after live route withdrawal and
+  restoration had been verified.
+- For the scale-in closure test, the minimum replica count was temporarily
+  set to three and the maximum to four. The controller was therefore not
+  allowed to scale the fleet below three replicas during that test.
+
+### Controller-driven scale-out and four-replica distribution
+
+- The controller successfully scaled the backend fleet from three replicas
+  to four. The fourth backend was created through the live scale-out path.
+- All four backend containers were subsequently verified healthy and using
+  the expected immutable application image.
+- A follow-up traffic probe submitted 1,020 requests over 30 seconds at the
+  configured 34 requests per second.
+- All 1,020 responses were the expected HTTP `401`; no request errors were
+  reported.
+- Per-backend request-counter deltas were exactly 255 for each of backends
+  1, 2, 3, and 4.
+
+Result: `FOUR_REPLICA_TRAFFIC_VERIFIED=True`.
+
+### Live Nginx route withdrawal and restoration
+
+- The routing adapter withdrew backend 4 from Nginx's active upstream
+  configuration and confirmed the resulting route set.
+- During the withdrawal probe, 400 requests completed, all with HTTP `401`
+  and no request errors.
+- Per-backend request-counter deltas during that probe were: backend 1 = 134,
+  backend 2 = 133, backend 3 = 133, and withdrawn backend 4 = 0.
+- Backend 4 received no requests while withdrawn; all three surviving
+  backends continued to receive traffic.
+- The adapter restored all four routes and confirmed the restored configuration.
+  The subsequent HTTPS preflight returned the expected status.
+
+Result: `LIVE_WITHDRAW_RESTORE_TEST=PASS`.
+
+### Controller-driven scale-in from four replicas to three
+
+- Before the low-load driver began, the driver verified that the controller
+  Redis lease was held and that the baseline HTTPS request returned `401`.
+- The controller was running with live scale-in enabled, the verified-route
+  gate enabled, and the temporary minimum replica count fixed at three.
+- The low-load driver was configured for 1.0 request per second, with a
+  maximum observation duration of 390 seconds.
+- The driver submitted 60 requests; every response was HTTP `401`, with no
+  request errors. The transition to three replicas was observed at
+  `elapsed_seconds=124`.
+- Final running backend names were exactly `clinic-system-backend-1`,
+  `clinic-system-backend-2`, and `clinic-system-backend-3`.
+- All three surviving backends were healthy, retained their identities, and
+  matched the expected application image ID.
+- Backend 4 was absent from the container inventory. Both the upstream file
+  and expanded active Nginx configuration contained exactly backends 1, 2,
+  and 3.
+- Non-backend container identities were preserved.
+- After the controller was stopped, Redis reported
+  `EXISTS clinic-system:autoscaling:controller:lease = 0`, confirming that
+  the controller lease was released.
+- A final request using `https://localhost:19443/api/v1/patients` returned
+  HTTP `401`. The hostname is intentional: the Nginx configuration accepts
+  `localhost`, and the IP-address probe is not a valid substitute for that
+  host/SNI check.
+
+Result: `LIVE_SCALE_IN_VERIFICATION=PASS`.
+
+**Scale-in window timing note:** the controller was configured with a
+300-second scale-in window, but the fleet transition was observed 124 seconds
+after the low-load driver started. This run confirms that the live controller
+performed the four-to-three transition under low-load test conditions. It
+does not, by itself, prove that the implementation required a fresh,
+uninterrupted 300-second low-load interval. If that exact duration is a hard
+acceptance requirement, the controller's window semantics should be inspected
+and independently verified before claiming that subrequirement is closed.
+
+### Regression and final state
+
+- Lifecycle contract: 2 passed.
+- Complete `backend/app/tests/core/autoscaling` regression: 513 passed,
+  0 failed, in 5.62 seconds.
+- `git diff --check` returned success. Git emitted line-ending conversion
+  warnings for existing modified Python files; no whitespace-check failure
+  was reported.
+- Nginx configuration test returned exit code 0.
+- The expanded active Nginx configuration matched the runtime upstream file.
+- The controller lease was released, backend 4 was removed, and the remaining
+  three-replica fleet remained healthy.
+
+### Closure status
+
+- Controller-driven scale-out: **LIVE-VERIFIED in this local environment**.
+- Controller-driven scale-in: **LIVE-VERIFIED in this local environment**.
+- Four-replica traffic distribution: **LIVE-VERIFIED**.
+- Route withdrawal and restoration: **LIVE-VERIFIED**.
+- Autoscaling test regression: **513 PASSED**.
+- Exact 300-second scale-in window enforcement: **NOT INDEPENDENTLY VERIFIED
+  by this run**, as described in the timing note above.
+- Full platform/future maximum connection budget: **OPEN**.
+- Production operation: **NOT CLAIMED**.
+
+No production deployment or production operation is asserted by these results.

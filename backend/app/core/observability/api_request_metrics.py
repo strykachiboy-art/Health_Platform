@@ -360,6 +360,9 @@ def collect_api_request_metrics(
 
     current_bucket = _bucket_start(timestamp, bucket_seconds)
     bucket_count = window_seconds // bucket_seconds
+    # Use the nominal window unless telemetry exists in every selected
+    # bucket. A sparse snapshot cannot justify shortening the window.
+    effective_window_seconds = float(window_seconds)
 
     try:
         for offset in range(bucket_count):
@@ -430,6 +433,15 @@ def collect_api_request_metrics(
             reason="invalid_metric_payload",
             available=True,
             window_seconds=window_seconds,
+        )
+
+    if buckets_observed == bucket_count:
+        oldest_bucket_start = current_bucket - (
+            (bucket_count - 1) * bucket_seconds
+        )
+        effective_window_seconds = max(
+            float(bucket_seconds),
+            timestamp - oldest_bucket_start,
         )
 
     if not math.isfinite(duration_total_ms) or duration_total_ms < 0:
@@ -576,10 +588,11 @@ def collect_api_request_metrics(
         "healthy": True,
         "reason": "ok",
         "window_seconds": window_seconds,
+        "effective_window_seconds": effective_window_seconds,
         "buckets_observed": buckets_observed,
         "telemetry_samples": telemetry_samples,
         "request_count": request_count,
-        "requests_per_second": request_count / float(window_seconds),
+        "requests_per_second": request_count / effective_window_seconds,
         "errors_5xx": errors_5xx,
         "error_5xx_rate": (
             errors_5xx / request_count

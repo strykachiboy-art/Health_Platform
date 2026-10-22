@@ -122,11 +122,16 @@ def test_scale_out_runs_compose_dry_run_for_backend_only(tmp_path):
     assert command[:2] == ["docker", "compose"]
     assert "--project-name" in command
     assert "clinic-system-phase9" in command
-    assert command[-4:] == [
-        "scale",
+    assert command[-9:] == [
         "--dry-run",
+        "up",
+        "-d",
         "--no-deps",
+        "--no-recreate",
+        "--no-build",
+        "--scale",
         "backend=3",
+        "backend",
     ]
     assert "worker=3" not in command
     assert "redis=3" not in command
@@ -163,8 +168,10 @@ def test_explicit_active_project_is_used_for_discovery_and_preview(tmp_path):
     assert "label=com.docker.compose.project=clinic-system" in inspect_command
     scale_command = runner.calls[2][0]
     assert scale_command[scale_command.index("--project-name") + 1] == "clinic-system"
-    assert scale_command[-4:] == [
-        "scale", "--dry-run", "--no-deps", "backend=3"
+    assert scale_command[-9:] == [
+        "--dry-run", "up", "-d", "--no-deps",
+        "--no-recreate", "--no-build", "--scale",
+        "backend=3", "backend"
     ]
 
 
@@ -213,7 +220,11 @@ def test_scale_in_preview_targets_one_fewer_backend(tmp_path):
 
     assert result.status is ScalePreviewStatus.DRY_RUN_ACCEPTED
     assert result.observed_running_replicas == 3
-    assert runner.calls[2][0][-1] == "backend=2"
+    assert runner.calls[2][0][-9:] == [
+        "--dry-run", "up", "-d", "--no-deps",
+        "--no-recreate", "--no-build", "--scale",
+        "backend=2", "backend"
+    ]
     assert "--dry-run" in runner.calls[2][0]
 
 
@@ -574,3 +585,110 @@ def test_result_does_not_expose_raw_subprocess_output(tmp_path):
     assert result.ok
     assert "private output omitted" not in repr(result)
     assert result.exit_code == 0
+def test_scale_out_preview_refuses_image_build_in_plan(tmp_path):
+    config = make_project(tmp_path, project_name="clinic-system")
+    image = "clinic-system-phase9:wave1-local-20261021-r1"
+    running = "\r\n".join(
+        [
+            f"clinic-system-backend-{replica}|running|Up 1 minute (healthy)|{image}"
+            for replica in (1, 2, 3)
+        ]
+    ) + "\r\n"
+    dry_run = "\n".join(
+        [
+            "Container clinic-system-backend-1 Running",
+            "Container clinic-system-backend-2 Running",
+            "Container clinic-system-backend-3 Running",
+            f"Image {image} Building",
+            "Container clinic-system-backend-4 Creating",
+            "Container clinic-system-backend-4 Started",
+        ]
+    )
+    runner = FakeRunner(
+        [
+            completed(resolved_config({"image": image})),
+            completed(running),
+            completed(dry_run),
+        ]
+    )
+
+    result = ComposeScalingAdapter(config, runner=runner).preview(
+        scale_decision(current=3, target=4, ratio=1.0)
+    )
+
+    assert result.status is ScalePreviewStatus.REFUSED
+    assert result.reason == "compose_scale_plan_unsafe"
+
+def test_scale_out_preview_allows_unchanged_running_survivors(tmp_path):
+    config = make_project(tmp_path, project_name="clinic-system")
+    image = "clinic-system-phase9:wave1-local-20261021-r1"
+    running = "\r\n".join(
+        [
+            f"clinic-system-backend-{replica}|running|Up 1 minute (healthy)|{image}"
+            for replica in (1, 2, 3)
+        ]
+    ) + "\r\n"
+    dry_run = "\n".join(
+        [
+            "[+] scale 4/4",
+            "? Container clinic-system-backend-1 Running",
+            "? Container clinic-system-backend-2 Running",
+            "? Container clinic-system-backend-3 Running",
+            "? Container clinic-system-backend-4 Started",
+        ]
+    )
+
+    runner = FakeRunner(
+        [
+            completed(resolved_config({"image": image})),
+            completed(running),
+            completed(dry_run),
+        ]
+    )
+
+    result = ComposeScalingAdapter(config, runner=runner).preview(
+        scale_decision(current=3, target=4, ratio=1.0)
+    )
+
+    assert result.status is ScalePreviewStatus.DRY_RUN_ACCEPTED
+    assert result.ok is True
+    assert result.observed_running_replicas == 3
+    assert runner.calls[2][0][-9:] == [
+        "--dry-run", "up", "-d", "--no-deps",
+        "--no-recreate", "--no-build", "--scale",
+        "backend=4", "backend"
+    ]
+
+
+def test_scale_in_preview_allows_unchanged_running_survivors(tmp_path):
+    config = make_project(tmp_path)
+    dry_run = "\n".join(
+        [
+            "[+] scale 3/3",
+            "? Container clinic-system-phase9-backend-1 Running",
+            "? Container clinic-system-phase9-backend-2 Running",
+            "? Container clinic-system-phase9-backend-3 Removed",
+        ]
+    )
+
+    runner = FakeRunner(
+        [
+            completed(resolved_config()),
+            completed(HEALTHY_THREE),
+            completed(dry_run),
+        ]
+    )
+
+    result = ComposeScalingAdapter(config, runner=runner).preview(
+        scale_decision(
+            action=ScalingAction.SCALE_IN,
+            current=3,
+            target=2,
+            ratio=0.2,
+        ),
+        scale_in_drain_confirmed=True,
+    )
+
+    assert result.status is ScalePreviewStatus.DRY_RUN_ACCEPTED
+    assert result.ok is True
+    assert result.observed_running_replicas == 3
