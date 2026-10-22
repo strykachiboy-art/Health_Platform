@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
@@ -37,17 +38,19 @@ class ScalePreviewStatus(str, Enum):
 def _scale_dry_run_plan_is_safe(
     output: str,
     decision: ScalingDecision,
+    *,
+    project_name: str = EXPECTED_PROJECT_NAME,
 ) -> bool:
     """Fail closed unless Compose proposes only the intended replica change."""
     if not isinstance(output, str) or not output.strip():
         return False
 
     if decision.action is ScalingAction.SCALE_OUT:
-        expected_name = f"{EXPECTED_PROJECT_NAME}-backend-{decision.target_replicas}"
+        expected_name = f"{project_name}-backend-{decision.target_replicas}"
         allowed_actions = {"creating", "created", "starting", "started"}
         completion_action = "started"
     elif decision.action is ScalingAction.SCALE_IN:
-        expected_name = f"{EXPECTED_PROJECT_NAME}-backend-{decision.current_replicas}"
+        expected_name = f"{project_name}-backend-{decision.current_replicas}"
         allowed_actions = {"stopping", "stopped", "removing", "removed"}
         completion_action = "removed"
     else:
@@ -107,6 +110,7 @@ class ComposeScalingAdapterConfig:
     min_replicas: int
     max_replicas: int
     command_timeout_seconds: float = 20.0
+    project_name: str = EXPECTED_PROJECT_NAME
 
     def __post_init__(self) -> None:
         root = Path(self.project_root).resolve()
@@ -115,6 +119,12 @@ class ComposeScalingAdapterConfig:
             raise ValueError("project_root must be an existing directory")
 
         object.__setattr__(self, "project_root", root)
+
+        if (
+            not isinstance(self.project_name, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", self.project_name) is None
+        ):
+            raise ValueError("project_name must be a valid Docker Compose project name")
 
         if type(self.min_replicas) is not int or self.min_replicas < 1:
             raise ValueError("min_replicas must be an integer >= 1")
@@ -183,6 +193,11 @@ class ComposeScalingAdapter:
 
         self.config = config
         self._runner = runner
+
+    @property
+    def project_name(self) -> str:
+        """Compose project targeted by this adapter."""
+        return self.config.project_name
 
     def preview(
         self,
@@ -336,6 +351,15 @@ class ComposeScalingAdapter:
                 command=config_command,
             )
 
+        backend_image = backend.get("image")
+        if not isinstance(backend_image, str) or not backend_image.strip():
+            return self._result(
+                ScalePreviewStatus.REFUSED,
+                "backend_image_missing",
+                decision,
+                command=config_command,
+            )
+
         if backend.get("container_name"):
             return self._result(
                 ScalePreviewStatus.REFUSED,
@@ -406,11 +430,11 @@ class ComposeScalingAdapter:
             "docker",
             "ps",
             "--filter",
-            f"label=com.docker.compose.project={EXPECTED_PROJECT_NAME}",
+            f"label=com.docker.compose.project={self.config.project_name}",
             "--filter",
             f"label=com.docker.compose.service={BACKEND_SERVICE_NAME}",
             "--format",
-            "{{.Names}}|{{.State}}|{{.Status}}",
+            "{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}",
         ]
         ps_result, error = self._invoke(ps_command)
 
@@ -437,10 +461,10 @@ class ComposeScalingAdapter:
             if line.strip()
         ]
 
-        parsed_rows: list[tuple[str, str, str]] = []
+        parsed_rows: list[tuple[str, str, str, str]] = []
         for row in rows:
-            parts = row.split("|", 2)
-            if len(parts) != 3 or not all(parts):
+            parts = row.split("|", 3)
+            if len(parts) != 4 or not all(parts):
                 return self._result(
                     ScalePreviewStatus.REFUSED,
                     "docker_container_inspection_malformed",
@@ -448,7 +472,9 @@ class ComposeScalingAdapter:
                     observed_running_replicas=len(rows),
                     command=ps_command,
                 )
-            parsed_rows.append((parts[0], parts[1].lower(), parts[2].lower()))
+            parsed_rows.append(
+                (parts[0], parts[1].lower(), parts[2].lower(), parts[3].lower())
+            )
 
         observed_count = len(parsed_rows)
 
@@ -461,7 +487,7 @@ class ComposeScalingAdapter:
                 command=ps_command,
             )
 
-        for _name, state, status in parsed_rows:
+        for _name, state, status, image in parsed_rows:
             if state != "running":
                 return self._result(
                     ScalePreviewStatus.REFUSED,
@@ -475,6 +501,15 @@ class ComposeScalingAdapter:
                 return self._result(
                     ScalePreviewStatus.REFUSED,
                     "backend_not_healthy",
+                    decision,
+                    observed_running_replicas=observed_count,
+                    command=ps_command,
+                )
+
+            if image != backend_image.lower():
+                return self._result(
+                    ScalePreviewStatus.REFUSED,
+                    "backend_image_mismatch",
                     decision,
                     observed_running_replicas=observed_count,
                     command=ps_command,
@@ -519,7 +554,11 @@ class ComposeScalingAdapter:
             if isinstance(part, str)
         )
 
-        if not _scale_dry_run_plan_is_safe(plan_output, decision):
+        if not _scale_dry_run_plan_is_safe(
+            plan_output,
+            decision,
+            project_name=self.config.project_name,
+        ):
             return self._result(
                 ScalePreviewStatus.REFUSED,
                 "compose_scale_plan_unsafe",
@@ -543,7 +582,7 @@ class ComposeScalingAdapter:
             "docker",
             "compose",
             "--project-name",
-            EXPECTED_PROJECT_NAME,
+            self.config.project_name,
             "--env-file",
             ENV_FILE_NAME,
         ]

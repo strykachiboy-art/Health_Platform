@@ -93,4 +93,11 @@ def test_request_limits_and_socketio_forwarding_are_configured(
         not in config
     )
 
-    assert "proxy_pass http://backend:5000;" in config
+    assert "upstream clinic_api_backend {" in config
+    assert "server backend:5000 resolve max_fails=2 fail_timeout=10s;" in config
+    assert "proxy_pass http://clinic_api_backend;" in config
+    assert (
+        "proxy_next_upstream error timeout http_502 http_503 http_504;"
+        in config
+    )
+    assert "proxy_next_upstream_tries 2;" in config

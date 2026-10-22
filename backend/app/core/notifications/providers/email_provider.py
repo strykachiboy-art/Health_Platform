@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 import smtplib
+import ssl
 from typing import Any
 
 from app.core.exceptions import ValidationError
@@ -241,19 +242,30 @@ class EmailNotificationProvider(NotificationProviderBase):
                 "Email provider password is invalid"
             )
 
-        smtp_class = (
-            smtplib.SMTP_SSL
-            if use_ssl
-            else smtplib.SMTP
-        )
+        if not use_ssl and not use_tls:
+            raise ValidationError(
+                "Email provider requires SSL or STARTTLS"
+            )
 
-        with smtp_class(
-            host,
-            port,
-            timeout=30,
-        ) as smtp:
+        if use_ssl:
+            smtp_connection = smtplib.SMTP_SSL(
+                host,
+                port,
+                timeout=30,
+                context=ssl.create_default_context(),
+            )
+        else:
+            smtp_connection = smtplib.SMTP(
+                host,
+                port,
+                timeout=30,
+            )
+
+        with smtp_connection as smtp:
             if use_tls:
-                smtp.starttls()
+                smtp.starttls(
+                    context=ssl.create_default_context(),
+                )
 
             if username:
                 smtp.login(

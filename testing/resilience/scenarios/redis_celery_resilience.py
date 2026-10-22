@@ -13,6 +13,10 @@ from app.core.notifications.services import (
     notification_service,
 )
 from app.extensions import celery, db
+from app.modules.chat.tasks.chat_outbox_task import (
+    process_chat_outbox,
+    recover_stale_chat_outbox,
+)
 
 
 PROFILE_ENDPOINT = "/api/v1/profile/me"
@@ -225,3 +229,35 @@ def test_celery_beat_schedule_references_registered_tasks(
     assert expected_tasks.issubset(
         registered_tasks
     )
+
+def test_chat_outbox_tasks_are_registered_and_scheduled(
+    app,
+):
+    expected_schedule = {
+        "process-chat-outbox-every-5-seconds": (
+            process_chat_outbox.name,
+            5.0,
+        ),
+        "recover-stale-chat-outbox-every-minute": (
+            recover_stale_chat_outbox.name,
+            60.0,
+        ),
+    }
+
+    beat_schedule = celery.conf.beat_schedule
+    registered_tasks = set(celery.tasks.keys())
+    scheduled_tasks = {
+        entry["task"]
+        for entry in beat_schedule.values()
+    }
+
+    for entry_name, expected in expected_schedule.items():
+        expected_task_name, expected_interval = expected
+
+        assert entry_name in beat_schedule
+        entry = beat_schedule[entry_name]
+
+        assert entry["task"] == expected_task_name
+        assert entry["schedule"] == expected_interval
+        assert entry["task"] in scheduled_tasks
+        assert entry["task"] in registered_tasks

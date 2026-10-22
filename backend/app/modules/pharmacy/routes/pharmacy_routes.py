@@ -10,6 +10,7 @@ from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
 from app.core.utils.decorators import (
+    active_staff_required,
     emergency_aware_role_required,
     get_current_clinic_id,
     role_required,
@@ -173,6 +174,7 @@ def _get_current_staff() -> Staff:
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def list_drugs_route():
     clinic_id = _get_current_clinic_id()
 
@@ -205,6 +207,7 @@ def list_drugs_route():
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def get_drug_route(
     drug_id: int,
 ):
@@ -231,6 +234,7 @@ def get_drug_route(
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def create_drug_route():
     clinic_id = _get_current_clinic_id()
 
@@ -263,6 +267,7 @@ def create_drug_route():
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def update_drug_route(
     drug_id: int,
 ):
@@ -297,6 +302,7 @@ def update_drug_route(
 @role_required(
     Role.ADMIN
 )
+@active_staff_required
 def activate_drug_route(
     drug_id: int,
 ):
@@ -325,6 +331,7 @@ def activate_drug_route(
 @role_required(
     Role.ADMIN
 )
+@active_staff_required
 def deactivate_drug_route(
     drug_id: int,
 ):
@@ -359,6 +366,7 @@ def deactivate_drug_route(
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def list_batches_route(
     drug_id: int,
 ):
@@ -394,6 +402,7 @@ def list_batches_route(
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def list_expiring_batches_route():
     clinic_id = _get_current_clinic_id()
 
@@ -426,6 +435,7 @@ def list_expiring_batches_route():
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def get_batch_route(
     batch_id: int,
 ):
@@ -452,6 +462,7 @@ def get_batch_route(
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def create_batch_route():
     clinic_id = _get_current_clinic_id()
 
@@ -484,6 +495,7 @@ def create_batch_route():
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def get_stock_summary_route(
     drug_id: int,
 ):
@@ -515,6 +527,7 @@ def get_stock_summary_route(
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def create_dispense_record_route():
     user = _get_current_user()
     clinic_id = _get_current_clinic_id()
@@ -577,6 +590,7 @@ def create_dispense_record_route():
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def get_dispense_record_route(
     dispense_record_id: int,
 ):
@@ -645,6 +659,7 @@ def get_dispense_record_route(
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def list_dispense_records_route(
     prescription_id: int,
 ):
@@ -781,6 +796,7 @@ def list_dispense_records_route(
     Role.ADMIN,
     Role.PHARMACIST,
 )
+@active_staff_required
 def cancel_dispense_record_route(
     dispense_record_id: int,
 ):

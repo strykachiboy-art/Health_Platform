@@ -20,7 +20,11 @@ from app.core.exceptions import (
     ValidationError,
 )
 
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import (
+    active_staff_required,
+    get_current_clinic_id,
+    role_required,
+)
 
 from app.modules.ambulance.schemas.ambulance_trip_schema import (
     AmbulanceTripCancelSchema,
@@ -275,6 +279,7 @@ def _trip_data(trip):
 
 @trip_bp.post("")
 @role_required(*TRIP_MANAGEMENT_ROLES)
+@active_staff_required
 def create_ambulance_trip():
     payload = _payload(
         AmbulanceTripRequestSchema,
@@ -314,6 +319,7 @@ def create_ambulance_trip():
 
 @trip_bp.get("")
 @role_required(*TRIP_VIEW_ROLES)
+@active_staff_required
 def get_ambulance_trips():
     try:
         clinic_id = _current_clinic_id()
@@ -375,6 +381,7 @@ def get_ambulance_trips():
 
 @trip_bp.get("/<int:trip_id>")
 @role_required(*TRIP_VIEW_ROLES)
+@active_staff_required
 def get_ambulance_trip(
     trip_id: int,
 ):
@@ -401,6 +408,7 @@ def get_ambulance_trip(
 
 @trip_bp.post("/<int:trip_id>/dispatch")
 @role_required(*TRIP_MANAGEMENT_ROLES)
+@active_staff_required
 def dispatch_ambulance_trip(
     trip_id: int,
 ):
@@ -435,6 +443,7 @@ def dispatch_ambulance_trip(
 
 @trip_bp.patch("/<int:trip_id>/status")
 @role_required(*TRIP_CREW_ROLES)
+@active_staff_required
 def update_ambulance_trip_status(
     trip_id: int,
 ):
@@ -469,6 +478,7 @@ def update_ambulance_trip_status(
 
 @trip_bp.post("/<int:trip_id>/patient")
 @role_required(*TRIP_MANAGEMENT_ROLES)
+@active_staff_required
 def link_ambulance_patient(
     trip_id: int,
 ):
@@ -503,6 +513,7 @@ def link_ambulance_patient(
 
 @trip_bp.post("/<int:trip_id>/complete")
 @role_required(*TRIP_CREW_ROLES)
+@active_staff_required
 def complete_ambulance_trip(
     trip_id: int,
 ):
@@ -529,6 +540,7 @@ def complete_ambulance_trip(
 
 @trip_bp.post("/<int:trip_id>/invoice")
 @role_required(*TRIP_MANAGEMENT_ROLES)
+@active_staff_required
 def link_ambulance_invoice(
     trip_id: int,
 ):
@@ -563,6 +575,7 @@ def link_ambulance_invoice(
 
 @trip_bp.post("/<int:trip_id>/cancel")
 @role_required(*TRIP_MANAGEMENT_ROLES)
+@active_staff_required
 def cancel_ambulance_trip(
     trip_id: int,
 ):

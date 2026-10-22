@@ -354,6 +354,9 @@ def _call_openai(
     try:
         client = OpenAI(
             api_key=api_key,
+            base_url="https://api.openai.com/v1",
+            timeout=timeout_seconds,
+            max_retries=0,
         )
 
         response = client.chat.completions.create(

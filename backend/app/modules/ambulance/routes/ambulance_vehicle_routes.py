@@ -20,7 +20,11 @@ from app.core.exceptions import (
     ValidationError,
 )
 
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import (
+    active_staff_required,
+    get_current_clinic_id,
+    role_required,
+)
 
 from app.modules.ambulance.schemas.ambulance_vehicle_schema import (
     AmbulanceVehicleCreateSchema,
@@ -217,6 +221,7 @@ def _vehicle_data(vehicle):
 
 @vehicle_bp.post("")
 @role_required(*VEHICLE_MANAGEMENT_ROLES)
+@active_staff_required
 def create_ambulance_vehicle():
     payload = _payload(
         AmbulanceVehicleCreateSchema,
@@ -256,6 +261,7 @@ def create_ambulance_vehicle():
 
 @vehicle_bp.get("")
 @role_required(*VEHICLE_VIEW_ROLES)
+@active_staff_required
 def get_ambulance_vehicles():
     try:
         clinic_id = _current_clinic_id()
@@ -317,6 +323,7 @@ def get_ambulance_vehicles():
 
 @vehicle_bp.get("/<int:vehicle_id>")
 @role_required(*VEHICLE_VIEW_ROLES)
+@active_staff_required
 def get_ambulance_vehicle(
     vehicle_id: int,
 ):
@@ -343,6 +350,7 @@ def get_ambulance_vehicle(
 
 @vehicle_bp.patch("/<int:vehicle_id>/status")
 @role_required(*VEHICLE_MANAGEMENT_ROLES)
+@active_staff_required
 def update_ambulance_vehicle_status(
     vehicle_id: int,
 ):

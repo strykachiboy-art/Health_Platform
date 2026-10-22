@@ -328,6 +328,41 @@ class TestEmailNotificationProvider:
                 email="patient@example.com",
             )
 
+    def test_plaintext_smtp_is_rejected(
+        self,
+        make_notification,
+        clinic,
+        user,
+    ):
+        notification = make_notification(
+            clinic_id=clinic.id,
+            user_id=user.id,
+        )
+
+        provider = EmailNotificationProvider(
+            credentials={
+                "host": "smtp.example.com",
+                "port": 25,
+                "from_email": "mailer@example.com",
+                "use_ssl": False,
+                "use_tls": False,
+            }
+        )
+
+        with patch(
+            "app.core.notifications.providers.email_provider.smtplib.SMTP"
+        ) as smtp_class:
+            with pytest.raises(
+                ValidationError,
+                match="requires SSL or STARTTLS",
+            ):
+                provider.send(
+                    notification=notification,
+                    email="patient@example.com",
+                )
+
+            smtp_class.assert_not_called()
+
     def test_ssl_transport_is_supported(
         self,
         make_notification,

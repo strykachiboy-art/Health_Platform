@@ -29,14 +29,14 @@ from app.core.autoscaling.decision_engine import (
 START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def output_for(count=2, *, bad_index=None):
+def output_for(count=2, *, bad_index=None, project_name="clinic-system-phase9"):
     rows = []
     for index in range(1, count + 1):
         status = "Up 5 hours (healthy)"
         if bad_index == index:
             status = "Up 5 hours (unhealthy)"
         rows.append(
-            f"{index:012x}|clinic-system-phase9-backend-{index}|running|{status}"
+            f"{index:012x}|{project_name}-backend-{index}|running|{status}"
         )
     return "\n".join(rows)
 
@@ -59,14 +59,22 @@ class StaticRunner:
         )
 
 
-def make_replica_reader(tmp_path, *, stdout=None, returncode=0, error=None):
+def make_replica_reader(
+    tmp_path,
+    *,
+    stdout=None,
+    returncode=0,
+    error=None,
+    project_name="clinic-system-phase9",
+):
     runner = StaticRunner(
-        stdout=output_for() if stdout is None else stdout,
+        stdout=output_for(project_name=project_name) if stdout is None else stdout,
         returncode=returncode,
         error=error,
     )
     reader = ComposeBackendReplicaReader(
         project_root=Path(tmp_path),
+        project_name=project_name,
         runner=runner,
     )
     return reader, runner
@@ -95,6 +103,23 @@ def test_reader_counts_only_confirmed_healthy_backend_replicas(tmp_path):
     assert "label=com.docker.compose.service=backend" in command
     assert kwargs["cwd"] == str(Path(tmp_path).resolve())
     assert kwargs["check"] is False
+
+
+def test_reader_can_explicitly_target_active_project(tmp_path):
+    reader, runner = make_replica_reader(
+        tmp_path,
+        project_name="clinic-system",
+        stdout=output_for(project_name="clinic-system"),
+    )
+
+    snapshot = reader.read()
+
+    assert snapshot.healthy is True
+    assert snapshot.backend_names == (
+        "clinic-system-backend-1",
+        "clinic-system-backend-2",
+    )
+    assert "label=com.docker.compose.project=clinic-system" in runner.calls[0][0]
 
 
 def test_reader_refuses_unhealthy_backend(tmp_path):
@@ -182,14 +207,21 @@ class PreviewSpy:
         )
 
 
-def make_controller(tmp_path, *, bad_backend=False):
+def make_controller(
+    tmp_path,
+    *,
+    bad_backend=False,
+    project_name="clinic-system-phase9",
+    preview_project_name=None,
+):
     reader, runner = make_replica_reader(
         tmp_path,
         stdout=(
-            output_for(bad_index=2)
+            output_for(bad_index=2, project_name=project_name)
             if bad_backend
-            else output_for()
+            else output_for(project_name=project_name)
         ),
+        project_name=project_name,
     )
 
     def metrics_collector(**kwargs):
@@ -224,6 +256,8 @@ def make_controller(tmp_path, *, bad_backend=False):
         )
     )
     preview = PreviewSpy()
+    if preview_project_name is not None:
+        preview.project_name = preview_project_name
     coordinator = AutoscalingCoordinator(engine, preview)
     controller = APIBackendAutoscalingController(
         replica_reader=reader,
@@ -272,9 +306,18 @@ def test_controller_does_not_preview_when_any_backend_is_unhealthy(tmp_path):
     assert preview.calls == []
 
 
-def test_reader_rejects_another_project_name(tmp_path):
-    with pytest.raises(ValueError, match="expected deployment"):
+def test_reader_rejects_invalid_project_name(tmp_path):
+    with pytest.raises(ValueError, match="valid Docker Compose project name"):
         ComposeBackendReplicaReader(
             project_root=Path(tmp_path),
-            project_name="unrelated-project",
+            project_name="../clinic-system",
+        )
+
+
+def test_controller_rejects_discovery_and_scaling_project_mismatch(tmp_path):
+    with pytest.raises(ValueError, match="same Docker Compose project"):
+        make_controller(
+            tmp_path,
+            project_name="clinic-system",
+            preview_project_name="clinic-system-phase9",
         )

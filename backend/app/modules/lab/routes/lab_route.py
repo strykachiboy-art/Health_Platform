@@ -10,6 +10,7 @@ from app.core.exceptions import DomainError, ValidationError
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.utils.decorators import (
+    active_staff_required,
     emergency_aware_role_required,
     get_current_clinic_id,
     role_required,
@@ -385,6 +386,7 @@ def _serialize_lab_order_page(result):
 
 @lab_bp.post("/tests")
 @role_required(*LAB_MANAGEMENT_ROLES)
+@active_staff_required
 def create_lab_test_route():
     try:
         data = LabTestCreateSchema.model_validate(
@@ -422,6 +424,7 @@ def create_lab_test_route():
 
 @lab_bp.get("/tests")
 @role_required(*LAB_VIEW_ROLES)
+@active_staff_required
 def list_lab_tests_route():
     try:
         data = LabTestListQuerySchema.model_validate(
@@ -451,6 +454,7 @@ def list_lab_tests_route():
 
 @lab_bp.get("/tests/<int:test_id>")
 @role_required(*LAB_VIEW_ROLES)
+@active_staff_required
 def get_lab_test_route(test_id: int):
     try:
         clinic_id = _get_current_clinic_id()
@@ -471,6 +475,7 @@ def get_lab_test_route(test_id: int):
 
 @lab_bp.patch("/tests/<int:test_id>")
 @role_required(*LAB_MANAGEMENT_ROLES)
+@active_staff_required
 def update_lab_test_route(test_id: int):
     try:
         data = LabTestUpdateSchema.model_validate(
@@ -508,6 +513,7 @@ def update_lab_test_route(test_id: int):
 
 @lab_bp.post("/orders")
 @role_required(*LAB_CLINICAL_ROLES)
+@active_staff_required
 def create_lab_order_route():
     try:
         data = LabOrderCreateSchema.model_validate(
@@ -540,6 +546,7 @@ def create_lab_order_route():
 
 @lab_bp.get("/orders/<int:order_id>")
 @emergency_aware_role_required(*LAB_VIEW_ROLES)
+@active_staff_required
 def get_lab_order_route(order_id: int):
     try:
         clinic_id = _get_current_clinic_id()
@@ -593,6 +600,7 @@ def get_lab_order_route(order_id: int):
 
 @lab_bp.get("/orders")
 @emergency_aware_role_required(*LAB_VIEW_ROLES)
+@active_staff_required
 def list_orders_for_patient_route():
     try:
         data = LabOrderListQuerySchema.model_validate(
@@ -659,6 +667,7 @@ def list_orders_for_patient_route():
     "/orders/<int:order_id>/collect-sample"
 )
 @role_required(*LAB_TECHNICIAN_ROLES)
+@active_staff_required
 def collect_sample_route(order_id: int):
     try:
         data = LabSampleCollectionSchema.model_validate(
@@ -696,6 +705,7 @@ def collect_sample_route(order_id: int):
     "/orders/<int:order_id>/equipment"
 )
 @role_required(*LAB_TECHNICIAN_ROLES)
+@active_staff_required
 def link_equipment_route(order_id: int):
     try:
         data = LabEquipmentLinkSchema.model_validate(
@@ -735,6 +745,7 @@ def link_equipment_route(order_id: int):
     "/orders/<int:order_id>/process"
 )
 @role_required(*LAB_TECHNICIAN_ROLES)
+@active_staff_required
 def process_sample_route(order_id: int):
     try:
         data = LabProcessingSchema.model_validate(
@@ -774,6 +785,7 @@ def process_sample_route(order_id: int):
     "/order-items/<int:order_item_id>/result"
 )
 @role_required(*LAB_TECHNICIAN_ROLES)
+@active_staff_required
 def enter_result_route(order_item_id: int):
     try:
         data = LabResultCreateSchema.model_validate(
@@ -812,6 +824,7 @@ def enter_result_route(order_item_id: int):
     "/orders/<int:order_id>/verify"
 )
 @role_required(*LAB_TECHNICIAN_ROLES)
+@active_staff_required
 def verify_results_route(order_id: int):
     try:
         LabVerificationSchema.model_validate(
@@ -848,6 +861,7 @@ def verify_results_route(order_id: int):
     "/orders/<int:order_id>/complete"
 )
 @role_required(*LAB_TECHNICIAN_ROLES)
+@active_staff_required
 def complete_order_route(order_id: int):
     try:
         clinic_id = _get_current_clinic_id()
@@ -875,6 +889,7 @@ def complete_order_route(order_id: int):
     "/orders/<int:order_id>/cancel"
 )
 @role_required(*LAB_CLINICAL_ROLES)
+@active_staff_required
 def cancel_order_route(order_id: int):
     try:
         data = LabOrderCancelSchema.model_validate(

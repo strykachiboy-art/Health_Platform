@@ -189,6 +189,14 @@ def init_extensions(app):
                 "task": "mark_overdue_invoices",
                 "schedule": 3600.0,
             },
+            "process-chat-outbox-every-5-seconds": {
+                "task": "process_chat_outbox",
+                "schedule": 5.0,
+            },
+            "recover-stale-chat-outbox-every-minute": {
+                "task": "recover_stale_chat_outbox",
+                "schedule": 60.0,
+            },
             "reset-monthly-ai-usage": {
                 "task": "reset_monthly_ai_usage",
                 "schedule": crontab(

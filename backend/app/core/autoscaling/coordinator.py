@@ -80,6 +80,12 @@ class AutoscalingCoordinator:
         self._decision_engine = decision_engine
         self._preview_adapter = preview_adapter
 
+    @property
+    def project_name(self) -> str | None:
+        """Configured Compose project, when the preview adapter exposes one."""
+        value = getattr(self._preview_adapter, "project_name", None)
+        return value if isinstance(value, str) else None
+
     def run_cycle(
         self,
         observation: ScalingObservation,

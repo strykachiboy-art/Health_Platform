@@ -7,6 +7,7 @@ from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
 from app.core.utils.decorators import (
+    active_staff_required,
     emergency_aware_role_required,
     get_current_clinic_id,
     role_required,
@@ -243,6 +244,7 @@ def _serialize_paginated_prescriptions(
 @role_required(
     *PRESCRIPTION_WRITE_ROLES
 )
+@active_staff_required
 def create_prescription_route():
     clinic_id = _get_current_clinic_id()
     staff = _get_current_staff()
@@ -308,6 +310,7 @@ def create_prescription_route():
 @emergency_aware_role_required(
     *PRESCRIPTION_VIEW_ROLES
 )
+@active_staff_required
 def get_prescription_route(
     prescription_id: int,
 ):
@@ -371,6 +374,7 @@ def get_prescription_route(
 @emergency_aware_role_required(
     *PRESCRIPTION_VIEW_ROLES
 )
+@active_staff_required
 def list_patient_prescriptions_route(
     patient_id: int,
 ):
@@ -435,6 +439,7 @@ def list_patient_prescriptions_route(
 @role_required(
     *PRESCRIPTION_WRITE_ROLES
 )
+@active_staff_required
 def cancel_prescription_route(
     prescription_id: int,
 ):
@@ -467,6 +472,7 @@ def cancel_prescription_route(
 @role_required(
     *PRESCRIPTION_LIFECYCLE_ROLES
 )
+@active_staff_required
 def complete_prescription_route(
     prescription_id: int,
 ):
@@ -498,6 +504,7 @@ def complete_prescription_route(
 @role_required(
     *PRESCRIPTION_VIEW_ROLES
 )
+@active_staff_required
 def check_drug_interactions_route():
     clinic_id = _get_current_clinic_id()
 
@@ -530,6 +537,7 @@ def check_drug_interactions_route():
 @role_required(
     *DRUG_INTERACTION_MANAGEMENT_ROLES
 )
+@active_staff_required
 def create_drug_interaction_route():
     payload = DrugInteractionCreateSchema.model_validate(
         _json_body()

@@ -518,6 +518,48 @@ def test_exchange_google_code_handles_request_failure(
             )
 
 
+def test_bounded_google_auth_request_uses_ten_second_timeout():
+    session = MagicMock()
+    request = google_auth_service._BoundedGoogleAuthRequest(
+        session=session,
+    )
+
+    request("https://www.googleapis.com/oauth2/v1/certs")
+
+    session.request.assert_called_once_with(
+        "GET",
+        "https://www.googleapis.com/oauth2/v1/certs",
+        data=None,
+        headers=None,
+        timeout=10,
+    )
+
+
+def test_exchange_google_code_rejects_redirect(
+    app,
+):
+    app.config["GOOGLE_CLIENT_ID"] = "client-id"
+    app.config["GOOGLE_CLIENT_SECRET"] = "client-secret"
+    app.config["GOOGLE_REDIRECT_URI"] = "http://localhost/callback"
+
+    response = MagicMock()
+    response.status_code = 302
+    response.ok = True
+
+    with patch.object(
+        google_auth_service.requests,
+        "post",
+        return_value=response,
+    ) as post_mock:
+        with pytest.raises(
+            ValidationError,
+            match="unexpected redirect",
+        ):
+            google_auth_service.exchange_google_code("code")
+
+    assert post_mock.call_args.kwargs["allow_redirects"] is False
+
+
 def test_exchange_google_code_handles_google_error(
     app,
 ):
@@ -670,6 +712,7 @@ def test_exchange_google_code_success(
         == "authorization_code"
     )
     assert kwargs["timeout"] == 10
+    assert kwargs["allow_redirects"] is False
 
 
 # ============================================================================
@@ -707,6 +750,25 @@ def test_get_google_user_info_handles_request_failure():
             google_auth_service.get_google_user_info(
                 "token"
             )
+
+
+def test_get_google_user_info_rejects_redirect():
+    response = MagicMock()
+    response.status_code = 302
+    response.ok = True
+
+    with patch.object(
+        google_auth_service.requests,
+        "get",
+        return_value=response,
+    ) as get_mock:
+        with pytest.raises(
+            ValidationError,
+            match="unexpected redirect",
+        ):
+            google_auth_service.get_google_user_info("token")
+
+    assert get_mock.call_args.kwargs["allow_redirects"] is False
 
 
 def test_get_google_user_info_handles_http_failure():
@@ -880,6 +942,7 @@ def test_get_google_user_info_normalizes_email():
             "Accept": "application/json",
         },
         timeout=10,
+        allow_redirects=False,
     )
 
 

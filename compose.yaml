@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:18
     environment:
-      POSTGRES_DB: clinic_system
-      POSTGRES_USER: clinic
-      POSTGRES_PASSWORD: clinic_phase6
+      POSTGRES_DB: ${PHASE6_POSTGRES_DB:?PHASE6_POSTGRES_DB is required}
+      POSTGRES_USER: ${PHASE6_POSTGRES_USER:?PHASE6_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${PHASE6_POSTGRES_PASSWORD:?PHASE6_POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -31,19 +31,26 @@ services:
       context: ./backend
     environment:
       FLASK_ENV: production
+      SQLALCHEMY_POOL_SIZE: "${PHASE6_SQLALCHEMY_POOL_SIZE:-3}"
+      SQLALCHEMY_MAX_OVERFLOW: "${PHASE6_SQLALCHEMY_MAX_OVERFLOW:-2}"
+      SQLALCHEMY_POOL_TIMEOUT_SECONDS: "${PHASE6_SQLALCHEMY_POOL_TIMEOUT_SECONDS:-5}"
+      SQLALCHEMY_POOL_RECYCLE_SECONDS: "${PHASE6_SQLALCHEMY_POOL_RECYCLE_SECONDS:-1800}"
       PORT: 5000
       # Drain control stays disabled until a strong token is provisioned.
       PHASE9_BACKEND_DRAIN_TOKEN: ${PHASE9_BACKEND_DRAIN_TOKEN:-}
-      SECRET_KEY: phase6-development-secret
-      JWT_SECRET_KEY: phase6-development-jwt-secret
-      DATABASE_URL: postgresql://clinic:clinic_phase6@postgres:5432/clinic_system
+      SECRET_KEY: ${PHASE6_SECRET_KEY:?PHASE6_SECRET_KEY is required}
+      JWT_SECRET_KEY: ${PHASE6_JWT_SECRET_KEY:?PHASE6_JWT_SECRET_KEY is required}
+      DATABASE_URL: postgresql://${PHASE6_POSTGRES_USER:?PHASE6_POSTGRES_USER is required}:${PHASE6_POSTGRES_PASSWORD:?PHASE6_POSTGRES_PASSWORD is required}@postgres:5432/${PHASE6_POSTGRES_DB:?PHASE6_POSTGRES_DB is required}
       REDIS_URL: redis://redis:6379/0
       CORS_ALLOWED_ORIGINS: http://localhost:3000
       PAYMENT_WEBHOOK_RATE_LIMIT: "${PAYMENT_WEBHOOK_RATE_LIMIT:-300 per minute}"
       STORAGE_ROOT: /data/storage
       BACKUP_ROOT: /data/backups
-      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      BACKUP_ENCRYPTION_KEY: ${PHASE6_BACKUP_ENCRYPTION_KEY:?PHASE6_BACKUP_ENCRYPTION_KEY is required}
       BACKUP_ENCRYPTION_KEY_VERSION: ${BACKUP_ENCRYPTION_KEY_VERSION:-1}
+      INTEGRATION_ENCRYPTION_KEY: ${PHASE6_INTEGRATION_ENCRYPTION_KEY:?PHASE6_INTEGRATION_ENCRYPTION_KEY is required}
+      INTEGRATION_ENCRYPTION_KEY_VERSION: ${INTEGRATION_ENCRYPTION_KEY_VERSION:-1}
+      INTEGRATION_ENCRYPTION_LEGACY_KEYS: ${INTEGRATION_ENCRYPTION_LEGACY_KEYS:-{}}
     volumes:
       - ./runtime/storage:/data/storage
       - ./runtime/backups:/data/backups
@@ -52,8 +59,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "5000:5000"
     healthcheck:
       test:
         [
@@ -69,18 +74,25 @@ services:
   worker:
     build:
       context: ./backend
-    command: ["celery", "-A", "celery_worker.celery", "worker", "--loglevel=INFO"]
+    command: ["celery", "-A", "celery_worker.celery", "worker", "--loglevel=INFO", "--concurrency=2"]
     environment:
       FLASK_ENV: production
-      SECRET_KEY: phase6-development-secret
-      JWT_SECRET_KEY: phase6-development-jwt-secret
-      DATABASE_URL: postgresql://clinic:clinic_phase6@postgres:5432/clinic_system
+      SQLALCHEMY_POOL_SIZE: "${PHASE6_SQLALCHEMY_POOL_SIZE:-3}"
+      SQLALCHEMY_MAX_OVERFLOW: "${PHASE6_SQLALCHEMY_MAX_OVERFLOW:-2}"
+      SQLALCHEMY_POOL_TIMEOUT_SECONDS: "${PHASE6_SQLALCHEMY_POOL_TIMEOUT_SECONDS:-5}"
+      SQLALCHEMY_POOL_RECYCLE_SECONDS: "${PHASE6_SQLALCHEMY_POOL_RECYCLE_SECONDS:-1800}"
+      SECRET_KEY: ${PHASE6_SECRET_KEY:?PHASE6_SECRET_KEY is required}
+      JWT_SECRET_KEY: ${PHASE6_JWT_SECRET_KEY:?PHASE6_JWT_SECRET_KEY is required}
+      DATABASE_URL: postgresql://${PHASE6_POSTGRES_USER:?PHASE6_POSTGRES_USER is required}:${PHASE6_POSTGRES_PASSWORD:?PHASE6_POSTGRES_PASSWORD is required}@postgres:5432/${PHASE6_POSTGRES_DB:?PHASE6_POSTGRES_DB is required}
       REDIS_URL: redis://redis:6379/0
       CORS_ALLOWED_ORIGINS: http://localhost:3000
       STORAGE_ROOT: /data/storage
       BACKUP_ROOT: /data/backups
-      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      BACKUP_ENCRYPTION_KEY: ${PHASE6_BACKUP_ENCRYPTION_KEY:?PHASE6_BACKUP_ENCRYPTION_KEY is required}
       BACKUP_ENCRYPTION_KEY_VERSION: ${BACKUP_ENCRYPTION_KEY_VERSION:-1}
+      INTEGRATION_ENCRYPTION_KEY: ${PHASE6_INTEGRATION_ENCRYPTION_KEY:?PHASE6_INTEGRATION_ENCRYPTION_KEY is required}
+      INTEGRATION_ENCRYPTION_KEY_VERSION: ${INTEGRATION_ENCRYPTION_KEY_VERSION:-1}
+      INTEGRATION_ENCRYPTION_LEGACY_KEYS: ${INTEGRATION_ENCRYPTION_LEGACY_KEYS:-{}}
     volumes:
       - ./runtime/storage:/data/storage
       - ./runtime/backups:/data/backups
@@ -96,15 +108,22 @@ services:
     command: ["celery", "-A", "celery_worker.celery", "beat", "--loglevel=INFO"]
     environment:
       FLASK_ENV: production
-      SECRET_KEY: phase6-development-secret
-      JWT_SECRET_KEY: phase6-development-jwt-secret
-      DATABASE_URL: postgresql://clinic:clinic_phase6@postgres:5432/clinic_system
+      SQLALCHEMY_POOL_SIZE: "${PHASE6_SQLALCHEMY_POOL_SIZE:-3}"
+      SQLALCHEMY_MAX_OVERFLOW: "${PHASE6_SQLALCHEMY_MAX_OVERFLOW:-2}"
+      SQLALCHEMY_POOL_TIMEOUT_SECONDS: "${PHASE6_SQLALCHEMY_POOL_TIMEOUT_SECONDS:-5}"
+      SQLALCHEMY_POOL_RECYCLE_SECONDS: "${PHASE6_SQLALCHEMY_POOL_RECYCLE_SECONDS:-1800}"
+      SECRET_KEY: ${PHASE6_SECRET_KEY:?PHASE6_SECRET_KEY is required}
+      JWT_SECRET_KEY: ${PHASE6_JWT_SECRET_KEY:?PHASE6_JWT_SECRET_KEY is required}
+      DATABASE_URL: postgresql://${PHASE6_POSTGRES_USER:?PHASE6_POSTGRES_USER is required}:${PHASE6_POSTGRES_PASSWORD:?PHASE6_POSTGRES_PASSWORD is required}@postgres:5432/${PHASE6_POSTGRES_DB:?PHASE6_POSTGRES_DB is required}
       REDIS_URL: redis://redis:6379/0
       CORS_ALLOWED_ORIGINS: http://localhost:3000
       STORAGE_ROOT: /data/storage
       BACKUP_ROOT: /data/backups
-      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      BACKUP_ENCRYPTION_KEY: ${PHASE6_BACKUP_ENCRYPTION_KEY:?PHASE6_BACKUP_ENCRYPTION_KEY is required}
       BACKUP_ENCRYPTION_KEY_VERSION: ${BACKUP_ENCRYPTION_KEY_VERSION:-1}
+      INTEGRATION_ENCRYPTION_KEY: ${PHASE6_INTEGRATION_ENCRYPTION_KEY:?PHASE6_INTEGRATION_ENCRYPTION_KEY is required}
+      INTEGRATION_ENCRYPTION_KEY_VERSION: ${INTEGRATION_ENCRYPTION_KEY_VERSION:-1}
+      INTEGRATION_ENCRYPTION_LEGACY_KEYS: ${INTEGRATION_ENCRYPTION_LEGACY_KEYS:-{}}
     volumes:
       - ./runtime/storage:/data/storage
       - ./runtime/backups:/data/backups

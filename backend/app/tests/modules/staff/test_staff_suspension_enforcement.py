@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 from flask_jwt_extended import decode_token
 
@@ -7,20 +10,42 @@ from app.core.enums.role_enums import Role
 from app.core.enums.staff_enums import StaffStatus
 from app.modules.staff.services.staff_service import change_staff_status
 
+REPO_ROOT = Path(__file__).resolve().parents[5]
+
 
 CLINICAL_READ_PATHS = (
-    "/api/v1/patients/{patient_id}",
-    "/api/v1/consultations/patient/{patient_id}",
-    "/api/v1/appointments/patient/{patient_id}",
+    ("/api/v1/patients/{patient_id}", Role.DOCTOR),
+    ("/api/v1/consultations/patient/{patient_id}", Role.DOCTOR),
+    ("/api/v1/appointments/patient/{patient_id}", Role.DOCTOR),
+    ("/api/v1/lab/tests", Role.DOCTOR),
+    ("/api/v1/prescriptions/patients/{patient_id}", Role.DOCTOR),
+    ("/api/v1/pharmacy/drugs", Role.PHARMACIST),
+    ("/api/v1/wards", Role.DOCTOR),
+    ("/api/v1/ambulance/trips?page=1&per_page=50", Role.PARAMEDIC),
 )
 
 
 @pytest.mark.parametrize(
-    ("method", "path_template", "json_body"),
+    ("method", "path_template", "json_body", "role"),
     [
-        ("GET", "/api/v1/patients/{patient_id}", None),
-        ("POST", "/api/v1/consultations/", {}),
-        ("POST", "/api/v1/appointments/", {}),
+        ("GET", "/api/v1/patients/{patient_id}", None, Role.DOCTOR),
+        ("POST", "/api/v1/consultations/", {}, Role.DOCTOR),
+        ("POST", "/api/v1/appointments/", {}, Role.DOCTOR),
+        ("GET", "/api/v1/lab/tests", None, Role.DOCTOR),
+        (
+            "GET",
+            "/api/v1/prescriptions/patients/{patient_id}",
+            None,
+            Role.DOCTOR,
+        ),
+        ("GET", "/api/v1/pharmacy/drugs", None, Role.PHARMACIST),
+        ("GET", "/api/v1/wards", None, Role.DOCTOR),
+        (
+            "GET",
+            "/api/v1/ambulance/trips?page=1&per_page=50",
+            None,
+            Role.PARAMEDIC,
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -39,11 +64,12 @@ def test_inactive_staff_with_fresh_jwt_cannot_access_clinical_routes(
     method,
     path_template,
     json_body,
+    role,
     inactive_status,
 ):
     staff, _old_headers = make_authenticated_staff(
         clinic,
-        Role.DOCTOR,
+        role,
     )
     patient = make_patient(clinic)
 
@@ -57,7 +83,7 @@ def test_inactive_staff_with_fresh_jwt_cannot_access_clinical_routes(
     # alone cannot be the reason this request is denied.
     fresh_headers = auth_headers_for(
         staff.user,
-        role=Role.DOCTOR,
+        role=role,
     )
     path = path_template.format(patient_id=patient.id)
 
@@ -75,7 +101,7 @@ def test_inactive_staff_with_fresh_jwt_cannot_access_clinical_routes(
 
 
 @pytest.mark.parametrize(
-    "path_template",
+    ("path_template", "role"),
     CLINICAL_READ_PATHS,
 )
 def test_active_staff_can_still_access_clinical_read_routes(
@@ -84,10 +110,11 @@ def test_active_staff_can_still_access_clinical_read_routes(
     make_authenticated_staff,
     make_patient,
     path_template,
+    role,
 ):
     _staff, headers = make_authenticated_staff(
         clinic,
-        Role.DOCTOR,
+        role,
         status=StaffStatus.ACTIVE,
     )
     patient = make_patient(clinic)
@@ -156,3 +183,73 @@ def test_status_change_invalidates_existing_jwt(
     )
 
     assert response.status_code == 401
+
+
+def _guard_contract_decorator_name(node):
+    if isinstance(node, ast.Call):
+        return _guard_contract_decorator_name(node.func)
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Name):
+        return node.id
+    return ""
+
+
+def test_clinical_route_domains_require_active_staff_guard():
+    expected_counts = {
+        "ambulance": 13,
+        "lab": 14,
+        "pharmacy": 15,
+        "prescription": 7,
+        "ward": 22,
+    }
+    methods = {"get", "post", "put", "patch", "delete", "route"}
+    role_guards = {
+        "role_required",
+        "emergency_aware_role_required",
+        "require_roles",
+        "login_required",
+    }
+    missing = []
+
+    for module, expected_count in expected_counts.items():
+        route_root = (
+            REPO_ROOT / "backend" / "app" / "modules"
+            / module / "routes"
+        )
+        assert route_root.is_dir(), f"Missing route directory: {route_root}"
+
+        count = 0
+        for path in sorted(route_root.rglob("*.py")):
+            source = path.read_text(encoding="utf-8-sig")
+            tree = ast.parse(source, filename=str(path))
+
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+
+                names = {
+                    _guard_contract_decorator_name(dec)
+                    for dec in node.decorator_list
+                }
+                has_route = any(
+                    isinstance(dec, ast.Call)
+                    and isinstance(dec.func, ast.Attribute)
+                    and dec.func.attr in methods
+                    for dec in node.decorator_list
+                )
+
+                if has_route and names.intersection(role_guards):
+                    count += 1
+                    if "active_staff_required" not in names:
+                        missing.append(f"{path}:{node.lineno}:{node.name}")
+
+        assert count == expected_count, (
+            f"{module} route count changed: expected {expected_count}, "
+            f"observed {count}"
+        )
+
+    assert not missing, (
+        "Role-protected clinical endpoints lack active_staff_required: "
+        + ", ".join(missing)
+    )

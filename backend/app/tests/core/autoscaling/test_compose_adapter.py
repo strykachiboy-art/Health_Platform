@@ -18,16 +18,17 @@ from app.core.autoscaling.decision_engine import (
 
 
 HEALTHY_TWO = (
-    "clinic-system-phase9-backend-1|running|Up 5 hours (healthy)\r\n"
-    "clinic-system-phase9-backend-2|running|Up 2 hours (healthy)\r\n"
+    "clinic-system-phase9-backend-1|running|Up 5 hours (healthy)|clinic-system-phase9:cd420ab\r\n"
+    "clinic-system-phase9-backend-2|running|Up 2 hours (healthy)|clinic-system-phase9:cd420ab\r\n"
 )
 HEALTHY_THREE = HEALTHY_TWO + (
-    "clinic-system-phase9-backend-3|running|Up 1 minute (healthy)\r\n"
+    "clinic-system-phase9-backend-3|running|Up 1 minute (healthy)|clinic-system-phase9:cd420ab\r\n"
 )
 
 
 def resolved_config(backend_overrides=None):
     backend = {
+        "image": "clinic-system-phase9:cd420ab",
         "healthcheck": {"test": ["CMD", "check-ready"]},
         "ports": [],
         "stop_grace_period": "40s",
@@ -59,7 +60,7 @@ def completed(stdout="", returncode=0, stderr=""):
     )
 
 
-def make_project(tmp_path):
+def make_project(tmp_path, *, project_name="clinic-system-phase9"):
     for name in (
         ".env.phase6",
         "compose.yaml",
@@ -72,6 +73,7 @@ def make_project(tmp_path):
         project_root=tmp_path,
         min_replicas=2,
         max_replicas=5,
+        project_name=project_name,
     )
 
 
@@ -131,6 +133,62 @@ def test_scale_out_runs_compose_dry_run_for_backend_only(tmp_path):
     assert kwargs["cwd"] == str(tmp_path.resolve())
     assert kwargs["capture_output"] is True
     assert kwargs["check"] is False
+
+
+def test_explicit_active_project_is_used_for_discovery_and_preview(tmp_path):
+    config = make_project(tmp_path, project_name="clinic-system")
+    image = "clinic-system-phase9:wave1-local-20261021-r1"
+    running = (
+        "clinic-system-backend-1|running|Up 5 hours (healthy)|"
+        "clinic-system-phase9:wave1-local-20261021-r1\r\n"
+        "clinic-system-backend-2|running|Up 2 hours (healthy)|"
+        "clinic-system-phase9:wave1-local-20261021-r1\r\n"
+    )
+    runner = FakeRunner(
+        [
+            completed(resolved_config({"image": image})),
+            completed(running),
+            completed("Container clinic-system-backend-3 Started"),
+        ]
+    )
+
+    result = ComposeScalingAdapter(config, runner=runner).preview(
+        scale_decision()
+    )
+
+    assert result.status is ScalePreviewStatus.DRY_RUN_ACCEPTED
+    config_command = runner.calls[0][0]
+    assert config_command[config_command.index("--project-name") + 1] == "clinic-system"
+    inspect_command = runner.calls[1][0]
+    assert "label=com.docker.compose.project=clinic-system" in inspect_command
+    scale_command = runner.calls[2][0]
+    assert scale_command[scale_command.index("--project-name") + 1] == "clinic-system"
+    assert scale_command[-4:] == [
+        "scale", "--dry-run", "--no-deps", "backend=3"
+    ]
+
+
+def test_resolved_image_mismatch_refuses_preview(tmp_path):
+    config = make_project(tmp_path)
+    runner = FakeRunner(
+        [
+            completed(
+                resolved_config(
+                    {"image": "clinic-system-phase9:wave1-local-20261021-r1"}
+                )
+            ),
+            completed(HEALTHY_TWO),
+        ]
+    )
+
+    result = ComposeScalingAdapter(config, runner=runner).preview(
+        scale_decision()
+    )
+
+    assert result.status is ScalePreviewStatus.REFUSED
+    assert result.reason == "backend_image_mismatch"
+    assert result.observed_running_replicas == 2
+    assert len(runner.calls) == 2
 
 
 def test_scale_in_preview_targets_one_fewer_backend(tmp_path):
@@ -322,7 +380,7 @@ def test_unsafe_backend_configuration_is_refused(
 
 def test_running_replica_count_mismatch_prevents_scale_preview(tmp_path):
     config = make_project(tmp_path)
-    only_one_backend = "clinic-system-phase9-backend-1|running|Up 5 hours (healthy)\r\n"
+    only_one_backend = "clinic-system-phase9-backend-1|running|Up 5 hours (healthy)|clinic-system-phase9:cd420ab\r\n"
     runner = FakeRunner(
         [completed(resolved_config()), completed(only_one_backend)]
     )
@@ -341,15 +399,15 @@ def test_running_replica_count_mismatch_prevents_scale_preview(tmp_path):
     ("container_row", "expected_reason"),
     [
         (
-            "clinic-system-phase9-backend-1|exited|Exited (1)",
+            "clinic-system-phase9-backend-1|exited|Exited (1)|clinic-system-phase9:cd420ab",
             "backend_not_running",
         ),
         (
-            "clinic-system-phase9-backend-1|running|Up 1 minute (unhealthy)",
+            "clinic-system-phase9-backend-1|running|Up 1 minute (unhealthy)|clinic-system-phase9:cd420ab",
             "backend_not_healthy",
         ),
         (
-            "clinic-system-phase9-backend-1|running|Up 1 minute (health: starting)",
+            "clinic-system-phase9-backend-1|running|Up 1 minute (health: starting)|clinic-system-phase9:cd420ab",
             "backend_not_healthy",
         ),
     ],
@@ -361,7 +419,7 @@ def test_nonhealthy_backend_prevents_scale_preview(
     rows = (
         container_row
         + "\r\n"
-        + "clinic-system-phase9-backend-2|running|Up 2 minutes (healthy)\r\n"
+        + "clinic-system-phase9-backend-2|running|Up 2 minutes (healthy)|clinic-system-phase9:cd420ab\r\n"
     )
     runner = FakeRunner([completed(resolved_config()), completed(rows)])
 
@@ -483,6 +541,7 @@ def test_subprocess_os_error_fails_closed(tmp_path):
         {"min_replicas": 2, "max_replicas": False},
         {"min_replicas": 2, "max_replicas": 5, "command_timeout_seconds": 0},
         {"min_replicas": 2, "max_replicas": 5, "command_timeout_seconds": float("nan")},
+        {"min_replicas": 2, "max_replicas": 5, "project_name": "../clinic-system"},
     ],
 )
 def test_invalid_adapter_configuration_is_rejected(tmp_path, kwargs):

@@ -7,7 +7,11 @@ from app.extensions import db
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import (
+    active_staff_required,
+    get_current_clinic_id,
+    role_required,
+)
 
 from app.modules.ward.schemas.admission_schema import (
     AdmissionCreateSchema,
@@ -204,6 +208,7 @@ def _query_params() -> dict:
 
 @ward_bp.route("", methods=["POST"])
 @role_required(*MANAGEMENT_ROLES)
+@active_staff_required
 def create_ward_route():
     user = _current_user()
     clinic_id = _current_clinic_id()
@@ -236,6 +241,7 @@ def create_ward_route():
     methods=["PATCH"],
 )
 @role_required(*MANAGEMENT_ROLES)
+@active_staff_required
 def update_ward_route(ward_id: int):
     user = _current_user()
     clinic_id = _current_clinic_id()
@@ -266,6 +272,7 @@ def update_ward_route(ward_id: int):
 
 @ward_bp.route("", methods=["GET"])
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def list_wards_route():
     clinic_id = _current_clinic_id()
 
@@ -294,6 +301,7 @@ def list_wards_route():
     methods=["GET"],
 )
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def get_ward_route(ward_id: int):
     clinic_id = _current_clinic_id()
 
@@ -315,6 +323,7 @@ def get_ward_route(ward_id: int):
     methods=["GET"],
 )
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def get_ward_occupancy_route(ward_id: int):
     clinic_id = _current_clinic_id()
 
@@ -339,6 +348,7 @@ def get_ward_occupancy_route(ward_id: int):
     methods=["POST"],
 )
 @role_required(*MANAGEMENT_ROLES)
+@active_staff_required
 def add_bed_route(ward_id: int):
     user = _current_user()
     clinic_id = _current_clinic_id()
@@ -370,6 +380,7 @@ def add_bed_route(ward_id: int):
     methods=["GET"],
 )
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def list_beds_route(ward_id: int):
     clinic_id = _current_clinic_id()
 
@@ -399,6 +410,7 @@ def list_beds_route(ward_id: int):
     methods=["GET"],
 )
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def get_bed_route(bed_id: int):
     clinic_id = _current_clinic_id()
 
@@ -420,6 +432,7 @@ def get_bed_route(bed_id: int):
     methods=["PATCH"],
 )
 @role_required(*MANAGEMENT_ROLES)
+@active_staff_required
 def set_bed_maintenance_route(bed_id: int):
     user = _current_user()
     clinic_id = _current_clinic_id()
@@ -454,6 +467,7 @@ def set_bed_maintenance_route(bed_id: int):
     methods=["POST"],
 )
 @role_required(*CLINICAL_ROLES)
+@active_staff_required
 def reserve_bed_route():
     user = _current_user()
     clinic_id = _current_clinic_id()
@@ -489,6 +503,7 @@ def reserve_bed_route():
     methods=["GET"],
 )
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def list_bed_reservations_route():
     clinic_id = _current_clinic_id()
 
@@ -520,6 +535,7 @@ def list_bed_reservations_route():
 )
 @jwt_required()
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def get_bed_reservation_route(
     reservation_id: int,
 ):
@@ -544,6 +560,7 @@ def get_bed_reservation_route(
 )
 @jwt_required()
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def get_patient_active_reservation_route(
     patient_id: int,
 ):
@@ -579,6 +596,7 @@ def get_patient_active_reservation_route(
     methods=["GET"],
 )
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def get_bed_active_reservation_route(
     bed_id: int,
 ):
@@ -614,6 +632,7 @@ def get_bed_active_reservation_route(
     methods=["POST"],
 )
 @role_required(*CLINICAL_ROLES)
+@active_staff_required
 def cancel_bed_reservation_route(
     reservation_id: int,
 ):
@@ -650,6 +669,7 @@ def cancel_bed_reservation_route(
     methods=["POST"],
 )
 @role_required(*CLINICAL_ROLES)
+@active_staff_required
 def admit_patient_from_reservation_route(
     reservation_id: int,
 ):
@@ -685,6 +705,7 @@ def admit_patient_from_reservation_route(
     methods=["POST"],
 )
 @role_required(*CLINICAL_ROLES)
+@active_staff_required
 def admit_patient_route():
     user = _current_user()
     clinic_id = _current_clinic_id()
@@ -719,6 +740,7 @@ def admit_patient_route():
     methods=["GET"],
 )
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def get_admission_route(admission_id: int):
     clinic_id = _current_clinic_id()
 
@@ -740,6 +762,7 @@ def get_admission_route(admission_id: int):
     methods=["GET"],
 )
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def list_patient_admissions_route(
     patient_id: int,
 ):
@@ -775,6 +798,7 @@ def list_patient_admissions_route(
     methods=["GET"],
 )
 @role_required(*VIEW_ROLES)
+@active_staff_required
 def get_current_patient_admission_route(
     patient_id: int,
 ):
@@ -810,6 +834,7 @@ def get_current_patient_admission_route(
     methods=["POST"],
 )
 @role_required(*CLINICAL_ROLES)
+@active_staff_required
 def transfer_bed_route(admission_id: int):
     user = _current_user()
     clinic_id = _current_clinic_id()
@@ -850,6 +875,7 @@ def transfer_bed_route(admission_id: int):
     methods=["POST"],
 )
 @role_required(*CLINICAL_ROLES)
+@active_staff_required
 def discharge_patient_route(admission_id: int):
     user = _current_user()
     clinic_id = _current_clinic_id()

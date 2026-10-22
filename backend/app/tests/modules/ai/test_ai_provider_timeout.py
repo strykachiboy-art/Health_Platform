@@ -58,8 +58,14 @@ def install_fake_openai(
                 ],
             )
 
+    module.client_options = {}
+
     class FakeOpenAI:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **client_options):
+            module.client_options = {
+                "api_key": api_key,
+                **client_options,
+            }
             self.chat = SimpleNamespace(
                 completions=FakeCompletions(),
             )
@@ -71,6 +77,8 @@ def install_fake_openai(
         "openai",
         module,
     )
+
+    return module
 
 
 def test_provider_timeout_default_is_configured(
@@ -126,7 +134,7 @@ def test_provider_timeout_is_passed_to_openai(
         "OPENAI_API_KEY"
     ] = "test-key"
 
-    install_fake_openai(
+    fake_openai = install_fake_openai(
         monkeypatch,
         capture=capture,
     )
@@ -143,6 +151,12 @@ def test_provider_timeout_is_passed_to_openai(
 
     assert result == make_drug_result()
     assert capture["timeout"] == 30.0
+    assert fake_openai.client_options == {
+        "api_key": "test-key",
+        "base_url": "https://api.openai.com/v1",
+        "timeout": 30.0,
+        "max_retries": 0,
+    }
 
 
 def test_provider_timeout_failure_is_retryable(

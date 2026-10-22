@@ -48,6 +48,33 @@ GOOGLE_USERINFO_URL = (
     "https://openidconnect.googleapis.com/v1/userinfo"
 )
 
+
+class _BoundedGoogleAuthRequest(google_auth_requests.Request):
+    """Apply a bounded network timeout to Google ID-token certificate requests."""
+
+    def __call__(
+        self,
+        url,
+        method="GET",
+        body=None,
+        headers=None,
+        timeout=10,
+        **kwargs,
+    ):
+        return super().__call__(
+            url,
+            method=method,
+            body=body,
+            headers=headers,
+            timeout=timeout,
+            **kwargs,
+        )
+
+
+def _is_redirect_response(response: requests.Response) -> bool:
+    status_code = getattr(response, "status_code", None)
+    return isinstance(status_code, int) and 300 <= status_code < 400
+
 GOOGLE_PROVIDER = "google"
 
 GOOGLE_OAUTH_STATE_PREFIX = (
@@ -257,11 +284,17 @@ def exchange_google_code(
             GOOGLE_TOKEN_URL,
             data=payload,
             timeout=10,
+            allow_redirects=False,
         )
     except requests.RequestException as exc:
         raise ValidationError(
             "Unable to communicate with Google"
         ) from exc
+
+    if _is_redirect_response(response):
+        raise ValidationError(
+            "Google authorization code exchange returned an unexpected redirect"
+        )
 
     if not response.ok:
         raise ValidationError(
@@ -317,11 +350,17 @@ def get_google_user_info(
             GOOGLE_USERINFO_URL,
             headers=headers,
             timeout=10,
+            allow_redirects=False,
         )
     except requests.RequestException as exc:
         raise ValidationError(
             "Unable to retrieve Google user information"
         ) from exc
+
+    if _is_redirect_response(response):
+        raise ValidationError(
+            "Google user information returned an unexpected redirect"
+        )
 
     if not response.ok:
         raise ValidationError(
@@ -624,7 +663,7 @@ def verify_google_id_token(
     try:
         claims = google_id_token.verify_oauth2_token(
             token,
-            google_auth_requests.Request(),
+            _BoundedGoogleAuthRequest(),
             audience=client_id,
         )
     except (

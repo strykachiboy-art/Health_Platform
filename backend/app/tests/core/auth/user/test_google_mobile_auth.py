@@ -39,12 +39,14 @@ def test_verify_google_id_token_uses_configured_audience(
         verifier,
     )
     monkeypatch.setattr(
-        google_auth_service.google_auth_requests,
-        "Request",
+        google_auth_service,
+        "_BoundedGoogleAuthRequest",
         request_factory,
     )
 
     result = google_auth_service.verify_google_id_token("signed-token")
+
+    request_factory.assert_called_once_with()
 
     verifier.assert_called_once_with(
         "signed-token",

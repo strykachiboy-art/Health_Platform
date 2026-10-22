@@ -270,6 +270,20 @@ class ProductionConfig(Config):
         "TRUSTED_PROXY_HOPS", "0"
     )
 
+    # Provisional two-replica database budget. Recalculate before increasing
+    # replicas, worker concurrency, pool size, or overflow.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_size": int(os.environ.get("SQLALCHEMY_POOL_SIZE", "3")),
+        "max_overflow": int(os.environ.get("SQLALCHEMY_MAX_OVERFLOW", "2")),
+        "pool_timeout": float(
+            os.environ.get("SQLALCHEMY_POOL_TIMEOUT_SECONDS", "5")
+        ),
+        "pool_recycle": int(
+            os.environ.get("SQLALCHEMY_POOL_RECYCLE_SECONDS", "1800")
+        ),
+        "pool_pre_ping": True,
+    }
+
     DEBUG = False
 
 

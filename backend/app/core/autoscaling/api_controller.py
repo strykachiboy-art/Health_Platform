@@ -71,8 +71,11 @@ class ComposeBackendReplicaReader:
         root = Path(project_root).resolve()
         if not root.is_dir():
             raise ValueError("project_root must be an existing directory")
-        if project_name != EXPECTED_PROJECT_NAME:
-            raise ValueError("project_name must match the expected deployment")
+        if (
+            not isinstance(project_name, str)
+            or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project_name) is None
+        ):
+            raise ValueError("project_name must be a valid Docker Compose project name")
         if (
             isinstance(timeout_seconds, bool)
             or not isinstance(timeout_seconds, (int, float))
@@ -255,6 +258,17 @@ class APIBackendAutoscalingController:
             raise TypeError("observation_adapter must provide collect()")
         if not callable(getattr(coordinator, "run_cycle", None)):
             raise TypeError("coordinator must provide run_cycle()")
+
+        replica_project = getattr(replica_reader, "project_name", None)
+        scaling_project = getattr(coordinator, "project_name", None)
+        if (
+            isinstance(replica_project, str)
+            and isinstance(scaling_project, str)
+            and replica_project != scaling_project
+        ):
+            raise ValueError(
+                "replica discovery and scaling adapter must target the same Docker Compose project"
+            )
 
         self._replica_reader = replica_reader
         self._observation_adapter = observation_adapter
