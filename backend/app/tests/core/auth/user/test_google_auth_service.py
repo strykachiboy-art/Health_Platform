@@ -518,19 +518,23 @@ def test_exchange_google_code_handles_request_failure(
             )
 
 
-def test_bounded_google_auth_request_uses_ten_second_timeout():
-    session = MagicMock()
-    request = google_auth_service._BoundedGoogleAuthRequest(
-        session=session,
+def test_bounded_google_auth_request_uses_pinned_transport_and_ten_second_timeout(monkeypatch):
+    response = MagicMock()
+    request_mock = MagicMock(return_value=response)
+    monkeypatch.setattr(
+        "app.core.auth.user.services.google_oauth_transport.request_google_oauth",
+        request_mock,
     )
+    request = google_auth_service._BoundedGoogleAuthRequest()
 
-    request("https://www.googleapis.com/oauth2/v1/certs")
+    result = request("https://www.googleapis.com/oauth2/v1/certs")
 
-    session.request.assert_called_once_with(
-        "GET",
-        "https://www.googleapis.com/oauth2/v1/certs",
-        data=None,
+    assert result is response
+    request_mock.assert_called_once_with(
+        method="GET",
+        url="https://www.googleapis.com/oauth2/v1/certs",
         headers=None,
+        body=None,
         timeout=10,
     )
 

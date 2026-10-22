@@ -4,10 +4,9 @@ from collections.abc import Mapping
 import secrets
 from urllib.parse import urlencode
 
-import requests
+import requests as _requests
 from flask import current_app
 from google.auth import exceptions as google_auth_exceptions
-from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token as google_id_token
 from redis.exceptions import ConnectionError, TimeoutError
 from sqlalchemy import select
@@ -30,10 +29,16 @@ from app.core.auth.user.schema.user_schema import (
 )
 from app.core.enums.audit_enums import AuditAction
 from app.core.enums.role_enums import Role
+from app.core.auth.user.services.google_oauth_transport import (
+    GoogleOAuthAuthRequest as _BoundedGoogleAuthRequest,
+    requests_for_google_oauth,
+)
 from app.core.exceptions import (
     ConflictError,
     ValidationError,
 )
+
+requests = requests_for_google_oauth(_requests)
 
 
 GOOGLE_AUTHORIZATION_URL = (
@@ -47,28 +52,6 @@ GOOGLE_TOKEN_URL = (
 GOOGLE_USERINFO_URL = (
     "https://openidconnect.googleapis.com/v1/userinfo"
 )
-
-
-class _BoundedGoogleAuthRequest(google_auth_requests.Request):
-    """Apply a bounded network timeout to Google ID-token certificate requests."""
-
-    def __call__(
-        self,
-        url,
-        method="GET",
-        body=None,
-        headers=None,
-        timeout=10,
-        **kwargs,
-    ):
-        return super().__call__(
-            url,
-            method=method,
-            body=body,
-            headers=headers,
-            timeout=timeout,
-            **kwargs,
-        )
 
 
 def _is_redirect_response(response: requests.Response) -> bool:
@@ -308,6 +291,9 @@ def exchange_google_code(
             "Invalid response received from Google"
         ) from exc
 
+    if not isinstance(token_data, dict):
+        raise ValidationError("Invalid response received from Google")
+
     access_token = token_data.get(
         "access_token"
     )
@@ -373,6 +359,9 @@ def get_google_user_info(
         raise ValidationError(
             "Invalid user information received from Google"
         ) from exc
+
+    if not isinstance(data, dict):
+        raise ValidationError("Invalid user information received from Google")
 
     provider_user_id = data.get(
         "sub"
