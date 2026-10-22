@@ -12,6 +12,19 @@ from app.modules.billing.services.gateways.base_gateway import (
 )
 
 
+STRIPE_HTTP_TIMEOUT_SECONDS = 30
+STRIPE_MAX_NETWORK_RETRIES = 0
+
+
+def _build_stripe_http_client():
+    return stripe.RequestsClient(
+        timeout=STRIPE_HTTP_TIMEOUT_SECONDS,
+    )
+
+
+_STRIPE_HTTP_CLIENT = _build_stripe_http_client()
+
+
 class StripeGateway(PaymentGatewayBase):
     ZERO_DECIMAL_CURRENCIES = {
         "bif",
@@ -73,6 +86,38 @@ class StripeGateway(PaymentGatewayBase):
         self.webhook_secret = (
             self.webhook_secret.strip()
         )
+
+        self._client = stripe.StripeClient(
+            api_key=self.secret_key,
+            http_client=_STRIPE_HTTP_CLIENT,
+            max_network_retries=STRIPE_MAX_NETWORK_RETRIES,
+        )
+
+    def _create_payment_intent(self, **request_params: Any):
+        api_key = request_params.pop("api_key", None)
+        if api_key != self.secret_key:
+            raise ValueError("Stripe API key does not match configured client")
+
+        idempotency_key = request_params.pop("idempotency_key", None)
+        options: dict[str, str] = {}
+        if idempotency_key is not None:
+            options["idempotency_key"] = idempotency_key
+
+        return self._client.v1.payment_intents.create(
+            request_params,
+            options=options,
+        )
+
+    def _retrieve_payment_intent(
+        self,
+        reference: str,
+        *,
+        api_key: str,
+    ):
+        if api_key != self.secret_key:
+            raise ValueError("Stripe API key does not match configured client")
+
+        return self._client.v1.payment_intents.retrieve(reference)
 
     @classmethod
     def _to_smallest_unit(
@@ -302,11 +347,9 @@ class StripeGateway(PaymentGatewayBase):
             )
 
         try:
-            intent = (
-                stripe.PaymentIntent.create(
-                    **params,
-                    api_key=self.secret_key,
-                )
+            intent = self._create_payment_intent(
+                **params,
+                api_key=self.secret_key,
             )
         except stripe.StripeError as exc:
             http_status = getattr(
@@ -367,11 +410,9 @@ class StripeGateway(PaymentGatewayBase):
         )
 
         try:
-            intent = (
-                stripe.PaymentIntent.retrieve(
-                    reference,
-                    api_key=self.secret_key,
-                )
+            intent = self._retrieve_payment_intent(
+                reference,
+                api_key=self.secret_key,
             )
         except stripe.StripeError as exc:
             raise RuntimeError(

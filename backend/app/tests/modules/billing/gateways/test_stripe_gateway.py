@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 import stripe
 
+from app.modules.billing.services.gateways import stripe_gateway
 from app.modules.billing.services.gateways.stripe_gateway import (
     StripeGateway,
 )
@@ -84,6 +85,77 @@ def test_gateway_does_not_mutate_global_stripe_api_key(
 
     assert gateway.secret_key == "sk_test_secret"
     assert stripe.api_key == "existing_global_key"
+
+
+def test_build_stripe_http_client_uses_explicit_timeout(monkeypatch):
+    client = Mock()
+    client_factory = Mock(return_value=client)
+    monkeypatch.setattr(stripe, "RequestsClient", client_factory)
+
+    assert stripe_gateway._build_stripe_http_client() is client
+    client_factory.assert_called_once_with(timeout=30)
+
+
+def test_gateway_uses_bounded_client_and_disables_sdk_retries(
+    stripe_credentials,
+    monkeypatch,
+):
+    sentinel_http_client = object()
+    sentinel_stripe_client = object()
+    client_factory = Mock(return_value=sentinel_stripe_client)
+
+    monkeypatch.setattr(
+        stripe_gateway,
+        "_STRIPE_HTTP_CLIENT",
+        sentinel_http_client,
+    )
+    monkeypatch.setattr(stripe, "StripeClient", client_factory)
+
+    gateway_instance = StripeGateway(credentials=stripe_credentials)
+
+    client_factory.assert_called_once_with(
+        api_key="sk_test_secret",
+        http_client=sentinel_http_client,
+        max_network_retries=0,
+    )
+    assert gateway_instance._client is sentinel_stripe_client
+
+
+@pytest.mark.parametrize(
+    "request_params,expected_params,expected_options",
+    [
+        (
+            {"amount": 100},
+            {"amount": 100},
+            {},
+        ),
+        (
+            {"amount": 100, "idempotency_key": "billing-payment-001"},
+            {"amount": 100},
+            {"idempotency_key": "billing-payment-001"},
+        ),
+    ],
+)
+def test_create_payment_intent_uses_client_request_options(
+    gateway,
+    monkeypatch,
+    request_params,
+    expected_params,
+    expected_options,
+):
+    service = gateway._client.v1.payment_intents
+    mock_create = Mock(return_value=Mock())
+    monkeypatch.setattr(service, "create", mock_create)
+
+    gateway._create_payment_intent(
+        api_key=gateway.secret_key,
+        **request_params,
+    )
+
+    mock_create.assert_called_once_with(
+        expected_params,
+        options=expected_options,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +482,8 @@ def test_initialize_payment_success(
     )
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.create",
+        gateway,
+        "_create_payment_intent",
         mock_create,
     )
 
@@ -477,7 +550,8 @@ def test_initialize_payment_without_optional_fields(
     )
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.create",
+        gateway,
+        "_create_payment_intent",
         mock_create,
     )
 
@@ -517,7 +591,8 @@ def test_initialize_payment_converts_metadata_values_to_strings(
     )
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.create",
+        gateway,
+        "_create_payment_intent",
         mock_create,
     )
 
@@ -559,7 +634,8 @@ def test_initialize_payment_passes_idempotency_key_to_stripe(
     )
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.create",
+        gateway,
+        "_create_payment_intent",
         mock_create,
     )
 
@@ -602,7 +678,8 @@ def test_initialize_payment_rejects_invalid_idempotency_key(
     mock_create = Mock()
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.create",
+        gateway,
+        "_create_payment_intent",
         mock_create,
     )
 
@@ -631,7 +708,8 @@ def test_initialize_payment_handles_stripe_error(
     )
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.create",
+        gateway,
+        "_create_payment_intent",
         mock_create,
     )
 
@@ -657,7 +735,8 @@ def test_initialize_payment_rejects_invalid_payment_intent(
     intent.id = None
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.create",
+        gateway,
+        "_create_payment_intent",
         Mock(return_value=intent),
     )
 
@@ -698,7 +777,8 @@ def test_verify_payment_success(
     )
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.retrieve",
+        gateway,
+        "_retrieve_payment_intent",
         mock_retrieve,
     )
 
@@ -734,7 +814,8 @@ def test_verify_payment_uses_input_reference_when_metadata_missing(
     intent.metadata = {}
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.retrieve",
+        gateway,
+        "_retrieve_payment_intent",
         Mock(return_value=intent),
     )
 
@@ -752,7 +833,8 @@ def test_verify_payment_handles_stripe_error(
     monkeypatch,
 ):
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.retrieve",
+        gateway,
+        "_retrieve_payment_intent",
         Mock(
             side_effect=stripe.StripeError(
                 "payment intent not found"
@@ -779,7 +861,8 @@ def test_verify_payment_rejects_invalid_payment_intent(
     intent.id = None
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.retrieve",
+        gateway,
+        "_retrieve_payment_intent",
         Mock(return_value=intent),
     )
 
@@ -818,7 +901,8 @@ def test_verify_payment_normalizes_paid_status(
     intent.metadata = {}
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.retrieve",
+        gateway,
+        "_retrieve_payment_intent",
         Mock(return_value=intent),
     )
 
@@ -896,7 +980,8 @@ def test_initialize_payment_stripe_error_without_http_status_is_unknown_outcome(
     )
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.create",
+        gateway,
+        "_create_payment_intent",
         Mock(side_effect=error),
     )
 
@@ -922,7 +1007,8 @@ def test_initialize_payment_stripe_client_error_is_known_failure(
     error.http_status = 400
 
     monkeypatch.setattr(
-        "app.modules.billing.services.gateways.stripe_gateway.stripe.PaymentIntent.create",
+        gateway,
+        "_create_payment_intent",
         Mock(side_effect=error),
     )
 
