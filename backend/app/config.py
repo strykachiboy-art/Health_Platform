@@ -200,6 +200,19 @@ class Config:
     )
 
     # ------------------------------------------------------------------
+    # SMTP Outbound Destination Policy
+    # ------------------------------------------------------------------
+    # Comma-separated exact DNS hostnames and ports; empty fails closed.
+    SMTP_ALLOWED_HOSTS = os.environ.get(
+        "SMTP_ALLOWED_HOSTS",
+        "",
+    )
+    SMTP_ALLOWED_PORTS = os.environ.get(
+        "SMTP_ALLOWED_PORTS",
+        "",
+    )
+
+    # ------------------------------------------------------------------
     # HIE Endpoint Policy
     # ------------------------------------------------------------------
     # Comma-separated operator-approved DNS hostnames. Empty fails closed.
@@ -289,6 +302,10 @@ class ProductionConfig(Config):
 
 class TestingConfig(Config):
     TESTING = True
+
+    # Synthetic destinations for deterministic outbound-policy tests only.
+    SMTP_ALLOWED_HOSTS = ("smtp.example.com",)
+    SMTP_ALLOWED_PORTS = (465, 587)
 
     # Synthetic hosts used by deterministic HIE tests only.
     HIE_ALLOWED_ENDPOINT_HOSTS = (

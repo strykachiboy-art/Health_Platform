@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from email.message import EmailMessage
-import smtplib
 import ssl
 from typing import Any
+
+from app.core.notifications.providers.smtp_transport import (
+    PinnedSMTP,
+    PinnedSMTP_SSL,
+    resolve_approved_smtp_destination,
+)
 
 from app.core.exceptions import ValidationError
 from app.core.notifications.models.notification_models import Notification
@@ -247,17 +252,24 @@ class EmailNotificationProvider(NotificationProviderBase):
                 "Email provider requires SSL or STARTTLS"
             )
 
+        approved_host, destination_ip = resolve_approved_smtp_destination(
+            host=host,
+            port=port,
+        )
+
         if use_ssl:
-            smtp_connection = smtplib.SMTP_SSL(
-                host,
+            smtp_connection = PinnedSMTP_SSL(
+                approved_host,
                 port,
+                destination_ip=destination_ip,
                 timeout=30,
                 context=ssl.create_default_context(),
             )
         else:
-            smtp_connection = smtplib.SMTP(
-                host,
+            smtp_connection = PinnedSMTP(
+                approved_host,
                 port,
+                destination_ip=destination_ip,
                 timeout=30,
             )
 
