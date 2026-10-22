@@ -8,6 +8,10 @@ from typing import Any
 
 import requests
 
+from app.modules.billing.services.gateways.response_utils import (
+    read_json_response_limited,
+)
+
 from app.modules.billing.services.gateways.base_gateway import (
     GatewayRejectedError,
     GatewayUnknownOutcomeError,
@@ -256,6 +260,7 @@ class PaystackGateway(PaymentGatewayBase):
                 headers=self._headers(),
                 json=payload,
                 timeout=30,
+                stream=True,
                 allow_redirects=False,
             )
         except requests.RequestException as exc:
@@ -270,7 +275,7 @@ class PaystackGateway(PaymentGatewayBase):
             )
 
         try:
-            response_data = response.json()
+            response_data = read_json_response_limited(response)
         except ValueError as exc:
             raise GatewayUnknownOutcomeError(
                 "Paystack returned an invalid "
@@ -327,6 +332,7 @@ class PaystackGateway(PaymentGatewayBase):
                 f"verify/{reference}",
                 headers=self._headers(),
                 timeout=30,
+                stream=True,
                 allow_redirects=False,
             )
         except requests.RequestException as exc:
@@ -341,7 +347,7 @@ class PaystackGateway(PaymentGatewayBase):
             )
 
         try:
-            response_data = response.json()
+            response_data = read_json_response_limited(response)
         except ValueError as exc:
             raise RuntimeError(
                 "Paystack returned an invalid "

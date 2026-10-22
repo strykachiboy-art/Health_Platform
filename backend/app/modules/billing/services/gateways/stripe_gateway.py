@@ -5,6 +5,11 @@ from typing import Any
 
 import stripe
 
+from app.modules.billing.services.gateways.response_utils import (
+    ProviderResponseTooLargeError,
+    read_response_body_limited,
+)
+
 from app.modules.billing.services.gateways.base_gateway import (
     GatewayRejectedError,
     GatewayUnknownOutcomeError,
@@ -52,8 +57,52 @@ def _is_stripe_idempotency_error(error: BaseException) -> bool:
     return False
 
 
+class BoundedStripeRequestsClient(stripe.RequestsClient):
+    """Stripe RequestsClient adapter that bounds normal response bodies."""
+
+    def request(self, method, url, headers, post_data=None):
+        kwargs = {
+            "stream": True,
+            "timeout": self._timeout,
+            "verify": (
+                stripe.ca_bundle_path
+                if self._verify_ssl_certs
+                else False
+            ),
+        }
+        if self._proxy:
+            kwargs["proxies"] = self._proxy
+
+        if getattr(self._thread_local, "session", None) is None:
+            self._thread_local.session = (
+                self._session or self.requests.Session()
+            )
+
+        try:
+            response = self._thread_local.session.request(
+                method,
+                url,
+                headers=headers,
+                data=post_data,
+                **kwargs,
+            )
+        except Exception as exc:
+            self._handle_request_error(exc)
+
+        status_code = response.status_code
+        response_headers = response.headers
+        try:
+            body = read_response_body_limited(response)
+        except ProviderResponseTooLargeError:
+            raise
+        except Exception as exc:
+            self._handle_request_error(exc)
+
+        return body, status_code, response_headers
+
+
 def _build_stripe_http_client():
-    return stripe.RequestsClient(
+    return BoundedStripeRequestsClient(
         timeout=STRIPE_HTTP_TIMEOUT_SECONDS,
     )
 
@@ -387,6 +436,11 @@ class StripeGateway(PaymentGatewayBase):
                 **params,
                 api_key=self.secret_key,
             )
+        except ProviderResponseTooLargeError as exc:
+            raise GatewayUnknownOutcomeError(
+                "Stripe initialization response exceeded the byte limit; "
+                "payment outcome remains unknown"
+            ) from exc
         except stripe.StripeError as exc:
             http_status = getattr(
                 exc,
@@ -449,7 +503,7 @@ class StripeGateway(PaymentGatewayBase):
         """Return only one exact local-payment match from Stripe Search.
 
         Stripe Search is eventually consistent, so an empty, ambiguous,
-        paginated, or malformed response is a miss???not proof of failure.
+        paginated, or malformed response is a miss, not proof of failure.
         The caller must retrieve and verify the candidate before settlement.
         """
         identifiers = (clinic_id, invoice_id, payment_id)

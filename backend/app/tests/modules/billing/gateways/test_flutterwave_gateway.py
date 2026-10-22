@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from unittest.mock import Mock
 
@@ -44,12 +45,22 @@ class FakeResponse:
         self.status_code = status_code
         self._json_data = json_data
         self._json_error = json_error
+        self.headers = {}
+        self.closed = False
 
     def json(self):
         if self._json_error:
             raise self._json_error
 
         return self._json_data
+
+    def iter_content(self, chunk_size):
+        if self._json_error:
+            raise self._json_error
+        yield json.dumps(self._json_data).encode("utf-8")
+
+    def close(self):
+        self.closed = True
 # ---------------------------------------------------------------------------
 # Phase 9 - Gate 4 / Slice 1
 # Provider identity replay and failure semantics

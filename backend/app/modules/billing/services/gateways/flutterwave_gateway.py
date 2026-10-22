@@ -9,6 +9,10 @@ from typing import Any
 
 import requests
 
+from app.modules.billing.services.gateways.response_utils import (
+    read_json_response_limited,
+)
+
 from app.modules.billing.services.gateways.base_gateway import (
     GatewayRejectedError,
     GatewayUnknownOutcomeError,
@@ -198,6 +202,7 @@ class FlutterwaveGateway(PaymentGatewayBase):
                 headers=self._headers(),
                 json=payload,
                 timeout=30,
+                stream=True,
                 allow_redirects=False,
             )
         except requests.RequestException as exc:
@@ -212,7 +217,7 @@ class FlutterwaveGateway(PaymentGatewayBase):
             )
 
         try:
-            response_data = response.json()
+            response_data = read_json_response_limited(response)
         except ValueError as exc:
             raise GatewayUnknownOutcomeError(
                 "Flutterwave returned an invalid response"
@@ -277,6 +282,7 @@ class FlutterwaveGateway(PaymentGatewayBase):
                 f"{transaction_id}/verify",
                 headers=self._headers(),
                 timeout=30,
+                stream=True,
                 allow_redirects=False,
             )
         except requests.RequestException as exc:
@@ -291,7 +297,7 @@ class FlutterwaveGateway(PaymentGatewayBase):
             )
 
         try:
-            response_data = response.json()
+            response_data = read_json_response_limited(response)
         except ValueError as exc:
             raise RuntimeError(
                 "Flutterwave returned an invalid "

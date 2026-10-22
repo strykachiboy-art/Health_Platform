@@ -16,6 +16,14 @@ from app.modules.billing.services.gateways.base_gateway import (
 )
 
 
+def _enable_streaming_json(response):
+    response.headers = {}
+    response.close = Mock()
+    response.iter_content.side_effect = lambda chunk_size: iter(
+        [json.dumps(response.json()).encode("utf-8")]
+    )
+
+
 @pytest.fixture
 def paystack_credentials():
     return {
@@ -70,6 +78,8 @@ def test_initialize_payment_reuses_stable_reference_on_retry(
         ]
     )
 
+    _enable_streaming_json(response)
+
     monkeypatch.setattr(
         "app.modules.billing.services.gateways.paystack_gateway.requests.post",
         mock_post,
@@ -119,6 +129,8 @@ def test_initialize_payment_preserves_reference_when_provider_rejects_request(
     mock_post = Mock(
         return_value=response
     )
+
+    _enable_streaming_json(response)
 
     monkeypatch.setattr(
         "app.modules.billing.services.gateways.paystack_gateway.requests.post",
@@ -210,6 +222,8 @@ def test_initialize_payment_provider_rejection_is_known_failure(
         "status": False,
         "message": "Duplicate transaction",
     }
+
+    _enable_streaming_json(response)
 
     monkeypatch.setattr(
         "app.modules.billing.services.gateways.paystack_gateway.requests.post",

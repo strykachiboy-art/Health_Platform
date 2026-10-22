@@ -88,13 +88,11 @@ def test_gateway_does_not_mutate_global_stripe_api_key(
     assert stripe.api_key == "existing_global_key"
 
 
-def test_build_stripe_http_client_uses_explicit_timeout(monkeypatch):
-    client = Mock()
-    client_factory = Mock(return_value=client)
-    monkeypatch.setattr(stripe, "RequestsClient", client_factory)
+def test_build_stripe_http_client_uses_bounded_adapter_and_explicit_timeout():
+    client = stripe_gateway._build_stripe_http_client()
 
-    assert stripe_gateway._build_stripe_http_client() is client
-    client_factory.assert_called_once_with(timeout=30)
+    assert isinstance(client, stripe_gateway.BoundedStripeRequestsClient)
+    assert client._timeout == stripe_gateway.STRIPE_HTTP_TIMEOUT_SECONDS
 
 
 def test_gateway_uses_bounded_client_and_disables_sdk_retries(
