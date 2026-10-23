@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any, Protocol
 
 
@@ -182,3 +184,49 @@ def deliver_alert_events(
     deliver(events)
 
     return len(events)
+
+
+class LoggingAlertDeliverySink:
+    """Emit sanitized operational alert lifecycle events to application logs.
+
+    Downstream alert routing remains an infrastructure responsibility: the
+    runtime must forward these records to an access-controlled log sink and
+    alert on the ``operational_alert`` marker at warning/critical levels.
+    """
+
+    def __init__(self, logger: Any | None = None) -> None:
+        self._logger = logger or logging.getLogger(__name__)
+
+    def deliver(self, events: list[dict[str, Any]]) -> None:
+        if not isinstance(events, list):
+            raise TypeError("events must be a list")
+
+        for event in events:
+            if not isinstance(event, dict):
+                raise TypeError("each alert event must be a dictionary")
+            if event.get("event_type") not in DELIVERABLE_ACTIONS:
+                raise ValueError("unsupported alert delivery event type")
+
+            severity = event.get("severity")
+            if severity == "critical":
+                level = logging.CRITICAL
+            elif severity == "warning":
+                level = logging.WARNING
+            else:
+                level = logging.INFO
+
+            payload = json.dumps(
+                {
+                    "event": "operational_alert",
+                    "alert": event,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            self._logger.log(
+                level,
+                "operational_alert %s",
+                payload,
+                extra={"operational_alert": True},
+            )

@@ -219,5 +219,9 @@ def init_extensions(app):
                     minute=0,
                 ),
             },
+            "refresh-operational-alert-state-every-minute": {
+                "task": "refresh_operational_alert_state",
+                "schedule": 60.0,
+            },
         },
     )

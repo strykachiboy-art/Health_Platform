@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.observability.alert_delivery import (
+    LoggingAlertDeliverySink,
     build_alert_delivery_events,
     deliver_alert_events,
 )
@@ -206,3 +207,66 @@ def test_missing_delivery_sink_is_rejected():
             [],
             sink=None,
         )
+
+
+class RecordingLogger:
+    def __init__(self):
+        self.records = []
+
+    def log(self, level, message, *args, **kwargs):
+        rendered = message % args if args else message
+        self.records.append((level, rendered, kwargs.get("extra", {})))
+
+
+def test_logging_sink_emits_machine_readable_warning_and_critical_events():
+    import json
+    import logging
+
+    logger = RecordingLogger()
+    sink = LoggingAlertDeliverySink(logger=logger)
+    events = [
+        {
+            "event_id": "fp-new: new: t1",
+            "event_type": "new",
+            "severity": "warning",
+            "code": "system_cpu_high",
+            "message": "System CPU utilization is high.",
+        },
+        {
+            "event_id": "fp-escalated: escalated: t2",
+            "event_type": "escalated",
+            "severity": "critical",
+            "code": "redis_unhealthy",
+            "message": "Redis is unavailable or unhealthy.",
+        },
+    ]
+
+    sink.deliver(events)
+
+    assert [record[0] for record in logger.records] == [
+        logging.WARNING,
+        logging.CRITICAL,
+    ]
+    assert all(record[2]["operational_alert"] is True for record in logger.records)
+    payloads = [
+        json.loads(record[1].split("operational_alert ", 1)[1])
+        for record in logger.records
+    ]
+    assert [payload["event"] for payload in payloads] == [
+        "operational_alert",
+        "operational_alert",
+    ]
+    assert [payload["alert"] for payload in payloads] == events
+
+
+def test_logging_sink_rejects_invalid_events():
+    sink = LoggingAlertDeliverySink(logger=RecordingLogger())
+
+    with pytest.raises(TypeError):
+        sink.deliver("not-a-list")
+
+    with pytest.raises(TypeError):
+        sink.deliver(["not-an-event"])
+
+    with pytest.raises(ValueError):
+        sink.deliver([{"event_type": "ongoing", "severity": "warning"}])
