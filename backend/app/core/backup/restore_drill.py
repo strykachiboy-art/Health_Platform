@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,9 @@ from typing import Any
 
 from sqlalchemy.engine import make_url
 
+from app.core.backup.backup_encryption import (
+    read_backup_artifact_key_version,
+)
 from app.core.backup.restore_service import (
     RestoreError,
     restore_full_backup,
@@ -53,6 +57,16 @@ class RestoreDrillResult:
     outbox_recovery_completed: bool
     post_restore_verification_completed: bool
     database_verification: RestoreDrillDatabaseVerification
+    drill_started_at: str
+    completed_at: str
+    duration_seconds: float
+    backup_created_at: str | None
+    backup_age_seconds_at_drill_start: float | None
+    database_artifact_encrypted: bool
+    database_artifact_key_version_hint: int | None
+    database_artifact_decryption_authenticated: bool | None
+    integrity_verification: dict[str, str]
+    recovery_objectives: dict[str, Any]
     report_path: str | None
 
 
@@ -609,6 +623,156 @@ WHERE status = 'processing';
         )
 
 
+def _optional_positive_integer_environment_value(
+    name: str,
+) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError) as exc:
+        raise RestoreDrillError(
+            f"{name} must be a positive integer when configured"
+        ) from exc
+
+    if value <= 0:
+        raise RestoreDrillError(
+            f"{name} must be a positive integer when configured"
+        )
+
+    return value
+
+
+def _load_restore_evidence(
+    backup_root: Path,
+) -> tuple[str | None, datetime | None, bool, int | None]:
+    metadata_path = backup_root / "metadata.json"
+    try:
+        metadata = json.loads(
+            metadata_path.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RestoreDrillError(
+            "Unable to read backup metadata for restore evidence"
+        ) from exc
+
+    if not isinstance(metadata, dict):
+        raise RestoreDrillError(
+            "Backup metadata must contain a JSON object"
+        )
+
+    database_metadata = metadata.get("database")
+    if not isinstance(database_metadata, dict):
+        raise RestoreDrillError(
+            "Backup database metadata is missing"
+        )
+
+    raw_created_at = metadata.get("created_at")
+    if not isinstance(raw_created_at, str) or not raw_created_at.strip():
+        raw_created_at = database_metadata.get("created_at")
+
+    backup_created_at = None
+    backup_created_at_datetime = None
+    if isinstance(raw_created_at, str) and raw_created_at.strip():
+        try:
+            parsed = datetime.fromisoformat(
+                raw_created_at.strip().replace("Z", "+00:00")
+            )
+            if parsed.tzinfo is not None:
+                backup_created_at_datetime = parsed.astimezone(timezone.utc)
+                backup_created_at = backup_created_at_datetime.isoformat()
+        except (OverflowError, OSError, TypeError, ValueError):
+            # Older or externally supplied metadata may lack a usable timestamp.
+            # Preserve the successful restore, but mark freshness assessment unavailable.
+            pass
+
+    encrypted = database_metadata.get("encrypted", False)
+    if not isinstance(encrypted, bool):
+        raise RestoreDrillError(
+            "Backup database encryption marker must be a boolean"
+        )
+
+    key_version_hint = None
+    if encrypted:
+        recorded_path = database_metadata.get("backup_path")
+        default_artifact = (backup_root / "database.dump").resolve()
+        artifact_path = default_artifact
+
+        if isinstance(recorded_path, str) and recorded_path.strip():
+            recorded = Path(recorded_path)
+            candidate = recorded.resolve() if recorded.is_absolute() else (backup_root / recorded).resolve()
+            try:
+                candidate.relative_to(backup_root.resolve())
+            except ValueError:
+                # Portable backups may retain their original absolute path in metadata.
+                # Match restore_service's safe fallback to the standard artifact name.
+                candidate = default_artifact
+            artifact_path = candidate
+
+        if not artifact_path.is_file() and default_artifact.is_file():
+            artifact_path = default_artifact
+        if not artifact_path.is_file():
+            raise RestoreDrillError(
+                "Encrypted database backup artifact was not found for key-version evidence"
+            )
+
+        try:
+            # The header version is an untrusted lookup hint; successful restore
+            # must still authenticate the ciphertext with the matching key.
+            key_version_hint = read_backup_artifact_key_version(artifact_path)
+        except Exception as exc:
+            raise RestoreDrillError(
+                "Unable to read encrypted database artifact key-version hint"
+            ) from exc
+
+    return (
+        backup_created_at,
+        backup_created_at_datetime,
+        encrypted,
+        key_version_hint,
+    )
+
+
+def _build_recovery_objective_evidence(
+    *,
+    rpo_target_seconds: int | None,
+    rto_target_seconds: int | None,
+    backup_age_seconds_at_start: float | None,
+    duration_seconds: float,
+) -> dict[str, Any]:
+    if rpo_target_seconds is None:
+        rpo_status = "not_configured"
+    elif backup_age_seconds_at_start is None:
+        rpo_status = "not_assessed"
+    elif backup_age_seconds_at_start <= rpo_target_seconds:
+        rpo_status = "within_target"
+    else:
+        rpo_status = "exceeds_target"
+
+    if rto_target_seconds is None:
+        rto_status = "not_configured"
+    elif duration_seconds <= rto_target_seconds:
+        rto_status = "within_target"
+    else:
+        rto_status = "exceeds_target"
+
+    return {
+        "rpo_target_seconds": rpo_target_seconds,
+        "backup_age_seconds_at_drill_start": backup_age_seconds_at_start,
+        "rpo_freshness_proxy_status": rpo_status,
+        "rpo_assessment_basis": (
+            "Backup metadata timestamp versus drill start is a freshness proxy, "
+            "not an authoritative measurement of data loss in a production incident."
+        ),
+        "rpo_authoritatively_verified": False,
+        "rto_target_seconds": rto_target_seconds,
+        "observed_restore_drill_duration_seconds": duration_seconds,
+        "rto_status": rto_status,
+    }
+
+
 def _load_expected_migration_revision(
     backup_path: Path,
 ) -> str | None:
@@ -679,6 +843,15 @@ def run_restore_drill(
     report_path: str | Path | None = None,
 ) -> RestoreDrillResult:
     _require_confirmation()
+    drill_started_at_datetime = datetime.now(timezone.utc)
+    drill_started_at = drill_started_at_datetime.isoformat()
+    drill_started_monotonic = time.monotonic()
+    rpo_target_seconds = _optional_positive_integer_environment_value(
+        "BACKUP_RPO_TARGET_SECONDS"
+    )
+    rto_target_seconds = _optional_positive_integer_environment_value(
+        "BACKUP_RTO_TARGET_SECONDS"
+    )
 
     source_database_url = (
         source_database_url
@@ -710,6 +883,24 @@ def run_restore_drill(
         raise RestoreDrillError(
             "Backup path must be a directory"
         )
+
+    (
+        backup_created_at,
+        backup_created_at_datetime,
+        database_artifact_encrypted,
+        database_artifact_key_version_hint,
+    ) = _load_restore_evidence(backup_root)
+
+    backup_age_seconds_at_drill_start = None
+    if backup_created_at_datetime is not None:
+        observed_backup_age = (
+            drill_started_at_datetime - backup_created_at_datetime
+        ).total_seconds()
+        if observed_backup_age >= 0:
+            backup_age_seconds_at_drill_start = round(
+                observed_backup_age,
+                3,
+            )
 
     target_storage = _validate_storage_target(
         target_storage_root=target_storage_root,
@@ -830,6 +1021,29 @@ def run_restore_drill(
             "Restore service reported failure"
         )
 
+    completed_at_datetime = datetime.now(timezone.utc)
+    completed_at = completed_at_datetime.isoformat()
+    duration_seconds = round(
+        max(0.0, time.monotonic() - drill_started_monotonic),
+        3,
+    )
+    database_artifact_decryption_authenticated = (
+        True if database_artifact_encrypted else None
+    )
+    integrity_verification = {
+        "database_artifact_size_and_sha256": "passed",
+        "file_manifest_and_payload_checksums": "passed",
+        "encrypted_database_authenticated_decryption": (
+            "passed" if database_artifact_encrypted else "not_applicable"
+        ),
+    }
+    recovery_objectives = _build_recovery_objective_evidence(
+        rpo_target_seconds=rpo_target_seconds,
+        rto_target_seconds=rto_target_seconds,
+        backup_age_seconds_at_start=backup_age_seconds_at_drill_start,
+        duration_seconds=duration_seconds,
+    )
+
     report_target = None
 
     if report_path is not None:
@@ -845,10 +1059,24 @@ def run_restore_drill(
         )
 
     report = {
+        "evidence_schema_version": "restore-drill-v2",
         "success": True,
-        "completed_at": datetime.now(
-            timezone.utc
-        ).isoformat(),
+        "drill_started_at": drill_started_at,
+        "completed_at": completed_at,
+        "duration_seconds": duration_seconds,
+        "backup_created_at": backup_created_at,
+        "backup_age_seconds_at_drill_start": (
+            backup_age_seconds_at_drill_start
+        ),
+        "database_artifact_encrypted": database_artifact_encrypted,
+        "database_artifact_key_version_hint": (
+            database_artifact_key_version_hint
+        ),
+        "database_artifact_decryption_authenticated": (
+            database_artifact_decryption_authenticated
+        ),
+        "integrity_verification": integrity_verification,
+        "recovery_objectives": recovery_objectives,
         "backup_id": result.backup_id,
         "backup_path": str(
             backup_root
@@ -910,6 +1138,22 @@ def run_restore_drill(
             result.post_restore_verification_completed
         ),
         database_verification=database_verification,
+        drill_started_at=drill_started_at,
+        completed_at=completed_at,
+        duration_seconds=duration_seconds,
+        backup_created_at=backup_created_at,
+        backup_age_seconds_at_drill_start=(
+            backup_age_seconds_at_drill_start
+        ),
+        database_artifact_encrypted=database_artifact_encrypted,
+        database_artifact_key_version_hint=(
+            database_artifact_key_version_hint
+        ),
+        database_artifact_decryption_authenticated=(
+            database_artifact_decryption_authenticated
+        ),
+        integrity_verification=integrity_verification,
+        recovery_objectives=recovery_objectives,
         report_path=(
             str(report_target)
             if report_target is not None

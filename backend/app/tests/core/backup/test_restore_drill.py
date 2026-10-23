@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -175,6 +176,8 @@ def test_restore_drill_executes_full_controlled_flow(
         "RESTORE_DRILL_CONFIRMATION",
         "RESTORE_DRILL_APPROVED",
     )
+    monkeypatch.delenv("BACKUP_RPO_TARGET_SECONDS", raising=False)
+    monkeypatch.delenv("BACKUP_RTO_TARGET_SECONDS", raising=False)
 
     backup_root = (
         tmp_path
@@ -308,6 +311,8 @@ def test_restore_drill_executes_full_controlled_flow(
     assert result.database_verification.migration_revision == (
         "abc123"
     )
+    assert result.recovery_objectives["rpo_freshness_proxy_status"] == "not_configured"
+    assert result.recovery_objectives["rto_status"] == "not_configured"
     assert calls
 
 
@@ -328,6 +333,26 @@ def test_restore_drill_writes_json_report(
     _write_backup_metadata(
         backup_root
     )
+
+    metadata_path = backup_root / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["created_at"] = (
+        datetime.now(timezone.utc) - timedelta(hours=2)
+    ).isoformat()
+    metadata["database"]["encrypted"] = True
+    metadata["database"]["backup_path"] = "database.dump"
+    metadata_path.write_text(
+        json.dumps(metadata),
+        encoding="utf-8",
+    )
+    (backup_root / "database.dump").write_bytes(b"synthetic-ciphertext")
+
+    monkeypatch.setattr(
+        "app.core.backup.restore_drill.read_backup_artifact_key_version",
+        lambda _path: 7,
+    )
+    monkeypatch.setenv("BACKUP_RPO_TARGET_SECONDS", "3600")
+    monkeypatch.setenv("BACKUP_RTO_TARGET_SECONDS", "3600")
 
     restore_result = Mock(
         success=True,
@@ -447,3 +472,20 @@ def test_restore_drill_writes_json_report(
     ]["migration_revision"] == (
         "abc123"
     )
+    assert payload["evidence_schema_version"] == "restore-drill-v2"
+    assert payload["drill_started_at"]
+    assert payload["completed_at"]
+    assert payload["duration_seconds"] >= 0
+    assert payload["backup_age_seconds_at_drill_start"] >= 7190
+    assert payload["database_artifact_encrypted"] is True
+    assert payload["database_artifact_key_version_hint"] == 7
+    assert payload["database_artifact_decryption_authenticated"] is True
+    assert payload["integrity_verification"] == {
+        "database_artifact_size_and_sha256": "passed",
+        "file_manifest_and_payload_checksums": "passed",
+        "encrypted_database_authenticated_decryption": "passed",
+    }
+    assert payload["recovery_objectives"]["rpo_freshness_proxy_status"] == "exceeds_target"
+    assert payload["recovery_objectives"]["rpo_authoritatively_verified"] is False
+    assert payload["recovery_objectives"]["rto_status"] == "within_target"
+    assert payload["recovery_objectives"]["rto_target_seconds"] == 3600

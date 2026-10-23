@@ -130,6 +130,48 @@ Encrypted-backup verification additionally requires:
 - temporary plaintext restore path used by `pg_restore`
 - temporary plaintext restore path absent after restore completion/failure
 
+## Restore drill report and recovery objectives
+
+A successful restore drill now emits `evidence_schema_version: restore-drill-v2`
+with its UTC start/completion timestamps, measured elapsed duration, backup
+metadata timestamp, backup age at drill start, database-artifact encryption
+status, the artifact header's key-version hint, and explicit integrity checks.
+The key-version header is an **untrusted lookup hint**; only a successful
+restore with authenticated decryption establishes that the matching key was
+available to decrypt that encrypted artifact. Key material is never written to
+the report.
+
+Optional approved recovery objectives can be set in the restore process
+environment:
+
+- `BACKUP_RPO_TARGET_SECONDS`: the approved recovery-point freshness target.
+- `BACKUP_RTO_TARGET_SECONDS`: the approved restore-duration target.
+
+Unset targets are reported as `not_configured`; they are not silently assigned
+invented defaults. Invalid configured values stop the drill before restore
+work begins. The RTO status compares measured drill duration with its configured
+target. The RPO status is deliberately called `rpo_freshness_proxy_status`:
+it compares a backup metadata timestamp with the drill start, which is useful
+for assessing backup freshness but is **not an authoritative RPO measurement**
+for a production incident. A real RPO claim requires an agreed incident or
+recovery-point timestamp and evidence of the source data change boundary.
+Record the approved objectives and their owners before treating this gate as
+operationally complete.
+
+## Off-site survivability evidence
+
+A local backup directory or mounted volume is not proof of off-site survivability.
+For the operational drill, retrieve a backup from a separately administered
+failure domain, verify its recorded ciphertext and file-manifest checksums,
+confirm the matching key version is available through the approved recovery-key
+inventory, and run the isolated restore procedure against dedicated targets.
+Record the copy's non-sensitive location alias, retrieval time, artifact/manifest
+digests, key-version hint, restore report path, and the operator's verification
+result. Never include key material, credentials, patient data, or sensitive
+infrastructure details in the report. External-storage retrieval and an executed
+off-site restore remain deployment evidence; this code does not claim they have
+already been performed.
+
 ## Current Verification
 
 Focused verification covers:
