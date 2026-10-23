@@ -71,6 +71,13 @@ def _is_health_route(route: object) -> bool:
     )
 
 
+def _is_metrics_route(route: object) -> bool:
+    return (
+        isinstance(route, str)
+        and (route == "/metrics" or route.startswith("/metrics/"))
+    )
+
+
 def record_api_request_metric(
     *,
     client,
@@ -82,7 +89,7 @@ def record_api_request_metric(
 ) -> bool:
     """Record one request in a short-lived Redis bucket.
 
-    Health endpoints count as telemetry samples, proving that the metrics
+    Health and scrape endpoints count as telemetry samples, proving that
     instrumentation is active, but they do not count as application demand.
     This function deliberately fails open: metrics must never break a response.
     """
@@ -123,6 +130,7 @@ def record_api_request_metric(
         isinstance(route, str)
         and bool(route)
         and not _is_health_route(route)
+        and not _is_metrics_route(route)
     )
 
     try:

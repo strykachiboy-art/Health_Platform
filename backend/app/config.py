@@ -72,6 +72,14 @@ class Config:
     CELERY_RESULT_BACKEND = REDIS_URL
 
     # ------------------------------------------------------------------
+    # Prometheus-compatible metrics export
+    # ------------------------------------------------------------------
+
+    OBSERVABILITY_METRICS_TOKEN = os.environ.get(
+        "OBSERVABILITY_METRICS_TOKEN"
+    )
+
+    # ------------------------------------------------------------------
     # Upload / Storage
     # ------------------------------------------------------------------
 

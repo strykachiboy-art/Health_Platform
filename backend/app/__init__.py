@@ -18,6 +18,9 @@ from app.core.error_handlers import register_error_handlers
 from app.core.observability.health_routes import (
     health_bp,
 )
+from app.core.observability.metrics_routes import (
+    metrics_bp,
+)
 from app.core.observability import (
     init_celery_metrics,
     init_db_metrics,
@@ -369,6 +372,10 @@ def register_blueprints(app):
 
     app.register_blueprint(
         health_bp
+    )
+
+    app.register_blueprint(
+        metrics_bp
     )
 
     api_blueprints = (
