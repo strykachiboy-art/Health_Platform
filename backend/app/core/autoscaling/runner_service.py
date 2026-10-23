@@ -171,15 +171,16 @@ def build_runtime(
     if missing:
         raise ValueError("Compose project files are missing: " + ",".join(missing))
     routing_file = project_root / "runtime" / "phase9" / "nginx-upstream" / "backend.conf"
-    if scale_in_enabled:
-        if not _strong_drain_token_configured(project_root / ENV_FILE_NAME):
-            raise RuntimeError(
-                "scale-in requires a strong PHASE9_BACKEND_DRAIN_TOKEN in .env.phase6"
-            )
-        if not routing_file.is_file():
-            raise RuntimeError(
-                "scale-in requires the generated Nginx backend upstream file"
-            )
+    if not routing_file.is_file():
+        raise RuntimeError(
+            "autoscaling requires the generated Nginx backend upstream file for route reconciliation"
+        )
+    if scale_in_enabled and not _strong_drain_token_configured(
+        project_root / ENV_FILE_NAME
+    ):
+        raise RuntimeError(
+            "scale-in requires a strong PHASE9_BACKEND_DRAIN_TOKEN in .env.phase6"
+        )
 
     minimum = _integer(env, _PREFIX + "MIN_REPLICAS")
     maximum = _integer(env, _PREFIX + "MAX_REPLICAS")
@@ -259,12 +260,9 @@ def build_runtime(
             DockerExecBackendDrainAdapter(project_name=project_name)
             if scale_in_enabled else None
         )
-        routing_adapter = (
-            NginxBackendRoutingAdapter(
-                project_name=project_name,
-                upstream_file=routing_file,
-            )
-            if scale_in_enabled else None
+        routing_adapter = NginxBackendRoutingAdapter(
+            project_name=project_name,
+            upstream_file=routing_file,
         )
         actuator = ComposeLiveScalingActuator(
             preview_adapter,

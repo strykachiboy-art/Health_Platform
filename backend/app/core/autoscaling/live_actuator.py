@@ -390,6 +390,11 @@ class ComposeLiveScalingActuator:
                 ScaleActuationStatus.REFUSED, "scale_in_routing_unavailable",
                 current, target,
             )
+        if not scale_in and self.routing_adapter is None:
+            return self._result(
+                ScaleActuationStatus.REFUSED, "scale_out_routing_unavailable",
+                current, target,
+            )
 
         expected_image, error = self._resolved_backend_image()
         if error:
@@ -402,6 +407,11 @@ class ComposeLiveScalingActuator:
             return self._result(
                 ScaleActuationStatus.REFUSED, "pre_action_state_not_safe",
                 current, target, observed=len(before) if before is not None else None,
+            )
+        if not self._verify_route_set(current).confirmed:
+            return self._result(
+                ScaleActuationStatus.REFUSED, "pre_action_route_state_not_safe",
+                current, target, observed=len(before),
             )
 
         drain_target = None
@@ -540,10 +550,31 @@ class ComposeLiveScalingActuator:
             )
 
         if self._inventory_matches(after, target, expected_image):
+            # Container health is not sufficient: do not acknowledge a scale-out
+            # until the new replica is present in the verified Nginx upstream.
+            # Scale-in must confirm the reduced route set and must not re-add the
+            # retired backend. A route uncertainty preserves the durable intent.
+            route_result = (
+                self._verify_route_set(target)
+                if scale_in
+                else self._restore_backend_route(target)
+            )
+            if not route_result.confirmed:
+                reason = (
+                    "target_state_verified_route_set_unconfirmed"
+                    if scale_in
+                    else "target_state_verified_route_publication_unconfirmed"
+                )
+                return self._result(
+                    ScaleActuationStatus.UNCERTAIN, reason,
+                    current, target, observed=len(after),
+                    exit_code=route_result.exit_code,
+                )
             return self._result(
                 ScaleActuationStatus.APPLIED,
-                "target_state_verified" if not operation_error and exit_code == 0
-                else "target_state_verified_after_command_error",
+                "target_state_and_routes_verified"
+                if not operation_error and exit_code == 0
+                else "target_state_and_routes_verified_after_command_error",
                 current, target, observed=len(after), exit_code=exit_code,
             )
 
@@ -651,10 +682,24 @@ class ComposeLiveScalingActuator:
                 current, target,
             )
 
-        # If the exact target fleet is healthy, the external action completed.
+        # Target containers alone do not prove that the serving proxy routes to
+        # them. Recovery repairs/validates routing before clearing the durable intent.
         if self._inventory_matches(rows, target, expected_image):
+            route_result = (
+                self._restore_backend_route(target)
+                if action == "scale_out"
+                else self._verify_route_set(target)
+            )
+            if not route_result.confirmed:
+                return self._result(
+                    ScaleActuationStatus.UNCERTAIN,
+                    "pending_operation_target_state_route_unconfirmed",
+                    current, target, observed=len(rows),
+                    exit_code=route_result.exit_code,
+                )
             return self._result(
-                ScaleActuationStatus.APPLIED, "pending_operation_target_state_verified",
+                ScaleActuationStatus.APPLIED,
+                "pending_operation_target_state_and_routes_verified",
                 current, target, observed=len(rows),
             )
 
@@ -662,6 +707,13 @@ class ComposeLiveScalingActuator:
             if self._inventory_matches(rows, current, expected_image):
                 if phase == "preparing":
                     # The CLI call is forbidden until the durable phase CAS succeeds.
+                    # Also prove the original healthy fleet still has the expected routes.
+                    if not self._verify_route_set(current).confirmed:
+                        return self._result(
+                            ScaleActuationStatus.UNCERTAIN,
+                            "pending_scale_out_original_route_set_unverified",
+                            current, target, observed=len(rows),
+                        )
                     return self._result(
                         ScaleActuationStatus.FAILED,
                         "pending_scale_out_command_not_started_original_state_verified",
@@ -733,6 +785,12 @@ class ComposeLiveScalingActuator:
                 current, target,
                 observed=len(restored) if restored is not None else None,
             )
+        if not self._verify_route_set(current).confirmed:
+            return self._result(
+                ScaleActuationStatus.UNCERTAIN,
+                "pending_scale_in_original_route_set_unverified_after_restore",
+                current, target, observed=len(restored),
+            )
         return self._result(
             ScaleActuationStatus.FAILED,
             "pending_scale_in_command_not_started_original_state_restored",
@@ -763,6 +821,41 @@ class ComposeLiveScalingActuator:
             return self.drain_adapter.undrain(name) is True
         except Exception:
             return False
+
+    def _restore_backend_route(self, replica_count: int) -> RouteOperationResult:
+        if self.routing_adapter is None:
+            return RouteOperationResult(
+                False, None, "routing_adapter_unavailable"
+            )
+        name = f"{self.project_name}-backend-{replica_count}"
+        try:
+            result = self.routing_adapter.restore(name)
+        except Exception:
+            return RouteOperationResult(
+                False, None, "route_restoration_exception"
+            )
+        if not isinstance(result, RouteOperationResult):
+            return RouteOperationResult(
+                False, None, "invalid_route_restoration_result"
+            )
+        return result
+
+    def _verify_route_set(self, replica_count: int) -> RouteOperationResult:
+        if self.routing_adapter is None:
+            return RouteOperationResult(
+                False, None, "routing_adapter_unavailable"
+            )
+        try:
+            result = self.routing_adapter.verify_replicas(replica_count)
+        except Exception:
+            return RouteOperationResult(
+                False, None, "route_verification_exception"
+            )
+        if not isinstance(result, RouteOperationResult):
+            return RouteOperationResult(
+                False, None, "invalid_route_verification_result"
+            )
+        return result
 
     def _restore_routing(self, name: str) -> bool:
         if self.routing_adapter is None:

@@ -169,6 +169,41 @@ class NginxBackendRoutingAdapter:
             reason="route_restoration_confirmed",
         )
 
+    def verify_replicas(self, replica_count: int) -> RouteOperationResult:
+        """Verify that the upstream file and expanded Nginx config match a fleet size."""
+        if type(replica_count) is not int or replica_count < 1:
+            return RouteOperationResult(
+                False, None, "invalid_replica_count"
+            )
+
+        expected = [
+            f"{self.project_name}-backend-{index}"
+            for index in range(1, replica_count + 1)
+        ]
+        _text, file_names = self._read_server_file()
+        if file_names is None:
+            return RouteOperationResult(
+                False, None, "upstream_file_invalid"
+            )
+        if file_names != expected:
+            return RouteOperationResult(
+                False, None, "upstream_route_set_mismatch"
+            )
+
+        effective_names = self._inspect_config_servers()
+        if effective_names is None:
+            return RouteOperationResult(
+                False, None, "nginx_effective_routes_unavailable"
+            )
+        if effective_names != expected:
+            return RouteOperationResult(
+                False, None, "nginx_effective_route_set_mismatch"
+            )
+
+        return RouteOperationResult(
+            True, None, "route_set_verified", 0
+        )
+
     def _backend_index(self, name: str) -> int | None:
         if not isinstance(name, str):
             return None

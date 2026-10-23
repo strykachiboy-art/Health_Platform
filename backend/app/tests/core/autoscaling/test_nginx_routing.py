@@ -78,6 +78,30 @@ def make_adapter(tmp_path, count=4):
     return adapter, path, fake
 
 
+def test_verify_replicas_confirms_matching_upstream_without_mutation(tmp_path):
+    adapter, path, fake = make_adapter(tmp_path, count=3)
+    before = path.read_text(encoding="utf-8")
+
+    result = adapter.verify_replicas(3)
+
+    assert result == RouteOperationResult(True, None, "route_set_verified", 0)
+    assert path.read_text(encoding="utf-8") == before
+    assert any(command[-1] == "-T" for command in fake.calls)
+    assert not any(command[-2:] == ["-s", "reload"] for command in fake.calls)
+
+
+def test_verify_replicas_refuses_mismatched_fleet_size_without_mutation(tmp_path):
+    adapter, path, fake = make_adapter(tmp_path, count=3)
+    before = path.read_text(encoding="utf-8")
+
+    result = adapter.verify_replicas(4)
+
+    assert result.confirmed is False
+    assert result.reason == "upstream_route_set_mismatch"
+    assert path.read_text(encoding="utf-8") == before
+    assert fake.calls == []
+
+
 def test_withdraw_highest_replica_and_confirm_reload(tmp_path):
     adapter, path, fake = make_adapter(tmp_path)
 

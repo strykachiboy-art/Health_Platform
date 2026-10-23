@@ -194,6 +194,13 @@ def test_recovery_service_builds_dependencies_without_running_docker(tmp_path):
     runner_calls = []
     for filename in (".env.phase6", "compose.yaml", "compose.phase6.yaml", "compose.phase9.yaml"):
         (tmp_path / filename).write_text("placeholder\n", encoding="utf-8")
+    route_file = tmp_path / "runtime" / "phase9" / "nginx-upstream" / "backend.conf"
+    route_file.parent.mkdir(parents=True, exist_ok=True)
+    route_file.write_text(
+        "    server clinic-system-backend-1:5000 resolve max_fails=2 fail_timeout=10s;\n"
+        "    server clinic-system-backend-2:5000 resolve max_fails=2 fail_timeout=10s;\n",
+        encoding="utf-8",
+    )
     env = {
         "PHASE9_AUTOSCALING_RECOVERY_ENABLED": "true",
         "PHASE9_AUTOSCALING_PROJECT_NAME": "clinic-system",
@@ -212,6 +219,8 @@ def test_recovery_service_builds_dependencies_without_running_docker(tmp_path):
         assert runtime.lease.key == "clinic-system:autoscaling:controller:lease"
         assert runtime.actuator.live_enabled is True
         assert runtime.actuator.drain_adapter is not None
+        assert runtime.actuator.routing_adapter is not None
+        assert runtime.actuator.routing_adapter.project_name == "clinic-system"
         assert runner_calls == []
     finally:
         runtime.close()

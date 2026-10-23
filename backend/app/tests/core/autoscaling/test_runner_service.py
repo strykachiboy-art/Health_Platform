@@ -53,6 +53,12 @@ class FakeRedis:
 def runtime_env(tmp_path):
     for name in (".env.phase6", "compose.yaml", "compose.phase6.yaml", "compose.phase9.yaml"):
         (tmp_path / name).write_text("test placeholder\n", encoding="utf-8")
+    route_file = tmp_path / "runtime" / "phase9" / "nginx-upstream" / "backend.conf"
+    route_file.parent.mkdir(parents=True, exist_ok=True)
+    route_file.write_text("".join(
+        f"    server clinic-system-backend-{i}:5000 resolve max_fails=2 fail_timeout=10s;\n"
+        for i in range(1, 4)
+    ), encoding="utf-8")
     return {
         "PHASE9_AUTOSCALING_ENABLED": "true",
         "PHASE9_AUTOSCALING_LIVE_ENABLED": "true",
@@ -107,6 +113,8 @@ def test_enabled_runtime_wires_one_project_and_one_lease(runtime_env):
         assert runtime.runner.loop._actuator._actuator is runtime.actuator
         assert runtime.actuator.live_enabled is True
         assert runtime.actuator.scale_in_enabled is False
+        assert runtime.actuator.routing_adapter is not None
+        assert runtime.actuator.routing_adapter.project_name == "clinic-system"
         assert runtime.actuator.before_scale_command == runtime.lease.mark_scale_command_started
         assert runtime.runner.loop._controller._observation_adapter.config.bucket_seconds == API_REQUEST_METRICS_BUCKET_SECONDS
         assert runtime.runner.loop._controller._coordinator._decision_engine.policy.allow_scale_in is False
@@ -165,7 +173,7 @@ def test_scale_in_enabled_wires_both_adapters(runtime_env):
     route_file = root / "runtime" / "phase9" / "nginx-upstream" / "backend.conf"
     route_file.parent.mkdir(parents=True, exist_ok=True)
     route_file.write_text("".join(
-        f"    server clinic-system-backend-{i}:5000 resolve max_fails=2 fail_timeout=10s\n"
+        f"    server clinic-system-backend-{i}:5000 resolve max_fails=2 fail_timeout=10s;\n"
         for i in range(1, 5)
     ), encoding="utf-8")
 

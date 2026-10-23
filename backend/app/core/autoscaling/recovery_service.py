@@ -24,6 +24,7 @@ from app.core.autoscaling.live_actuator import (
     ComposeLiveScalingActuator,
     DockerExecBackendDrainAdapter,
 )
+from app.core.autoscaling.nginx_routing import NginxBackendRoutingAdapter
 from app.core.autoscaling.pending_operation_recovery import PendingOperationRecovery
 
 _LOG = logging.getLogger(__name__)
@@ -88,6 +89,11 @@ def build_recovery_service(
     missing = [name for name in _REQUIRED_FILES if not (root / name).is_file()]
     if missing:
         raise ValueError("Compose project files are missing: " + ",".join(missing))
+    routing_file = root / "runtime" / "phase9" / "nginx-upstream" / "backend.conf"
+    if not routing_file.is_file():
+        raise ValueError(
+            "pending-operation recovery requires the generated Nginx backend upstream file"
+        )
 
     minimum = _integer(env, _PREFIX + "MIN_REPLICAS")
     maximum = _integer(env, _PREFIX + "MAX_REPLICAS")
@@ -116,6 +122,11 @@ def build_recovery_service(
             project_name=project_name,
             runner=command_runner,
         )
+        routing = NginxBackendRoutingAdapter(
+            project_name=project_name,
+            upstream_file=routing_file,
+            runner=command_runner,
+        )
         lease = RedisControllerLease(
             client,
             key=env.get(_PREFIX + "LEASE_KEY", "clinic-system:autoscaling:controller:lease"),
@@ -126,6 +137,7 @@ def build_recovery_service(
             preview,
             live_enabled=True,
             drain_adapter=drain,
+            routing_adapter=routing,
             before_scale_command=lease.mark_scale_command_started,
             runner=command_runner,
         )

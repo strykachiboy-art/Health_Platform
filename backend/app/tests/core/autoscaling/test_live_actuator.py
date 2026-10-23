@@ -92,10 +92,12 @@ class FakeDrain:
 class FakeRouting:
     project_name = PROJECT
 
-    def __init__(self, *, confirmed=True, restored=True, events=None):
+    def __init__(self, *, confirmed=True, restored=True, verify_confirmed=True, events=None):
         self.confirmed = confirmed
         self.restored = restored
+        self.verify_confirmed = verify_confirmed
         self.withdraw_calls, self.restore_calls = [], []
+        self.verify_calls = []
         self.events = events if events is not None else []
 
     def withdraw(self, name):
@@ -108,7 +110,18 @@ class FakeRouting:
     def restore(self, name):
         self.restore_calls.append(name)
         self.events.append(("restore_routes", name))
-        return RouteOperationResult(True, None, "test", 0)
+        return RouteOperationResult(
+            self.confirmed, None, "test", 0 if self.confirmed else 1
+        )
+
+    def verify_replicas(self, replica_count):
+        self.verify_calls.append(replica_count)
+        self.events.append(("verify_routes", replica_count))
+        return RouteOperationResult(
+            self.verify_confirmed, None,
+            "route_set_verified" if self.verify_confirmed else "route_set_mismatch",
+            0 if self.verify_confirmed else 1,
+        )
 
 
 class ScriptedRunner:
@@ -132,7 +145,7 @@ def make_actuator(
     before_scale_command=None, scale_in_enabled=False,
 ):
     preview = FakePreview(tmp_path, preview_status)
-    if scale_in_enabled and routing is None:
+    if routing is None:
         routing = FakeRouting()
     callback = before_scale_command
     if enabled and callback is None:
@@ -203,6 +216,51 @@ def test_scale_out_applies_only_after_target_is_healthy(tmp_path):
     assert preview.calls[0][1] is False
 
 
+def test_scale_out_route_publication_failure_keeps_operation_uncertain(tmp_path):
+    runner = ScriptedRunner([
+        config_reply(), completed(inventory(3)),
+        config_reply(), completed(inventory(3)),
+        completed(), completed(inventory(4)),
+    ])
+    routing = FakeRouting(confirmed=False)
+    actuator, _ = make_actuator(tmp_path, runner, routing=routing)
+
+    result = actuator.apply(decision())
+
+    assert result.status is ScaleActuationStatus.UNCERTAIN
+    assert result.reason == "target_state_verified_route_publication_unconfirmed"
+    assert result.may_acknowledge_decision is False
+    assert routing.restore_calls == [f"{PROJECT}-backend-4"]
+
+
+def test_scale_out_is_refused_before_docker_when_route_adapter_is_missing(tmp_path):
+    runner = ScriptedRunner([])
+    preview = FakePreview(tmp_path)
+    actuator = ComposeLiveScalingActuator(
+        preview, live_enabled=True, before_scale_command=lambda: True, runner=runner,
+    )
+
+    result = actuator.apply(decision())
+
+    assert result.status is ScaleActuationStatus.REFUSED
+    assert result.reason == "scale_out_routing_unavailable"
+    assert runner.calls == []
+    assert preview.calls == []
+
+
+def test_pre_action_route_mismatch_refuses_scaling_without_mutation(tmp_path):
+    runner = ScriptedRunner([config_reply(), completed(inventory(3))])
+    routing = FakeRouting(verify_confirmed=False)
+    actuator, _ = make_actuator(tmp_path, runner, routing=routing)
+
+    result = actuator.apply(decision())
+
+    assert result.status is ScaleActuationStatus.REFUSED
+    assert result.reason == "pre_action_route_state_not_safe"
+    assert routing.verify_calls == [3]
+    assert not any("--scale" in command for command, _ in runner.calls)
+
+
 def test_command_error_is_reconciled_against_actual_state(tmp_path):
     runner = ScriptedRunner([
         config_reply(), completed(inventory(3)),
@@ -214,7 +272,7 @@ def test_command_error_is_reconciled_against_actual_state(tmp_path):
     result = actuator.apply(decision())
 
     assert result.status is ScaleActuationStatus.APPLIED
-    assert result.reason == "target_state_verified_after_command_error"
+    assert result.reason == "target_state_and_routes_verified_after_command_error"
 
 
 def test_scale_command_timeout_keeps_scale_out_uncertain_when_old_inventory_is_seen(tmp_path):
@@ -393,6 +451,26 @@ def test_reconcile_pending_scale_out_confirms_target_or_original_without_scaling
     assert not any("scale" in call[0] for call in old_runner.calls)
 
 
+def test_reconcile_target_fleet_requires_confirmed_route_publication(tmp_path):
+    runner = ScriptedRunner([config_reply(), completed(inventory(4))])
+    routing = FakeRouting(confirmed=False)
+    actuator, _ = make_actuator(tmp_path, runner, routing=routing)
+    intent = {
+        "schema_version": 2, "phase": "scale_command_started",
+        "operation_id": "op-route-failure", "action": "scale_out",
+        "current_replicas": 3, "target_replicas": 4, "reason": "test",
+        "created_at": "2026-10-22T00:00:00+00:00",
+    }
+
+    result = actuator.reconcile_pending_operation(intent)
+
+    assert result.status is ScaleActuationStatus.UNCERTAIN
+    assert result.reason == "pending_operation_target_state_route_unconfirmed"
+    assert result.may_acknowledge_decision is False
+    assert routing.restore_calls == [f"{PROJECT}-backend-4"]
+    assert not any("--scale" in command for command, _ in runner.calls)
+
+
 def test_reconcile_legacy_intent_original_state_is_not_proof_of_non_application(tmp_path):
     runner = ScriptedRunner([config_reply(), completed(inventory(3))])
     actuator, _ = make_actuator(tmp_path, runner)
@@ -452,6 +530,28 @@ def test_reconcile_pending_scale_in_undrains_only_verified_original_topology(tmp
     assert result.reason == "pending_scale_in_command_not_started_original_state_restored"
     assert drainer.undrain_calls == [f"{PROJECT}-backend-3"]
     assert not any("scale" in call[0] for call in runner.calls)
+
+
+def test_reconcile_scale_in_target_requires_reduced_route_set(tmp_path):
+    runner = ScriptedRunner([config_reply(), completed(inventory(2))])
+    routing = FakeRouting(verify_confirmed=False)
+    actuator, _ = make_actuator(
+        tmp_path, runner, drainer=FakeDrain(), routing=routing,
+    )
+    intent = {
+        "schema_version": 2, "phase": "scale_command_started",
+        "operation_id": "op-scale-in-route-mismatch", "action": "scale_in",
+        "current_replicas": 3, "target_replicas": 2, "reason": "test",
+        "created_at": "2026-10-22T00:00:00+00:00",
+    }
+
+    result = actuator.reconcile_pending_operation(intent)
+
+    assert result.status is ScaleActuationStatus.UNCERTAIN
+    assert result.reason == "pending_operation_target_state_route_unconfirmed"
+    assert result.may_acknowledge_decision is False
+    assert routing.verify_calls == [2]
+    assert routing.restore_calls == []
 
 
 def test_reconcile_started_scale_in_does_not_undrain_when_command_outcome_is_unknown(tmp_path):
@@ -602,11 +702,13 @@ def test_scale_in_withdraws_routes_before_draining(tmp_path):
     )
     result = actuator.apply(decision(ScalingAction.SCALE_IN, 3, 2))
     assert result.status is ScaleActuationStatus.APPLIED
-    assert events[:2] == [
+    assert events[:3] == [
+        ("verify_routes", 3),
         ("withdraw", f"{PROJECT}-backend-3"),
         ("drain", f"{PROJECT}-backend-3"),
     ]
     assert routing.restore_calls == []
+    assert routing.verify_calls == [3, 2]
 
 
 def test_failed_scale_in_restores_drain_on_verified_old_state(tmp_path):
