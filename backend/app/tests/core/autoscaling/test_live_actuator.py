@@ -215,11 +215,13 @@ def test_scale_out_applies_only_after_target_is_healthy(tmp_path):
     assert len(inventory_commands) == 3
     assert all("--no-trunc" in command for command in inventory_commands)
 
-    command = runner.calls[4][0]
-    assert command[-8:] == [
+    command, command_kwargs = runner.calls[4]
+    assert command[-11:] == [
         "up", "-d", "--no-deps", "--no-recreate",
-        "--no-build", "--scale", "backend=4", "backend"
+        "--no-build", "--wait", "--wait-timeout", "60",
+        "--scale", "backend=4", "backend"
     ]
+    assert command_kwargs["timeout"] == 120
     assert preview.calls[0][1] is False
 
 
@@ -354,6 +356,32 @@ def test_unhealthy_target_remains_uncertain(tmp_path):
 
     assert result.status is ScaleActuationStatus.UNCERTAIN
     assert not result.outcome_known and not result.may_acknowledge_decision
+
+
+def test_compose_wait_timeout_with_unhealthy_target_keeps_operation_uncertain(tmp_path):
+    runner = ScriptedRunner([
+        config_reply(), completed(inventory(3)),
+        config_reply(), completed(inventory(3)),
+        completed(returncode=1), completed(inventory(4, bad_index=4)),
+    ])
+    actuator, _ = make_actuator(tmp_path, runner)
+
+    result = actuator.apply(decision())
+
+    assert result.status is ScaleActuationStatus.UNCERTAIN
+    assert result.reason == "post_action_state_ambiguous"
+    assert result.may_acknowledge_decision is False
+    live_commands = [
+        command
+        for command, _kwargs in runner.calls
+        if "--scale" in command and "--dry-run" not in command
+    ]
+    assert len(live_commands) == 1
+    assert live_commands[0][-11:] == [
+        "up", "-d", "--no-deps", "--no-recreate",
+        "--no-build", "--wait", "--wait-timeout", "60",
+        "--scale", "backend=4", "backend"
+    ]
 
 
 def test_scale_in_is_refused_by_default_before_any_inventory_or_drain_call(tmp_path):

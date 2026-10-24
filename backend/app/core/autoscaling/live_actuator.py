@@ -26,6 +26,9 @@ from app.core.autoscaling.nginx_routing import (
 )
 
 
+_COMPOSE_SCALE_WAIT_TIMEOUT_SECONDS = 60
+
+
 class ScaleActuationStatus(str, Enum):
     NOOP = "noop"
     REFUSED = "refused"
@@ -511,6 +514,9 @@ class ComposeLiveScalingActuator:
             "--no-deps",
             "--no-recreate",
             "--no-build",
+            "--wait",
+            "--wait-timeout",
+            str(_COMPOSE_SCALE_WAIT_TIMEOUT_SECONDS),
             "--scale",
             f"{BACKEND_SERVICE_NAME}={target}",
             BACKEND_SERVICE_NAME,
