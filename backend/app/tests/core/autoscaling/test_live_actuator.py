@@ -208,6 +208,13 @@ def test_scale_out_applies_only_after_target_is_healthy(tmp_path):
     assert result.status is ScaleActuationStatus.APPLIED
     assert result.succeeded and result.may_acknowledge_decision
     assert result.observed_replicas == 4
+    inventory_commands = [
+        command for command, _kwargs in runner.calls
+        if command[:3] == ["docker", "ps", "-a"]
+    ]
+    assert len(inventory_commands) == 3
+    assert all("--no-trunc" in command for command in inventory_commands)
+
     command = runner.calls[4][0]
     assert command[-8:] == [
         "up", "-d", "--no-deps", "--no-recreate",

@@ -911,7 +911,7 @@ class ComposeLiveScalingActuator:
 
     def _read_inventory(self):
         command = [
-            "docker", "ps", "-a",
+            "docker", "ps", "-a", "--no-trunc",
             "--filter", f"label=com.docker.compose.project={self.project_name}",
             "--filter", f"label=com.docker.compose.service={BACKEND_SERVICE_NAME}",
             "--format", "{{.Names}}|{{.Image}}|{{.State}}|{{.Status}}",
