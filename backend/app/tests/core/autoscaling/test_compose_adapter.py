@@ -198,6 +198,106 @@ def test_resolved_image_mismatch_refuses_preview(tmp_path):
     assert len(runner.calls) == 2
 
 
+def test_digest_pinned_preview_verifies_full_image_identity_when_docker_ps_shortens_it(
+    tmp_path,
+):
+    config = make_project(tmp_path)
+    digest = "b" * 64
+    image = f"ghcr.io/example/health_platform@sha256:{digest}"
+    image_id = "sha256:" + ("a" * 64)
+    shortened_id = image_id.split(":", 1)[1][:12]
+
+    running = (
+        f"clinic-system-phase9-backend-1|running|Up 5 hours (healthy)|{shortened_id}\r\n"
+        f"clinic-system-phase9-backend-2|running|Up 2 hours (healthy)|{shortened_id}\r\n"
+    )
+    runner = FakeRunner(
+        [
+            completed(resolved_config({"image": image})),
+            completed(running),
+            completed(image_id + "|" + json.dumps([image])),
+            completed(image + "|" + image_id),
+            completed(image + "|" + image_id),
+            completed("Container clinic-system-phase9-backend-3 Started"),
+        ]
+    )
+
+    result = ComposeScalingAdapter(config, runner=runner).preview(
+        scale_decision()
+    )
+
+    assert result.status is ScalePreviewStatus.DRY_RUN_ACCEPTED
+    assert result.reason == "dry_run_validated_no_infrastructure_change"
+    assert len(runner.calls) == 6
+    assert runner.calls[2][0][:3] == ["docker", "image", "inspect"]
+    assert runner.calls[3][0][:2] == ["docker", "inspect"]
+    assert runner.calls[4][0][:2] == ["docker", "inspect"]
+    assert "--dry-run" in runner.calls[5][0]
+
+
+def test_digest_pinned_preview_refuses_full_container_image_id_mismatch(
+    tmp_path,
+):
+    config = make_project(tmp_path)
+    digest = "b" * 64
+    image = f"ghcr.io/example/health_platform@sha256:{digest}"
+    image_id = "sha256:" + ("a" * 64)
+    wrong_image_id = "sha256:" + ("c" * 64)
+    shortened_id = image_id.split(":", 1)[1][:12]
+
+    running = (
+        f"clinic-system-phase9-backend-1|running|Up 5 hours (healthy)|{shortened_id}\r\n"
+        f"clinic-system-phase9-backend-2|running|Up 2 hours (healthy)|{shortened_id}\r\n"
+    )
+    runner = FakeRunner(
+        [
+            completed(resolved_config({"image": image})),
+            completed(running),
+            completed(image_id + "|" + json.dumps([image])),
+            completed(image + "|" + image_id),
+            completed(image + "|" + wrong_image_id),
+        ]
+    )
+
+    result = ComposeScalingAdapter(config, runner=runner).preview(
+        scale_decision()
+    )
+
+    assert result.status is ScalePreviewStatus.REFUSED
+    assert result.reason == "backend_image_mismatch"
+    assert len(runner.calls) == 5
+    assert all("--dry-run" not in call[0] for call in runner.calls)
+
+
+def test_digest_pinned_preview_refuses_unverified_repo_digest(tmp_path):
+    config = make_project(tmp_path)
+    digest = "b" * 64
+    image = f"ghcr.io/example/health_platform@sha256:{digest}"
+    image_id = "sha256:" + ("a" * 64)
+    shortened_id = image_id.split(":", 1)[1][:12]
+
+    running = (
+        f"clinic-system-phase9-backend-1|running|Up 5 hours (healthy)|{shortened_id}\r\n"
+        f"clinic-system-phase9-backend-2|running|Up 2 hours (healthy)|{shortened_id}\r\n"
+    )
+    runner = FakeRunner(
+        [
+            completed(resolved_config({"image": image})),
+            completed(running),
+            completed(image_id + "|[]"),
+        ]
+    )
+
+    result = ComposeScalingAdapter(config, runner=runner).preview(
+        scale_decision()
+    )
+
+    assert result.status is ScalePreviewStatus.REFUSED
+    assert result.reason == "backend_image_digest_not_verified"
+    assert len(runner.calls) == 3
+    assert all("--dry-run" not in call[0] for call in runner.calls)
+
+
 def test_scale_in_preview_targets_one_fewer_backend(tmp_path):
     config = make_project(tmp_path)
     runner = FakeRunner(

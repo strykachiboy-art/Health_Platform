@@ -506,7 +506,88 @@ class ComposeScalingAdapter:
                 command=ps_command,
             )
 
-        for _name, state, status, image in parsed_rows:
+        resolved_image_id: str | None = None
+        if "@sha256:" in backend_image.lower():
+            image_lookup_command = [
+                "docker",
+                "image",
+                "inspect",
+                "--format",
+                "{{.Id}}|{{json .RepoDigests}}",
+                backend_image,
+            ]
+            image_lookup, image_lookup_error = self._invoke(
+                image_lookup_command
+            )
+            if (
+                image_lookup_error is not None
+                or image_lookup is None
+                or image_lookup.returncode != 0
+            ):
+                return self._result(
+                    ScalePreviewStatus.FAILED,
+                    "backend_image_identity_lookup_failed",
+                    decision,
+                    observed_running_replicas=observed_count,
+                    exit_code=getattr(image_lookup, "returncode", None),
+                    command=image_lookup_command,
+                )
+
+            image_parts = (
+                (image_lookup.stdout or "").strip().split("|", 1)
+            )
+            if len(image_parts) != 2:
+                return self._result(
+                    ScalePreviewStatus.FAILED,
+                    "backend_image_identity_payload_invalid",
+                    decision,
+                    observed_running_replicas=observed_count,
+                    exit_code=image_lookup.returncode,
+                    command=image_lookup_command,
+                )
+
+            resolved_image_id = image_parts[0].strip().lower()
+            try:
+                repository_digests = json.loads(image_parts[1])
+            except (TypeError, json.JSONDecodeError):
+                return self._result(
+                    ScalePreviewStatus.FAILED,
+                    "backend_image_digest_payload_invalid",
+                    decision,
+                    observed_running_replicas=observed_count,
+                    exit_code=image_lookup.returncode,
+                    command=image_lookup_command,
+                )
+
+            if (
+                re.fullmatch(r"sha256:[0-9a-f]{64}", resolved_image_id)
+                is None
+                or not isinstance(repository_digests, list)
+            ):
+                return self._result(
+                    ScalePreviewStatus.FAILED,
+                    "backend_image_identity_payload_invalid",
+                    decision,
+                    observed_running_replicas=observed_count,
+                    exit_code=image_lookup.returncode,
+                    command=image_lookup_command,
+                )
+
+            digest_is_verified = any(
+                isinstance(item, str)
+                and item.lower() == backend_image.lower()
+                for item in repository_digests
+            )
+            if not digest_is_verified:
+                return self._result(
+                    ScalePreviewStatus.REFUSED,
+                    "backend_image_digest_not_verified",
+                    decision,
+                    observed_running_replicas=observed_count,
+                    command=image_lookup_command,
+                )
+
+        for name, state, status, image in parsed_rows:
             if state != "running":
                 return self._result(
                     ScalePreviewStatus.REFUSED,
@@ -525,14 +606,93 @@ class ComposeScalingAdapter:
                     command=ps_command,
                 )
 
-            if image != backend_image.lower():
-                return self._result(
-                    ScalePreviewStatus.REFUSED,
-                    "backend_image_mismatch",
-                    decision,
-                    observed_running_replicas=observed_count,
-                    command=ps_command,
+            if resolved_image_id is None:
+                # Preserve the exact image-reference check for non-digest tags.
+                if image != backend_image.lower():
+                    return self._result(
+                        ScalePreviewStatus.REFUSED,
+                        "backend_image_mismatch",
+                        decision,
+                        observed_running_replicas=observed_count,
+                        command=ps_command,
+                    )
+            else:
+                # docker ps may render .Image as only a 12-character ID.
+                # Check that shortened display against the resolved full ID,
+                # then independently inspect each container for its exact
+                # configured reference and full immutable image ID.
+                displayed_image = image.lower()
+                expected_image_hex = resolved_image_id.split(":", 1)[1]
+                display_matches_id = (
+                    displayed_image == resolved_image_id
+                    or (
+                        re.fullmatch(
+                            r"[0-9a-f]{12,64}", displayed_image
+                        ) is not None
+                        and expected_image_hex.startswith(displayed_image)
+                    )
                 )
+                if not display_matches_id:
+                    return self._result(
+                        ScalePreviewStatus.REFUSED,
+                        "backend_image_mismatch",
+                        decision,
+                        observed_running_replicas=observed_count,
+                        command=ps_command,
+                    )
+
+                container_inspect_command = [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{.Config.Image}}|{{.Image}}",
+                    name,
+                ]
+                container_inspect, container_inspect_error = self._invoke(
+                    container_inspect_command
+                )
+                if (
+                    container_inspect_error is not None
+                    or container_inspect is None
+                    or container_inspect.returncode != 0
+                ):
+                    return self._result(
+                        ScalePreviewStatus.FAILED,
+                        "backend_container_image_inspection_failed",
+                        decision,
+                        observed_running_replicas=observed_count,
+                        exit_code=getattr(
+                            container_inspect, "returncode", None
+                        ),
+                        command=container_inspect_command,
+                    )
+
+                identity_parts = (
+                    (container_inspect.stdout or "").strip().split("|", 1)
+                )
+                if len(identity_parts) != 2:
+                    return self._result(
+                        ScalePreviewStatus.FAILED,
+                        "backend_container_image_payload_invalid",
+                        decision,
+                        observed_running_replicas=observed_count,
+                        exit_code=container_inspect.returncode,
+                        command=container_inspect_command,
+                    )
+
+                configured_image = identity_parts[0].strip().lower()
+                actual_image_id = identity_parts[1].strip().lower()
+                if (
+                    configured_image != backend_image.lower()
+                    or actual_image_id != resolved_image_id
+                ):
+                    return self._result(
+                        ScalePreviewStatus.REFUSED,
+                        "backend_image_mismatch",
+                        decision,
+                        observed_running_replicas=observed_count,
+                        command=container_inspect_command,
+                    )
 
         # There is intentionally no non-dry-run alternative in Gate B.
         scale_command = [
