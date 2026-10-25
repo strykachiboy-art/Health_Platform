@@ -14,6 +14,10 @@ These runbooks support Phase 4 Observability / Operations.
 
 ## Runbooks
 
+### Wave 4 Autoscaling Evidence
+
+- [Wave 4 autoscaling operational evidence](wave4-autoscaling-operational-evidence.md)
+
 ### Observability Incident
 Use for application failures, HTTP 5xx spikes, correlated trace failures, or unknown operational incidents.
 
