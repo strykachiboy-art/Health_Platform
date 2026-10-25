@@ -137,12 +137,17 @@ class FakeActuator:
     def __init__(self, callback=None):
         self.callback = callback
         self.calls = []
+        self.reconciliation_calls = []
 
     def apply(self, decision):
         self.calls.append(decision)
         if self.callback is not None:
             self.callback()
         return "applied"
+
+    def reconcile_pending_operation(self, operation):
+        self.reconciliation_calls.append(dict(operation))
+        return "reconciled"
 
 
 class FakeLoop:
@@ -326,6 +331,34 @@ def test_lease_loss_during_external_actuation_leaves_durable_recovery_barrier():
     assert redis.get("lease") == "replacement-owner"
     assert lease.has_pending_operation() is True
 
+
+def test_guarded_reconciliation_uses_exact_intent_without_resending_scale():
+    redis = FakeRedis()
+    lease = RedisControllerLease(
+        redis, key="lease", ttl_seconds=2, renew_interval_seconds=0.5,
+    )
+    assert lease.acquire() is True
+    actuator = FakeActuator()
+    guarded = LeaseGuardedActuator(actuator, lease)
+
+    try:
+        assert guarded.apply(scale_decision()) == "applied"
+        assert lease.has_pending_operation() is True
+
+        intent = lease.read_pending_operation()
+        assert intent is not None
+
+        result = guarded.reconcile_pending_operation(scale_decision())
+
+        assert result == "reconciled"
+        assert len(actuator.calls) == 1
+        assert actuator.reconciliation_calls == [intent]
+        assert actuator.reconciliation_calls[0]["action"] == "scale_out"
+        assert actuator.reconciliation_calls[0]["current_replicas"] == 2
+        assert actuator.reconciliation_calls[0]["target_replicas"] == 3
+        assert lease.has_pending_operation() is True
+    finally:
+        lease.release()
 
 def test_guarded_acknowledgement_requires_ownership():
     lease = FakeLease()

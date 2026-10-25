@@ -114,10 +114,12 @@ class FakeController:
 
 
 class FakeActuator:
-    def __init__(self, results=None, error=None):
+    def __init__(self, results=None, error=None, reconcile_results=None):
         self.results = list(results or [])
         self.error = error
         self.calls = []
+        self.reconcile_results = list(reconcile_results or [])
+        self.reconciliation_calls = []
 
     def apply(self, selected_decision):
         self.calls.append(selected_decision)
@@ -130,6 +132,16 @@ class FakeActuator:
             may_acknowledge_decision=True,
             status=SimpleNamespace(value="applied"),
             observed_replicas=selected_decision.target_replicas,
+        )
+
+    def reconcile_pending_operation(self, selected_decision):
+        self.reconciliation_calls.append(selected_decision)
+        if self.reconcile_results:
+            return self.reconcile_results.pop(0)
+        return actuation(
+            succeeded=False,
+            may_ack=False,
+            status="uncertain",
         )
 
 
@@ -286,7 +298,7 @@ def test_confirmed_actuator_failure_is_acknowledged_as_failure():
     assert acknowledgements == [(False, AT)]
 
 
-def test_uncertain_outcome_is_not_retried_and_target_health_reconciles_it():
+def test_uncertain_outcome_reconciles_only_after_actuator_verification():
     hold_after_apply = cycle_result(
         action=ScalingAction.HOLD,
         status=AutoscalingCycleStatus.HOLD,
@@ -294,12 +306,18 @@ def test_uncertain_outcome_is_not_retried_and_target_health_reconciles_it():
         target=3,
         reason="scale_action_pending",
     )
-    loop, controller, actuator, acknowledgements = make_loop(
+    actuator = FakeActuator(
+        [actuation(succeeded=False, may_ack=False)],
+        reconcile_results=[
+            actuation(succeeded=True, may_ack=True, status="applied")
+        ],
+    )
+    loop, controller, selected_actuator, acknowledgements = make_loop(
         controller_results=[
             cycle_result(current=2, target=3),
             hold_after_apply,
         ],
-        actuator=FakeActuator([actuation(succeeded=False, may_ack=False)]),
+        actuator=actuator,
     )
 
     first = loop.run_once(evaluated_at=AT)
@@ -308,9 +326,46 @@ def test_uncertain_outcome_is_not_retried_and_target_health_reconciles_it():
 
     assert first.status is ReconciliationStatus.UNCERTAIN
     assert second.status is ReconciliationStatus.RECONCILED_APPLIED
-    assert len(actuator.calls) == 1
+    assert second.reason == "pending_operation_fleet_and_routes_verified"
+    assert len(selected_actuator.calls) == 1
+    assert len(selected_actuator.reconciliation_calls) == 1
+    assert selected_actuator.reconciliation_calls[0] == selected_actuator.calls[0]
     assert acknowledgements == [(True, later)]
 
+
+def test_uncertain_route_reconciliation_keeps_operation_pending():
+    hold_after_apply = cycle_result(
+        action=ScalingAction.HOLD,
+        status=AutoscalingCycleStatus.HOLD,
+        current=3,
+        target=3,
+        reason="scale_action_pending",
+    )
+    actuator = FakeActuator(
+        [actuation(succeeded=False, may_ack=False)],
+        reconcile_results=[
+            actuation(succeeded=False, may_ack=False, status="uncertain")
+        ],
+    )
+    loop, controller, selected_actuator, acknowledgements = make_loop(
+        controller_results=[
+            cycle_result(current=2, target=3),
+            hold_after_apply,
+        ],
+        actuator=actuator,
+    )
+
+    first = loop.run_once(evaluated_at=AT)
+    second = loop.run_once(
+        evaluated_at=datetime(2026, 1, 1, 0, 0, 5, tzinfo=timezone.utc),
+    )
+
+    assert first.status is ReconciliationStatus.UNCERTAIN
+    assert second.status is ReconciliationStatus.UNCERTAIN
+    assert second.reason == "pending_operation_reconciliation_unconfirmed"
+    assert len(selected_actuator.calls) == 1
+    assert len(selected_actuator.reconciliation_calls) == 1
+    assert acknowledgements == []
 
 def test_uncertain_result_with_old_count_remains_pending_without_retry():
     old_count = cycle_result(

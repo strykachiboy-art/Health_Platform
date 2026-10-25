@@ -451,35 +451,84 @@ class AutoscalingReconciliationLoop:
             )
 
         decision = self._pending_decision
-        snapshot = getattr(controller_result, "replicas", None)
-        observed = getattr(snapshot, "current_replicas", None)
-        healthy = getattr(snapshot, "healthy", False)
+        reconcile = getattr(
+            self._actuator, "reconcile_pending_operation", None
+        )
 
-        if (
-            decision is not None
-            and healthy is True
-            and type(observed) is int
-            and observed == decision.target_replicas
-        ):
-            self._pending_kind = "acknowledge_known_result"
-            self._confirmed_result = True
-            self._pending_actuation_result = None
-            self._pending_blocked = False
-            self._pending_reconciled = True
-            return self._retry_known_acknowledgement(
-                at,
+        # A replica-count snapshot cannot prove that the serving proxy routes
+        # to the intended fleet. Recovery must validate fleet state and route
+        # publication without issuing another scale command.
+        if decision is None or not callable(reconcile):
+            return ReconciliationResult(
+                ReconciliationStatus.UNCERTAIN,
+                "pending_operation_reconciliation_unavailable",
+                evaluated_at=at,
                 controller_result=controller_result,
-                reconciled=True,
             )
 
-        # A missing, unhealthy, old, or unexpected replica count is not proof
-        # that the operation failed. Keep the recommendation pending.
-        return ReconciliationResult(
-            ReconciliationStatus.UNCERTAIN,
-            "target_replica_count_not_confirmed_healthy",
-            evaluated_at=at,
-            controller_result=controller_result,
+        try:
+            actuation_result = reconcile(decision)
+        except Exception as exc:
+            return ReconciliationResult(
+                ReconciliationStatus.UNCERTAIN,
+                "pending_operation_reconciliation_failed_closed",
+                evaluated_at=at,
+                controller_result=controller_result,
+                exception_type=type(exc).__name__,
+            )
+
+        may_ack = getattr(
+            actuation_result, "may_acknowledge_decision", None
         )
+        succeeded = getattr(actuation_result, "succeeded", None)
+
+        if (
+            type(may_ack) is not bool
+            or type(succeeded) is not bool
+            or may_ack is not True
+        ):
+            return ReconciliationResult(
+                ReconciliationStatus.UNCERTAIN,
+                "pending_operation_reconciliation_unconfirmed",
+                evaluated_at=at,
+                controller_result=controller_result,
+                actuation_result=actuation_result,
+            )
+
+        # Recovery established a known result. If acknowledgement fails,
+        # the next iteration retries acknowledgement only, not scaling.
+        self._pending_kind = "acknowledge_known_result"
+        self._confirmed_result = succeeded
+        self._pending_actuation_result = actuation_result
+        self._pending_blocked = False
+        self._pending_reconciled = True
+
+        acknowledged = self._retry_known_acknowledgement(
+            at,
+            controller_result=controller_result,
+            actuation_result=actuation_result,
+            reconciled=True,
+        )
+
+        if acknowledged.status is ReconciliationStatus.RECONCILED_APPLIED:
+            return ReconciliationResult(
+                ReconciliationStatus.RECONCILED_APPLIED,
+                "pending_operation_fleet_and_routes_verified",
+                evaluated_at=at,
+                controller_result=controller_result,
+                actuation_result=actuation_result,
+            )
+
+        if acknowledged.status is ReconciliationStatus.ACTUATION_FAILED:
+            return ReconciliationResult(
+                ReconciliationStatus.ACTUATION_FAILED,
+                "pending_operation_original_state_verified_not_applied",
+                evaluated_at=at,
+                controller_result=controller_result,
+                actuation_result=actuation_result,
+            )
+
+        return acknowledged
 
     def _clear_pending(self) -> None:
         self._pending_decision = None

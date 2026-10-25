@@ -557,6 +557,52 @@ class LeaseGuardedActuator:
         self._require_owner("after actuation; outcome must be reconciled")
         return result
 
+    def reconcile_pending_operation(self, decision: Any) -> Any:
+        self._require_owner("before pending-operation reconciliation")
+
+        reader = getattr(self.lease, "read_pending_operation", None)
+        if not callable(reader):
+            raise ControllerReconciliationRequired(
+                "durable pending-operation reader unavailable"
+            )
+
+        operation = reader()
+        if type(operation) is not dict:
+            raise ControllerReconciliationRequired(
+                "durable pending operation unavailable for reconciliation"
+            )
+
+        action = getattr(getattr(decision, "action", None), "value", None)
+        current = getattr(decision, "current_replicas", None)
+        target = getattr(decision, "target_replicas", None)
+
+        if (
+            operation.get("action") != action
+            or type(current) is not int
+            or type(target) is not int
+            or type(operation.get("current_replicas")) is not int
+            or type(operation.get("target_replicas")) is not int
+            or operation.get("current_replicas") != current
+            or operation.get("target_replicas") != target
+        ):
+            raise ControllerReconciliationRequired(
+                "durable intent does not match the pending decision"
+            )
+
+        reconcile = getattr(
+            self._actuator, "reconcile_pending_operation", None
+        )
+        if not callable(reconcile):
+            raise ControllerReconciliationRequired(
+                "actuator does not support pending-operation reconciliation"
+            )
+
+        result = reconcile(operation)
+        self._require_owner(
+            "after pending-operation reconciliation; outcome must remain durable"
+        )
+        return result
+
 
 class LeaseGuardedAcknowledgement:
     """Protect reconciliation acknowledgements with the same lease instance."""
