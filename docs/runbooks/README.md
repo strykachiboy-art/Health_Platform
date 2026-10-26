@@ -18,6 +18,10 @@ These runbooks support Phase 4 Observability / Operations.
 
 - [Wave 4 autoscaling operational evidence](wave4-autoscaling-operational-evidence.md)
 
+### Wave 4 Capacity Evidence
+
+- [Gate 6 system-mixed capacity evidence](wave4-gate6-system-mixed-capacity-evidence.md)
+
 ### Observability Incident
 Use for application failures, HTTP 5xx spikes, correlated trace failures, or unknown operational incidents.
 
