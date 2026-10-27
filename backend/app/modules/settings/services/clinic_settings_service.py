@@ -201,6 +201,7 @@ def disable_clinic_settings(
     return settings
 
 
+@transactional
 def ensure_clinic_settings(
     clinic_id: int,
 ) -> ClinicSettings:

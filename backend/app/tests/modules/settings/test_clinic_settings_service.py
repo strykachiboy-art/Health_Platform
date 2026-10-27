@@ -14,6 +14,7 @@ from app.modules.settings.schemas.clinic_settings import (
 )
 from app.modules.settings.services.clinic_settings_service import (
     create_clinic_settings,
+    ensure_clinic_settings,
 )
 
 
@@ -293,3 +294,37 @@ class TestCreateClinicSettings:
 
         assert persisted.is_enabled is False
         assert persisted.version == 1
+
+class TestEnsureClinicSettings:
+    def test_ensure_clinic_settings_commits_created_defaults(
+        self,
+        clinic,
+        monkeypatch,
+    ):
+        from app.extensions import db
+
+        commit_count = 0
+        original_commit = db.session.commit
+
+        def tracked_commit():
+            nonlocal commit_count
+            commit_count += 1
+            return original_commit()
+
+        monkeypatch.setattr(
+            db.session,
+            "commit",
+            tracked_commit,
+        )
+
+        settings = ensure_clinic_settings(
+            clinic.id,
+        )
+
+        assert settings.id is not None
+        assert settings.clinic_id == clinic.id
+        assert settings.language == "en"
+        assert settings.date_format == "YYYY-MM-DD"
+        assert settings.time_format == "24h"
+        assert settings.version == 1
+        assert commit_count == 1
