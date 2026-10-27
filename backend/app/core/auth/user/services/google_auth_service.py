@@ -30,8 +30,13 @@ from app.core.auth.user.schema.user_schema import (
 from app.core.enums.audit_enums import AuditAction
 from app.core.enums.role_enums import Role
 from app.core.auth.user.services.google_oauth_transport import (
-    GoogleOAuthAuthRequest as _BoundedGoogleAuthRequest,
     requests_for_google_oauth,
+)
+from app.core.auth.user.services.google_auth_circuit_breaker import (
+    CircuitProtectedGoogleAuthRequest as _BoundedGoogleAuthRequest,
+    GoogleAuthTransientError,
+    call_google_auth_with_circuit,
+    is_transient_google_http_status,
 )
 from app.core.exceptions import (
     ConflictError,
@@ -262,27 +267,41 @@ def exchange_google_code(
         "grant_type": "authorization_code",
     }
 
-    try:
-        response = requests.post(
-            GOOGLE_TOKEN_URL,
-            data=payload,
-            timeout=10,
-            allow_redirects=False,
-        )
-    except requests.RequestException as exc:
-        raise ValidationError(
-            "Unable to communicate with Google"
-        ) from exc
+    def _exchange():
+        try:
+            response = requests.post(
+                GOOGLE_TOKEN_URL,
+                data=payload,
+                timeout=10,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            raise GoogleAuthTransientError(
+                "Unable to communicate with Google"
+            ) from exc
 
-    if _is_redirect_response(response):
-        raise ValidationError(
-            "Google authorization code exchange returned an unexpected redirect"
-        )
+        if _is_redirect_response(response):
+            raise ValidationError(
+                "Google authorization code exchange returned an unexpected redirect"
+            )
 
-    if not response.ok:
-        raise ValidationError(
-            "Google authorization code exchange failed"
-        )
+        if not response.ok:
+            if is_transient_google_http_status(
+                getattr(response, "status_code", None)
+            ):
+                raise GoogleAuthTransientError(
+                    "Google authorization code exchange is temporarily unavailable"
+                )
+            raise ValidationError(
+                "Google authorization code exchange failed"
+            )
+
+        return response
+
+    response = call_google_auth_with_circuit(
+        operation="token_exchange",
+        function=_exchange,
+    )
 
     try:
         token_data = response.json()
@@ -331,27 +350,41 @@ def get_google_user_info(
         "Accept": "application/json",
     }
 
-    try:
-        response = requests.get(
-            GOOGLE_USERINFO_URL,
-            headers=headers,
-            timeout=10,
-            allow_redirects=False,
-        )
-    except requests.RequestException as exc:
-        raise ValidationError(
-            "Unable to retrieve Google user information"
-        ) from exc
+    def _userinfo():
+        try:
+            response = requests.get(
+                GOOGLE_USERINFO_URL,
+                headers=headers,
+                timeout=10,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            raise GoogleAuthTransientError(
+                "Unable to retrieve Google user information"
+            ) from exc
 
-    if _is_redirect_response(response):
-        raise ValidationError(
-            "Google user information returned an unexpected redirect"
-        )
+        if _is_redirect_response(response):
+            raise ValidationError(
+                "Google user information returned an unexpected redirect"
+            )
 
-    if not response.ok:
-        raise ValidationError(
-            "Unable to retrieve Google user information"
-        )
+        if not response.ok:
+            if is_transient_google_http_status(
+                getattr(response, "status_code", None)
+            ):
+                raise GoogleAuthTransientError(
+                    "Google user information is temporarily unavailable"
+                )
+            raise ValidationError(
+                "Unable to retrieve Google user information"
+            )
+
+        return response
+
+    response = call_google_auth_with_circuit(
+        operation="userinfo",
+        function=_userinfo,
+    )
 
     try:
         data = response.json()

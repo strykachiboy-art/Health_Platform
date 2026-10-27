@@ -24,6 +24,35 @@ from app.core.exceptions import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _legacy_google_auth_breaker_passthrough(
+    monkeypatch,
+):
+    passthrough = (
+        lambda *,
+        operation,
+        function,
+        args=(),
+        kwargs=None: function(
+            *args,
+            **(kwargs or {}),
+        )
+    )
+
+    monkeypatch.setattr(
+        google_auth_service,
+        "call_google_auth_with_circuit",
+        passthrough,
+    )
+
+    monkeypatch.setattr(
+        "app.core.auth.user.services."
+        "google_auth_circuit_breaker."
+        "call_google_auth_with_circuit",
+        passthrough,
+    )
+
+
 # ============================================================================
 # OAUTH STATE
 # ============================================================================
