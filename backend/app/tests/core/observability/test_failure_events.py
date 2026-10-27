@@ -202,3 +202,38 @@ def test_event_payload_is_json_serializable():
     json.loads(
         redis.items[0]
     )
+
+def test_record_circuit_event_stores_only_operational_metadata():
+    redis = FakeRedis()
+
+    event = record_failure_event(
+        redis_client=redis,
+        event_type="circuit.opened",
+        component="circuit:openai:chat",
+        severity="error",
+        circuit_name="openai:chat",
+        provider="openai",
+        operation="chat",
+        previous_state="closed",
+        new_state="open",
+        generation=4,
+        failure_count=5,
+        failure_threshold=5,
+        opened_until_ms=123456789,
+        failure_class="retryable",
+    )
+
+    assert event is not None
+    assert event["circuit_name"] == "openai:chat"
+    assert event["provider"] == "openai"
+    assert event["operation"] == "chat"
+    assert event["previous_state"] == "closed"
+    assert event["new_state"] == "open"
+    assert event["generation"] == 4
+    assert event["failure_count"] == 5
+    assert event["failure_threshold"] == 5
+    assert event["opened_until_ms"] == 123456789
+    assert event["failure_class"] == "retryable"
+    assert "payload" not in event
+    assert "token" not in event
+    assert "authorization" not in event

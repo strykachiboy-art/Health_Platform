@@ -20,6 +20,11 @@ FAILURE_EVENT_TYPES = frozenset(
         "application.error",
         "celery.task_failure",
         "celery.task_retry",
+        "circuit.opened",
+        "circuit.half_open",
+        "circuit.closed",
+        "circuit.rejected",
+        "circuit.state_store_degraded",
     }
 )
 
@@ -80,6 +85,16 @@ def record_failure_event(
     error_type: str | None = None,
     task_name: str | None = None,
     task_id: str | None = None,
+    circuit_name: str | None = None,
+    provider: str | None = None,
+    operation: str | None = None,
+    previous_state: str | None = None,
+    new_state: str | None = None,
+    generation: int | None = None,
+    failure_count: int | None = None,
+    failure_threshold: int | None = None,
+    opened_until_ms: int | None = None,
+    failure_class: str | None = None,
 ) -> dict[str, Any] | None:
     if redis_client is None:
         return None
@@ -126,6 +141,28 @@ def record_failure_event(
         ),
         "task_id": _safe_text(
             task_id
+        ),
+        "circuit_name": _safe_text(
+            circuit_name
+        ),
+        "provider": _safe_text(
+            provider
+        ),
+        "operation": _safe_text(
+            operation
+        ),
+        "previous_state": _safe_text(
+            previous_state
+        ),
+        "new_state": _safe_text(
+            new_state
+        ),
+        "generation": generation,
+        "failure_count": failure_count,
+        "failure_threshold": failure_threshold,
+        "opened_until_ms": opened_until_ms,
+        "failure_class": _safe_text(
+            failure_class
         ),
     }
 

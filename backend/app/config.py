@@ -72,6 +72,45 @@ class Config:
     CELERY_RESULT_BACKEND = REDIS_URL
 
     # ------------------------------------------------------------------
+    # Distributed Circuit Breaker
+    # ------------------------------------------------------------------
+
+    CIRCUIT_BREAKER_ENABLED = os.environ.get(
+        "CIRCUIT_BREAKER_ENABLED",
+        "true",
+    )
+
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD = int(
+        os.environ.get(
+            "CIRCUIT_BREAKER_FAILURE_THRESHOLD",
+            "5",
+        )
+    )
+
+    CIRCUIT_BREAKER_OPEN_SECONDS = float(
+        os.environ.get(
+            "CIRCUIT_BREAKER_OPEN_SECONDS",
+            "30",
+        )
+    )
+
+    # Keep the recovery lease longer than normal outbound provider
+    # timeouts so a still-running HALF_OPEN probe is not overlapped.
+    CIRCUIT_BREAKER_PROBE_LEASE_SECONDS = float(
+        os.environ.get(
+            "CIRCUIT_BREAKER_PROBE_LEASE_SECONDS",
+            "60",
+        )
+    )
+
+    CIRCUIT_BREAKER_STATE_TTL_SECONDS = int(
+        os.environ.get(
+            "CIRCUIT_BREAKER_STATE_TTL_SECONDS",
+            "3600",
+        )
+    )
+
+    # ------------------------------------------------------------------
     # Prometheus-compatible metrics export
     # ------------------------------------------------------------------
 
