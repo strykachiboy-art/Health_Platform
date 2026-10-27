@@ -4,6 +4,8 @@ import json
 from typing import Any, Callable, Optional, Type
 
 from flask import current_app
+
+from app import extensions
 from pydantic import ValidationError as PydanticValidationError
 
 from app.core.audit.services.audit_service import create_audit_log
@@ -14,13 +16,25 @@ from app.core.enums.ai_enums import (
 )
 from app.core.enums.audit_enums import AuditAction
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.resilience.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerOpenError,
+)
+from app.core.resilience.circuit_breaker_config import (
+    CircuitBreakerSettings,
+)
+from app.core.resilience.circuit_breaker_store import (
+    RedisCircuitBreakerStore,
+)
 from app.core.utils.decorators import transactional
 from app.extensions import db
 
 from app.modules.ai.ai_provider_exceptions import (
     AIProviderError,
+    AIProviderFailureClass,
     AIProviderHTTPError,
     AIProviderResponseError,
+    AIProviderUnavailableError,
     classify_ai_failure,
 )
 
@@ -43,6 +57,10 @@ AIProvider = Callable[
 
 MAX_IP_ADDRESS_LENGTH = 45
 MAX_DRUG_NAME_LENGTH = 255
+
+OPENAI_CIRCUIT_NAME = "openai:chat"
+OPENAI_CIRCUIT_PROVIDER = "openai"
+OPENAI_CIRCUIT_OPERATION = "chat"
 
 
 def _validate_positive_id(
@@ -233,6 +251,58 @@ def _get_provider_timeout_seconds() -> float:
     return float(timeout_seconds)
 
 
+def _classify_openai_circuit_failure(
+    error: Exception,
+) -> str | None:
+    failure_class = classify_ai_failure(
+        error
+    )
+
+    if (
+        failure_class
+        is AIProviderFailureClass.RETRYABLE
+    ):
+        return failure_class.value
+
+    return None
+
+
+def _get_openai_circuit_breaker() -> CircuitBreaker:
+    settings = CircuitBreakerSettings.from_mapping(
+        current_app.config
+    )
+
+    provider_timeout = (
+        _get_provider_timeout_seconds()
+    )
+
+    if (
+        settings.enabled
+        and settings.probe_lease_seconds
+        <= provider_timeout
+    ):
+        raise ValidationError(
+            "CIRCUIT_BREAKER_PROBE_LEASE_SECONDS "
+            "must exceed AI_PROVIDER_TIMEOUT_SECONDS"
+        )
+
+    store = RedisCircuitBreakerStore(
+        redis_client=extensions.redis_client,
+        circuit_name=OPENAI_CIRCUIT_NAME,
+    )
+
+    return CircuitBreaker(
+        name=OPENAI_CIRCUIT_NAME,
+        store=store,
+        settings=settings,
+        failure_classifier=(
+            _classify_openai_circuit_failure
+        ),
+        provider=OPENAI_CIRCUIT_PROVIDER,
+        operation=OPENAI_CIRCUIT_OPERATION,
+    )
+
+
 def _get_input_context_version() -> str:
     version = current_app.config.get(
         "AI_INPUT_CONTEXT_VERSION",
@@ -323,7 +393,7 @@ def _extract_usage(
     )
 
 
-def _call_openai(
+def _call_openai_unprotected(
     feature: AIFeature,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
@@ -473,6 +543,24 @@ def _call_openai(
         )
 
     return result
+
+
+def _call_openai(
+    feature: AIFeature,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    breaker = _get_openai_circuit_breaker()
+
+    try:
+        return breaker.call(
+            _call_openai_unprotected,
+            feature,
+            payload,
+        )
+    except CircuitBreakerOpenError as exc:
+        raise AIProviderUnavailableError(
+            "AI provider is temporarily unavailable"
+        ) from exc
 
 
 def _development_provider(

@@ -39,7 +39,7 @@ def install_capture_openai(
             )
 
     class FakeOpenAI:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **client_options):
             self.chat = SimpleNamespace(
                 completions=FakeCompletions()
             )

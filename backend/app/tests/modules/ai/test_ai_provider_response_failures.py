@@ -27,7 +27,7 @@ def _install_fake_openai(
             return response
 
     class FakeOpenAI:
-        def __init__(self, api_key):
+        def __init__(self, api_key, **client_options):
             self.chat = SimpleNamespace(
                 completions=FakeCompletions()
             )
@@ -339,6 +339,10 @@ def test_valid_provider_output_still_creates_log(
     app,
     clinic,
 ):
+    # PostgreSQL uses a separate scoped session for the nested
+    # app context below, so make the fixture baseline visible.
+    db.session.commit()
+
     with app.app_context():
         result = ai_service._run_feature(
             feature=AIFeature.DRUG_INTERACTION_CHECK,
