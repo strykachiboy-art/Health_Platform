@@ -19,6 +19,7 @@ from app.modules.dashboard.schemas.dashboard_schema import (
     DashboardAlertSchema,
     DashboardChatSummarySchema,
     DashboardContextSchema,
+    DashboardPeriodSchema,
     DashboardMetricSchema,
 )
 
@@ -202,6 +203,8 @@ class ManagementAIDashboardSchema(BaseModel):
 
 class ManagementDashboardSchema(BaseModel):
     context: DashboardContextSchema
+
+    period: DashboardPeriodSchema
 
     overview: ManagementDashboardOverviewSchema
 

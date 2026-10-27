@@ -7,6 +7,7 @@ from app.modules.dashboard.schemas.dashboard_schema import (
     DashboardAlertSchema,
     DashboardChatSummarySchema,
     DashboardContextSchema,
+    DashboardPeriodSchema,
     DashboardMetricSchema,
 )
 
@@ -64,6 +65,8 @@ class OperationsDashboardOverviewSchema(BaseModel):
 
 class OperationsDashboardSchema(BaseModel):
     context: DashboardContextSchema
+
+    period: DashboardPeriodSchema
 
     overview: OperationsDashboardOverviewSchema
 

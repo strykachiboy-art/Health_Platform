@@ -18,6 +18,7 @@ from app.modules.dashboard.schemas.dashboard_schema import (
     DashboardActivitySchema,
     DashboardAlertSchema,
     DashboardContextSchema,
+    DashboardPeriodSchema,
     DashboardMetricSchema,
 )
 
@@ -251,6 +252,8 @@ class SuperAdminAIDashboardSchema(BaseModel):
 
 class SuperAdminDashboardSchema(BaseModel):
     context: DashboardContextSchema
+
+    period: DashboardPeriodSchema
 
     overview: SuperAdminDashboardOverviewSchema
 

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.dashboard.schemas.dashboard_schema import (
     DashboardContextSchema,
+    DashboardPeriodSchema,
     DashboardMetricSchema,
 )
 
@@ -43,6 +44,8 @@ class PatientDashboardOverviewSchema(BaseModel):
 
 class PatientDashboardSchema(BaseModel):
     context: DashboardContextSchema
+
+    period: DashboardPeriodSchema
 
     overview: PatientDashboardOverviewSchema
 

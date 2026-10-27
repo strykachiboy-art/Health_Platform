@@ -17,6 +17,7 @@ from app.modules.dashboard.schemas.dashboard_schema import (
     DashboardAlertSchema,
     DashboardChatSummarySchema,
     DashboardContextSchema,
+    DashboardPeriodSchema,
     DashboardMetricSchema,
 )
 
@@ -160,6 +161,8 @@ class ClinicalAIDashboardSchema(BaseModel):
 
 class ClinicalDashboardSchema(BaseModel):
     context: DashboardContextSchema
+
+    period: DashboardPeriodSchema
 
     overview: ClinicalDashboardOverviewSchema
 

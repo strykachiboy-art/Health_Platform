@@ -515,6 +515,7 @@ def get_clinical_dashboard(
             scope="clinic",
             clinic_id=clinic_id,
         ),
+        period=period,
         overview=overview,
         my_departments=my_departments,
         ai=ai,

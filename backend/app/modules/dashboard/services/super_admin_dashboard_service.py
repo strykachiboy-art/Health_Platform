@@ -477,6 +477,7 @@ def get_super_admin_dashboard(
             scope="system",
             clinic_id=None,
         ),
+        period=period,
         overview=overview,
         departments=department_dashboard,
         access_control=access_control,

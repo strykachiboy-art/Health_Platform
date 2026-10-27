@@ -9,6 +9,7 @@ from app.modules.dashboard.schemas.dashboard_schema import (
     DashboardAlertSchema,
     DashboardChatSummarySchema,
     DashboardContextSchema,
+    DashboardPeriodSchema,
     DashboardMetricSchema,
 )
 
@@ -77,6 +78,8 @@ class FinanceAICostSchema(BaseModel):
 
 class FinanceDashboardSchema(BaseModel):
     context: DashboardContextSchema
+
+    period: DashboardPeriodSchema
 
     overview: FinanceDashboardOverviewSchema
 

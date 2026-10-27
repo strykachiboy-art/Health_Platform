@@ -49,6 +49,7 @@ from app.modules.dashboard.schemas.patient_dashboard_schema import (
 from app.modules.dashboard.services.dashboard_widget_service import (
     build_dashboard_context,
     build_metric,
+    resolve_dashboard_period,
 )
 
 
@@ -77,6 +78,10 @@ def get_patient_dashboard(
         )
 
     clinic_id = patient.clinic_id
+
+    period = resolve_dashboard_period(
+        query,
+    )
 
     now = datetime.now(
         timezone.utc,
@@ -231,6 +236,7 @@ def get_patient_dashboard(
             scope="personal",
             clinic_id=clinic_id,
         ),
+        period=period,
         overview=overview,
         metrics=metrics,
     )

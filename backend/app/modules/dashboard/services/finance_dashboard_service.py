@@ -386,6 +386,7 @@ def get_finance_dashboard(
             scope="clinic",
             clinic_id=clinic_id,
         ),
+        period=period,
         overview=overview,
         ai=ai,
         chat=chat,

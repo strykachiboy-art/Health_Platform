@@ -641,6 +641,7 @@ def get_management_dashboard(
             scope="clinic",
             clinic_id=clinic_id,
         ),
+        period=period,
         overview=overview,
         departments=department_dashboard,
         ai=ai,

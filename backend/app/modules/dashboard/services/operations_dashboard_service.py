@@ -435,6 +435,7 @@ def get_operations_dashboard(
             scope="clinic",
             clinic_id=clinic_id,
         ),
+        period=period,
         overview=overview,
         chat=chat,
         metrics=metrics,
