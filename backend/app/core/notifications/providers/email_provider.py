@@ -9,6 +9,10 @@ from app.core.notifications.providers.smtp_transport import (
     PinnedSMTP_SSL,
     resolve_approved_smtp_destination,
 )
+from app.core.notifications.providers.smtp_circuit_breaker import (
+    acquire_smtp_circuit,
+    call_smtp_with_permit,
+)
 
 from app.core.exceptions import ValidationError
 from app.core.notifications.models.notification_models import Notification
@@ -252,41 +256,52 @@ class EmailNotificationProvider(NotificationProviderBase):
                 "Email provider requires SSL or STARTTLS"
             )
 
-        approved_host, destination_ip = resolve_approved_smtp_destination(
-            host=host,
-            port=port,
-        )
+        breaker, permit = acquire_smtp_circuit()
 
-        if use_ssl:
-            smtp_connection = PinnedSMTP_SSL(
-                approved_host,
-                port,
-                destination_ip=destination_ip,
-                timeout=30,
-                context=ssl.create_default_context(),
-            )
-        else:
-            smtp_connection = PinnedSMTP(
-                approved_host,
-                port,
-                destination_ip=destination_ip,
-                timeout=30,
+        def _deliver() -> bool:
+            approved_host, destination_ip = (
+                resolve_approved_smtp_destination(
+                    host=host,
+                    port=port,
+                )
             )
 
-        with smtp_connection as smtp:
-            if use_tls:
-                smtp.starttls(
+            if use_ssl:
+                smtp_connection = PinnedSMTP_SSL(
+                    approved_host,
+                    port,
+                    destination_ip=destination_ip,
+                    timeout=30,
                     context=ssl.create_default_context(),
                 )
-
-            if username:
-                smtp.login(
-                    username,
-                    password or "",
+            else:
+                smtp_connection = PinnedSMTP(
+                    approved_host,
+                    port,
+                    destination_ip=destination_ip,
+                    timeout=30,
                 )
 
-            smtp.send_message(
-                message
-            )
+            with smtp_connection as smtp:
+                if use_tls:
+                    smtp.starttls(
+                        context=ssl.create_default_context(),
+                    )
 
-        return True
+                if username:
+                    smtp.login(
+                        username,
+                        password or "",
+                    )
+
+                smtp.send_message(
+                    message
+                )
+
+            return True
+
+        return call_smtp_with_permit(
+            breaker,
+            permit,
+            _deliver,
+        )

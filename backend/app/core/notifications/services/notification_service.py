@@ -27,6 +27,9 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.core.resilience.circuit_breaker import (
+    CircuitBreakerOpenError,
+)
 from app.core.utils.decorators import transactional
 
 from app.core.auth.user.models.user_model import User
@@ -773,6 +776,31 @@ def deliver_notification(
         db.session.commit()
 
         return True
+
+    except CircuitBreakerOpenError as exc:
+        db.session.rollback()
+
+        try:
+            notification = db.session.get(
+                Notification,
+                notification_id,
+            )
+
+            if notification is not None:
+                notification.status = (
+                    NotificationStatus.FAILED
+                )
+                notification.failed_at = _utcnow()
+                notification.error_message = str(
+                    exc
+                )[:2000]
+
+                db.session.commit()
+
+        except Exception:
+            db.session.rollback()
+
+        raise
 
     except Exception as exc:
         db.session.rollback()
