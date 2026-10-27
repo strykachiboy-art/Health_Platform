@@ -168,6 +168,11 @@ Authentication supports:
 - session invalidation/revocation through Redis
 - authenticated request protection
 - token expiration
+- authenticated password change with current-password re-verification
+- asynchronous forgotten-password recovery
+- short-lived single-use password-reset credentials
+- per-IP and per-account password-recovery abuse controls
+- staged MFA-aware SUPER_ADMIN recovery enforcement
 - authentication lifecycle controls
 
 Current token configuration is approximately:

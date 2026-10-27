@@ -238,6 +238,10 @@ def register_blueprints(app):
         auth_bp,
     )
 
+    from app.core.auth.user.routes.password_security_routes import (
+        password_security_bp,
+    )
+
     from app.core.notifications.routes.notification_route import (
         notification_bp,
     )
@@ -380,6 +384,7 @@ def register_blueprints(app):
 
     api_blueprints = (
         auth_bp,
+        password_security_bp,
         vehicle_bp,
         trip_bp,
         hie_bp,

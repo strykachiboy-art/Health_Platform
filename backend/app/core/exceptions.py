@@ -26,5 +26,13 @@ class ValidationError(DomainError):
     status_code = 422
 
 
+class RateLimitError(DomainError):
+    status_code = 429
+
+
+class ServiceUnavailableError(DomainError):
+    status_code = 503
+
+
 class InsufficientCreditsError(ConflictError):
     status_code = 402

@@ -188,6 +188,113 @@ class Config:
         "20 per minute"
     )
 
+    AUTH_CHANGE_PASSWORD_RATE_LIMIT = os.environ.get(
+        "AUTH_CHANGE_PASSWORD_RATE_LIMIT",
+        "5 per minute",
+    )
+
+    AUTH_PASSWORD_RESET_REQUEST_RATE_LIMIT = os.environ.get(
+        "AUTH_PASSWORD_RESET_REQUEST_RATE_LIMIT",
+        "5 per minute",
+    )
+
+    AUTH_PASSWORD_RESET_CONFIRM_RATE_LIMIT = os.environ.get(
+        "AUTH_PASSWORD_RESET_CONFIRM_RATE_LIMIT",
+        "10 per minute",
+    )
+
+    AUTH_PASSWORD_CHANGE_FAILURE_WINDOW_SECONDS = int(
+        os.environ.get(
+            "AUTH_PASSWORD_CHANGE_FAILURE_WINDOW_SECONDS",
+            "900",
+        )
+    )
+
+    AUTH_PASSWORD_CHANGE_MAX_FAILURES = int(
+        os.environ.get(
+            "AUTH_PASSWORD_CHANGE_MAX_FAILURES",
+            "5",
+        )
+    )
+
+    AUTH_PASSWORD_RESET_TOKEN_TTL_SECONDS = int(
+        os.environ.get(
+            "AUTH_PASSWORD_RESET_TOKEN_TTL_SECONDS",
+            "900",
+        )
+    )
+
+    AUTH_PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS = int(
+        os.environ.get(
+            "AUTH_PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS",
+            "60",
+        )
+    )
+
+    AUTH_PASSWORD_RESET_REQUEST_MAX_PER_HOUR = int(
+        os.environ.get(
+            "AUTH_PASSWORD_RESET_REQUEST_MAX_PER_HOUR",
+            "3",
+        )
+    )
+
+    AUTH_PASSWORD_RESET_REQUEST_MAX_PER_DAY = int(
+        os.environ.get(
+            "AUTH_PASSWORD_RESET_REQUEST_MAX_PER_DAY",
+            "8",
+        )
+    )
+
+    AUTH_PASSWORD_RESET_CLAIM_TTL_SECONDS = int(
+        os.environ.get(
+            "AUTH_PASSWORD_RESET_CLAIM_TTL_SECONDS",
+            "60",
+        )
+    )
+
+    AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_POLICY = os.environ.get(
+        "AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_POLICY",
+        "disabled",
+    )
+
+    AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_MAX_FAILURES = int(
+        os.environ.get(
+            "AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_MAX_FAILURES",
+            "5",
+        )
+    )
+
+    PASSWORD_RESET_PUBLIC_URL = os.environ.get(
+        "PASSWORD_RESET_PUBLIC_URL"
+    )
+
+    PLATFORM_EMAIL_HOST = os.environ.get(
+        "PLATFORM_EMAIL_HOST"
+    )
+    PLATFORM_EMAIL_PORT = int(
+        os.environ.get(
+            "PLATFORM_EMAIL_PORT",
+            "587",
+        )
+    )
+    PLATFORM_EMAIL_USERNAME = os.environ.get(
+        "PLATFORM_EMAIL_USERNAME"
+    )
+    PLATFORM_EMAIL_PASSWORD = os.environ.get(
+        "PLATFORM_EMAIL_PASSWORD"
+    )
+    PLATFORM_EMAIL_FROM_EMAIL = os.environ.get(
+        "PLATFORM_EMAIL_FROM_EMAIL"
+    )
+    PLATFORM_EMAIL_USE_TLS = os.environ.get(
+        "PLATFORM_EMAIL_USE_TLS",
+        "true",
+    )
+    PLATFORM_EMAIL_USE_SSL = os.environ.get(
+        "PLATFORM_EMAIL_USE_SSL",
+        "false",
+    )
+
     # ------------------------------------------------------------------
     # AI
     # ------------------------------------------------------------------
@@ -350,6 +457,30 @@ class TestingConfig(Config):
     RATELIMIT_STORAGE_URI = REDIS_URL
 
     RATELIMIT_ENABLED = False
+
+    AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_POLICY = (
+        "disabled"
+    )
+
+    PASSWORD_RESET_PUBLIC_URL = (
+        "https://app.example.com/reset-password"
+    )
+
+    PLATFORM_EMAIL_HOST = (
+        "smtp.example.com"
+    )
+    PLATFORM_EMAIL_PORT = 587
+    PLATFORM_EMAIL_USERNAME = (
+        "security@example.com"
+    )
+    PLATFORM_EMAIL_PASSWORD = (
+        "test-password"
+    )
+    PLATFORM_EMAIL_FROM_EMAIL = (
+        "security@example.com"
+    )
+    PLATFORM_EMAIL_USE_TLS = True
+    PLATFORM_EMAIL_USE_SSL = False
 
     # ------------------------------------------------------------------
     # Test Encryption Key
