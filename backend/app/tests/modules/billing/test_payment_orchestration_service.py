@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from app.core.enums.billing_enums import (
     PaymentGateway,
     PaymentStatus,
@@ -101,6 +103,52 @@ def make_payment(
     )
 
 
+def _stub_pending_payment(
+    payment,
+    *,
+    created,
+):
+    def _stub(**kwargs):
+        if created:
+            callback = kwargs.get(
+                "before_provider_initialization"
+            )
+
+            if callback is not None:
+                callback(
+                    gateway=payment.gateway,
+                    invoice=payment.invoice,
+                )
+
+        return payment, created
+
+    return _stub
+
+
+@pytest.fixture(autouse=True)
+def _legacy_orchestration_breaker_passthrough(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        orchestration,
+        "acquire_payment_circuit",
+        lambda **kwargs: (None, None),
+    )
+
+    monkeypatch.setattr(
+        orchestration,
+        "call_payment_with_circuit",
+        lambda *,
+        function,
+        args=(),
+        kwargs=None,
+        **ignored: function(
+            *args,
+            **(kwargs or {}),
+        ),
+    )
+
+
 def test_initial_unknown_outcome_keeps_payment_pending(
     monkeypatch,
 ):
@@ -121,9 +169,9 @@ def test_initial_unknown_outcome_keeps_payment_pending(
     monkeypatch.setattr(
         orchestration,
         "_get_or_create_pending_payment",
-        lambda **kwargs: (
+        _stub_pending_payment(
             payment,
-            True,
+            created=True,
         ),
     )
 
@@ -177,9 +225,9 @@ def test_known_provider_rejection_marks_payment_failed(
     monkeypatch.setattr(
         orchestration,
         "_get_or_create_pending_payment",
-        lambda **kwargs: (
+        _stub_pending_payment(
             payment,
-            True,
+            created=True,
         ),
     )
 
@@ -239,9 +287,9 @@ def test_retry_of_existing_pending_payment_reconciles_without_initialize(
     monkeypatch.setattr(
         orchestration,
         "_get_or_create_pending_payment",
-        lambda **kwargs: (
+        _stub_pending_payment(
             payment,
-            False,
+            created=False,
         ),
     )
 
@@ -299,9 +347,9 @@ def test_retry_pending_without_provider_transaction_stays_pending(
     monkeypatch.setattr(
         orchestration,
         "_get_or_create_pending_payment",
-        lambda **kwargs: (
+        _stub_pending_payment(
             payment,
-            False,
+            created=False,
         ),
     )
 
@@ -356,9 +404,9 @@ def test_initialization_forwards_idempotency_key(
     monkeypatch.setattr(
         orchestration,
         "_get_or_create_pending_payment",
-        lambda **kwargs: (
+        _stub_pending_payment(
             payment,
-            True,
+            created=True,
         ),
     )
 
@@ -456,7 +504,10 @@ def test_retry_pending_stripe_payment_recovers_id_then_verifies_before_settlemen
     monkeypatch.setattr(
         orchestration,
         "_get_or_create_pending_payment",
-        lambda **kwargs: (payment, False),
+        _stub_pending_payment(
+            payment,
+            created=False,
+        ),
     )
     monkeypatch.setattr(
         orchestration,
@@ -518,9 +569,9 @@ def test_provider_reference_mismatch_is_rejected_safely(
     monkeypatch.setattr(
         orchestration,
         "_get_or_create_pending_payment",
-        lambda **kwargs: (
+        _stub_pending_payment(
             payment,
-            False,
+            created=False,
         ),
     )
 

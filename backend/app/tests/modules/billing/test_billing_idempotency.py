@@ -79,6 +79,10 @@ def test_create_invoice_idempotency_replays_and_conflicts(
         clinic=clinic,
     )
 
+    # PostgreSQL nested app contexts use a distinct scoped
+    # session; make fixture baseline rows visible first.
+    db_session.commit()
+
     _patch_create_dependencies(
         monkeypatch
     )
@@ -176,6 +180,10 @@ def test_record_payment_idempotency_replays_and_conflicts(
     user = make_user(
         clinic=clinic,
     )
+
+    # PostgreSQL nested app contexts use a distinct scoped
+    # session; make fixture baseline rows visible first.
+    db_session.commit()
 
     _patch_create_dependencies(
         monkeypatch

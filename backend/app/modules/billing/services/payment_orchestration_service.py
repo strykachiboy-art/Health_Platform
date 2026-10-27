@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -44,6 +44,11 @@ from app.modules.billing.services.gateways.base_gateway import (
 )
 from app.modules.billing.services.gateways.factory import (
     get_payment_gateway,
+)
+from app.modules.billing.services.gateways.payment_circuit_breaker import (
+    acquire_payment_circuit,
+    call_payment_with_circuit,
+    call_payment_with_permit,
 )
 from app.modules.clinic.services.clinic_service import (
     ensure_clinic_active,
@@ -146,6 +151,7 @@ def _get_or_create_pending_payment(
     idempotency_key,
     idempotency_user_id,
     actor_user_id,
+    before_provider_initialization=None,
 ):
     if idempotency_user_id is None:
         raise ValidationError(
@@ -322,6 +328,12 @@ def _get_or_create_pending_payment(
             "Payment amount exceeds the remaining "
             "invoice balance of "
             f"{remaining_balance}"
+        )
+
+    if before_provider_initialization is not None:
+        before_provider_initialization(
+            gateway=gateway,
+            invoice=invoice,
         )
 
     payment = Payment(
@@ -969,9 +981,22 @@ def _reconcile_pending_payment(
             or _verification_reference(payment)
         )
 
-        result = gateway.verify_payment(
-            reference=verification_reference,
-        )
+        if payment.gateway in {
+            PaymentGateway.PAYSTACK,
+            PaymentGateway.FLUTTERWAVE,
+        }:
+            result = call_payment_with_circuit(
+                provider=payment.gateway.value,
+                operation="verify",
+                function=gateway.verify_payment,
+                kwargs={
+                    "reference": verification_reference,
+                },
+            )
+        else:
+            result = gateway.verify_payment(
+                reference=verification_reference,
+            )
     except GatewayUnknownOutcomeError as exc:
         return _outcome(
             payment,
@@ -1075,6 +1100,41 @@ def orchestrate_payment(
         currency
     )
 
+    initialization_context = {}
+
+    def _prepare_provider_initialization(
+        *,
+        gateway,
+        invoice,
+    ):
+        gateway_client = get_payment_gateway(
+            gateway,
+            clinic_id=clinic_id,
+        )
+        customer_email = _patient_email_for_invoice(
+            invoice
+        )
+
+        context = {
+            "gateway_client": gateway_client,
+            "customer_email": customer_email,
+            "breaker": None,
+            "permit": None,
+        }
+
+        if gateway in {
+            PaymentGateway.PAYSTACK,
+            PaymentGateway.FLUTTERWAVE,
+        }:
+            breaker, permit = acquire_payment_circuit(
+                provider=gateway.value,
+                operation="initialize",
+            )
+            context["breaker"] = breaker
+            context["permit"] = permit
+
+        initialization_context.update(context)
+
     payment, created = (
         _get_or_create_pending_payment(
             clinic_id=clinic_id,
@@ -1087,6 +1147,9 @@ def orchestrate_payment(
             idempotency_key=idempotency_key,
             idempotency_user_id=idempotency_user_id,
             actor_user_id=actor_user_id,
+            before_provider_initialization=(
+                _prepare_provider_initialization
+            ),
         )
     )
 
@@ -1112,31 +1175,12 @@ def orchestrate_payment(
             idempotency_key=idempotency_key,
         )
 
-    gateway_client = get_payment_gateway(
-        payment.gateway,
-        clinic_id=clinic_id,
-    )
-
-    invoice = getattr(
-        payment,
-        "invoice",
-        None,
-    )
-
-    if invoice is None:
-        invoice = db.session.get(
-            Invoice,
-            payment.invoice_id,
-        )
-
-        if invoice is None:
-            raise NotFoundError(
-                f"Invoice {payment.invoice_id} not found"
-            )
-
-    customer_email = _patient_email_for_invoice(
-        invoice
-    )
+    gateway_client = initialization_context[
+        "gateway_client"
+    ]
+    customer_email = initialization_context[
+        "customer_email"
+    ]
 
     initialization_kwargs = {
         "reference": payment.reference,
@@ -1156,9 +1200,24 @@ def orchestrate_payment(
         }
 
     try:
-        result = gateway_client.initialize_payment(
-            **initialization_kwargs,
-        )
+        breaker = initialization_context[
+            "breaker"
+        ]
+        permit = initialization_context[
+            "permit"
+        ]
+
+        if breaker is not None and permit is not None:
+            result = call_payment_with_permit(
+                breaker,
+                permit,
+                gateway_client.initialize_payment,
+                **initialization_kwargs,
+            )
+        else:
+            result = gateway_client.initialize_payment(
+                **initialization_kwargs,
+            )
     except GatewayRejectedError as exc:
         payment = _finalize_payment_failure(
             clinic_id=clinic_id,

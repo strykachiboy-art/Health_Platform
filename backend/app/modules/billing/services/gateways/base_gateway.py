@@ -10,6 +10,24 @@ class GatewayRejectedError(RuntimeError):
 class GatewayUnknownOutcomeError(RuntimeError):
     """The payment provider outcome cannot be known safely."""
 
+
+class GatewayTransientError(RuntimeError):
+    """The payment provider is temporarily unavailable for a safe read."""
+
+
+def is_transient_gateway_http_status(
+    status_code: Any,
+) -> bool:
+    return (
+        isinstance(status_code, int)
+        and not isinstance(status_code, bool)
+        and (
+            status_code in {408, 425, 429}
+            or status_code >= 500
+        )
+    )
+
+
 class PaymentGatewayBase(ABC):
     @abstractmethod
     def initialize_payment(

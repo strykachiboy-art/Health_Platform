@@ -20,6 +20,20 @@ from app.modules.billing.services.gateways.paystack_gateway import (
 )
 
 
+def _enable_streaming_json(response):
+    response.headers = {}
+    response.close = Mock()
+    response.iter_content.side_effect = (
+        lambda chunk_size: iter(
+            [
+                json.dumps(
+                    response.json()
+                ).encode("utf-8")
+            ]
+        )
+    )
+
+
 def _payment(*, currency="NGN"):
     return SimpleNamespace(
         id=1,
@@ -136,6 +150,7 @@ def test_paystack_verification_normalizes_minor_units(monkeypatch):
             "currency": "NGN",
         },
     }
+    _enable_streaming_json(response)
     mock_get = Mock(return_value=response)
     monkeypatch.setattr(
         "app.modules.billing.services.gateways.paystack_gateway.requests.get",
@@ -168,6 +183,7 @@ def test_paystack_verification_rejects_missing_or_non_string_currency(
             "currency": currency,
         },
     }
+    _enable_streaming_json(response)
     monkeypatch.setattr(
         "app.modules.billing.services.gateways.paystack_gateway.requests.get",
         Mock(return_value=response),

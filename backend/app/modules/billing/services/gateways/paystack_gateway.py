@@ -14,8 +14,10 @@ from app.modules.billing.services.gateways.response_utils import (
 
 from app.modules.billing.services.gateways.base_gateway import (
     GatewayRejectedError,
+    GatewayTransientError,
     GatewayUnknownOutcomeError,
     PaymentGatewayBase,
+    is_transient_gateway_http_status,
 )
 
 from app.modules.billing.services.gateways.provider_transport import (
@@ -298,6 +300,14 @@ class PaystackGateway(PaymentGatewayBase):
                 "Paystack payment initialization failed",
             )
 
+            if is_transient_gateway_http_status(
+                getattr(response, "status_code", None)
+            ):
+                raise GatewayUnknownOutcomeError(
+                    "Paystack payment initialization "
+                    f"failed: {message}"
+                )
+
             raise GatewayRejectedError(
                 "Paystack payment initialization "
                 f"failed: {message}"
@@ -342,20 +352,20 @@ class PaystackGateway(PaymentGatewayBase):
                 allow_redirects=False,
             )
         except requests.RequestException as exc:
-            raise RuntimeError(
+            raise GatewayTransientError(
                 "Paystack payment verification "
                 f"failed: {exc}"
             ) from exc
 
         if _is_redirect_response(response):
-            raise RuntimeError(
+            raise GatewayTransientError(
                 "Paystack payment verification returned an unexpected redirect"
             )
 
         try:
             response_data = read_json_response_limited(response)
         except ValueError as exc:
-            raise RuntimeError(
+            raise GatewayTransientError(
                 "Paystack returned an invalid "
                 "verification response"
             ) from exc
@@ -370,7 +380,15 @@ class PaystackGateway(PaymentGatewayBase):
                 "Paystack payment verification failed",
             )
 
-            raise RuntimeError(
+            if is_transient_gateway_http_status(
+                getattr(response, "status_code", None)
+            ):
+                raise GatewayTransientError(
+                    "Paystack payment verification "
+                    f"failed: {message}"
+                )
+
+            raise GatewayRejectedError(
                 "Paystack payment verification "
                 f"failed: {message}"
             )
