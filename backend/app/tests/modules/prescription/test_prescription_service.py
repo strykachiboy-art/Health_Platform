@@ -2,6 +2,7 @@
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy import inspect as sa_inspect
 
 from app.core.enums.audit_enums import AuditAction
 from app.core.enums.clinic_enums import ClinicStatus
@@ -1640,6 +1641,48 @@ def test_list_prescriptions_for_patient_returns_clinic_records(
     assert result["total"] == 2
     assert result["page"] == 1
     assert result["per_page"] == 50
+
+
+def test_list_prescriptions_preloads_items(
+    prescription_service,
+    active_clinic,
+    patient,
+    make_authenticated_staff,
+    make_prescription,
+    db,
+):
+    patient.clinic_id = active_clinic.id
+    patient.is_active = True
+
+    staff, _ = _make_doctor(
+        make_authenticated_staff,
+        active_clinic,
+    )
+
+    prescription = make_prescription(
+        active_clinic,
+        patient,
+        staff,
+    )
+
+    db.session.expire_all()
+
+    result = (
+        prescription_service.list_prescriptions_for_patient(
+            patient_id=patient.id,
+            clinic_id=active_clinic.id,
+        )
+    )
+
+    loaded = next(
+        item
+        for item in result["items"]
+        if item.id == prescription.id
+    )
+
+    state = sa_inspect(loaded)
+
+    assert "items" not in state.unloaded
 
 
 def test_list_prescriptions_active_only(

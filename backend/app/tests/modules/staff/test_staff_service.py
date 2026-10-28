@@ -5,6 +5,7 @@ from decimal import Decimal
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy import inspect as sa_inspect
 
 from app.core.enums.audit_enums import AuditAction
 from app.core.enums.role_enums import Role
@@ -176,6 +177,35 @@ def test_list_staff_returns_only_clinic_staff(
     assert result["total"] == 1
     assert result["page"] == 1
     assert result["per_page"] == staff_service.DEFAULT_PER_PAGE
+
+
+def test_list_staff_preloads_department_memberships(
+    clinic,
+    make_staff,
+):
+    make_staff(
+        clinic=clinic,
+        role=Role.DOCTOR,
+    )
+    make_staff(
+        clinic=clinic,
+        role=Role.NURSE,
+    )
+
+    db.session.expire_all()
+
+    result = staff_service.list_staff(
+        clinic_id=clinic.id,
+    )
+
+    assert len(result["items"]) == 2
+
+    for staff in result["items"]:
+        state = sa_inspect(staff)
+        assert (
+            "department_memberships"
+            not in state.unloaded
+        )
 
 
 def test_list_staff_filters_by_status(

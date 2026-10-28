@@ -199,68 +199,66 @@ def get_clinical_dashboard(
         clinic_id=clinic_id,
     )
 
-    appointments_today = (
-        db.session.execute(
-            db.select(
-                db.func.count(
-                    Appointment.id,
-                )
-            ).where(
-                Appointment.clinic_id == clinic_id,
-                Appointment.staff_id == staff.id,
-                Appointment.status.in_(
-                    [
-                        AppointmentStatus.SCHEDULED,
-                        AppointmentStatus.CONFIRMED,
-                    ]
-                ),
-                Appointment.scheduled_start >= start,
-                Appointment.scheduled_start < end,
+    appointments_today_count = (
+        db.select(
+            db.func.count(
+                Appointment.id,
             )
-        ).scalar_one()
-        or 0
+        )
+        .where(
+            Appointment.clinic_id == clinic_id,
+            Appointment.staff_id == staff.id,
+            Appointment.status.in_(
+                [
+                    AppointmentStatus.SCHEDULED,
+                    AppointmentStatus.CONFIRMED,
+                ]
+            ),
+            Appointment.scheduled_start >= start,
+            Appointment.scheduled_start < end,
+        )
+        .scalar_subquery()
     )
 
-    confirmed_appointments_today = (
-        db.session.execute(
-            db.select(
-                db.func.count(
-                    Appointment.id,
-                )
-            ).where(
-                Appointment.clinic_id == clinic_id,
-                Appointment.staff_id == staff.id,
-                Appointment.status
-                == AppointmentStatus.CONFIRMED,
-                Appointment.scheduled_start >= start,
-                Appointment.scheduled_start < end,
+    confirmed_appointments_today_count = (
+        db.select(
+            db.func.count(
+                Appointment.id,
             )
-        ).scalar_one()
-        or 0
+        )
+        .where(
+            Appointment.clinic_id == clinic_id,
+            Appointment.staff_id == staff.id,
+            Appointment.status
+            == AppointmentStatus.CONFIRMED,
+            Appointment.scheduled_start >= start,
+            Appointment.scheduled_start < end,
+        )
+        .scalar_subquery()
     )
 
-    pending_consultations = (
-        db.session.execute(
-            db.select(
-                db.func.count(
-                    Consultation.id,
-                )
-            ).where(
-                Consultation.clinic_id == clinic_id,
-                Consultation.staff_id == staff.id,
-                Consultation.status
-                == ConsultationStatus.IN_PROGRESS,
+    pending_consultations_count = (
+        db.select(
+            db.func.count(
+                Consultation.id,
             )
-        ).scalar_one()
-        or 0
+        )
+        .where(
+            Consultation.clinic_id == clinic_id,
+            Consultation.staff_id == staff.id,
+            Consultation.status
+            == ConsultationStatus.IN_PROGRESS,
+        )
+        .scalar_subquery()
     )
 
-    lab_statement = (
+    lab_count_statement = (
         db.select(
             db.func.count(
                 LabOrder.id,
             )
-        ).where(
+        )
+        .where(
             LabOrder.clinic_id == clinic_id,
             LabOrder.status.in_(
                 [
@@ -273,51 +271,49 @@ def get_clinical_dashboard(
     )
 
     if actor.role is not Role.LAB_TECHNICIAN:
-        lab_statement = lab_statement.where(
-            LabOrder.ordered_by_id == staff.id,
+        lab_count_statement = (
+            lab_count_statement.where(
+                LabOrder.ordered_by_id == staff.id,
+            )
         )
 
-    pending_lab_orders = (
-        db.session.execute(
-            lab_statement,
-        ).scalar_one()
-        or 0
+    pending_lab_orders_count = (
+        lab_count_statement.scalar_subquery()
     )
 
-    prescription_statement = (
+    prescription_count_statement = (
         db.select(
             db.func.count(
                 Prescription.id,
             )
-        ).where(
-            Prescription.clinic_id
-            == clinic_id,
+        )
+        .where(
+            Prescription.clinic_id == clinic_id,
             Prescription.status
             == PrescriptionStatus.ACTIVE,
         )
     )
 
     if actor.role is not Role.PHARMACIST:
-        prescription_statement = (
-            prescription_statement.where(
+        prescription_count_statement = (
+            prescription_count_statement.where(
                 Prescription.prescribed_by_id
                 == staff.id,
             )
         )
 
-    active_prescriptions = (
-        db.session.execute(
-            prescription_statement,
-        ).scalar_one()
-        or 0
+    active_prescriptions_count = (
+        prescription_count_statement.scalar_subquery()
     )
 
-    active_admissions = (
-    db.session.execute(
+    active_admissions_count = (
         db.select(
             db.func.count(
                 Admission.id,
             )
+        )
+        .select_from(
+            Admission,
         )
         .join(
             Patient,
@@ -328,9 +324,57 @@ def get_clinical_dashboard(
             Admission.status
             == AdmissionStatus.ADMITTED,
         )
-    ).scalar_one()
-    or 0
-   )
+        .scalar_subquery()
+    )
+
+    overview_counts = (
+        db.session.execute(
+            db.select(
+                appointments_today_count.label(
+                    "appointments_today"
+                ),
+                confirmed_appointments_today_count.label(
+                    "confirmed_appointments_today"
+                ),
+                pending_consultations_count.label(
+                    "pending_consultations"
+                ),
+                pending_lab_orders_count.label(
+                    "pending_lab_orders"
+                ),
+                active_prescriptions_count.label(
+                    "active_prescriptions"
+                ),
+                active_admissions_count.label(
+                    "active_admissions"
+                ),
+            )
+        )
+        .mappings()
+        .one()
+    )
+
+    appointments_today = int(
+        overview_counts["appointments_today"] or 0
+    )
+    confirmed_appointments_today = int(
+        overview_counts[
+            "confirmed_appointments_today"
+        ]
+        or 0
+    )
+    pending_consultations = int(
+        overview_counts["pending_consultations"] or 0
+    )
+    pending_lab_orders = int(
+        overview_counts["pending_lab_orders"] or 0
+    )
+    active_prescriptions = int(
+        overview_counts["active_prescriptions"] or 0
+    )
+    active_admissions = int(
+        overview_counts["active_admissions"] or 0
+    )
 
     overview = ClinicalDashboardOverviewSchema(
         appointments_today=int(

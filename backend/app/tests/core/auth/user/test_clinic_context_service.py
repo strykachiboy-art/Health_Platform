@@ -3,11 +3,35 @@ from __future__ import annotations
 from flask_jwt_extended import decode_token
 
 import pytest
+from sqlalchemy import inspect as sa_inspect
 
 from app.core.auth.user.services import clinic_context_service
+from app.extensions import db
 from app.core.enums.clinic_enums import ClinicStatus
 from app.core.enums.role_enums import Role
 from app.core.exceptions import NotFoundError, ValidationError
+
+
+def test_get_user_preloads_staff_for_profile_hot_path(
+    clinic,
+    make_staff,
+):
+    staff = make_staff(
+        clinic=clinic,
+        role=Role.DOCTOR,
+    )
+
+    db.session.expire_all()
+
+    user = clinic_context_service._get_user(
+        staff.user_id
+    )
+
+    state = sa_inspect(user)
+
+    assert "staff" not in state.unloaded
+    assert user.staff is not None
+    assert user.staff.id == staff.id
 
 
 def test_resolve_effective_clinic_id_returns_assigned_clinic_for_normal_user(

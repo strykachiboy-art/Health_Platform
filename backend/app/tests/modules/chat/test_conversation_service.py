@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import event
 
 from app.extensions import db
 from app.core.enums.chat_enums import (
@@ -432,6 +433,79 @@ def test_list_conversations_filters_by_user(
     assert result["pages"] == 1
     assert result["has_next"] is False
     assert result["has_previous"] is False
+
+
+def test_list_conversations_reuses_identity_mapped_user(
+    clinic,
+    user,
+    make_user,
+    no_audit,
+):
+    other_user = make_user(
+        clinic=clinic
+    )
+
+    conversation = create_conversation(
+        clinic_id=clinic.id,
+        created_by_id=user.id,
+        conversation_type=ConversationType.DIRECT,
+        participant_user_ids=[
+            other_user.id,
+        ],
+    )
+
+    db.session.get(
+        type(user),
+        user.id,
+    )
+
+    observed_selects = []
+
+    def capture_selects(
+        connection,
+        cursor,
+        statement,
+        parameters,
+        context,
+        executemany,
+    ):
+        normalized = " ".join(
+            statement.lower().split()
+        )
+
+        if normalized.startswith("select"):
+            observed_selects.append(
+                normalized
+            )
+
+    event.listen(
+        db.engine,
+        "before_cursor_execute",
+        capture_selects,
+    )
+
+    try:
+        result = list_conversations(
+            clinic_id=clinic.id,
+            user_id=user.id,
+        )
+    finally:
+        event.remove(
+            db.engine,
+            "before_cursor_execute",
+            capture_selects,
+        )
+
+    assert result["total"] == 1
+    assert result["items"][0].id == conversation.id
+
+    user_selects = [
+        statement
+        for statement in observed_selects
+        if " from users " in f" {statement} "
+    ]
+
+    assert user_selects == []
 
 
 def test_list_conversations_filters_by_status(

@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import or_, select
+from sqlalchemy.orm import selectinload
 
 from app.extensions import db
 from app.core.utils.decorators import transactional
@@ -971,6 +972,13 @@ def list_orders_for_patient(
 
     statement = (
         select(LabOrder)
+        .options(
+            selectinload(
+                LabOrder.items,
+            ).selectinload(
+                LabOrderItem.test,
+            )
+        )
         .where(
             LabOrder.patient_id == patient_id,
             LabOrder.clinic_id == clinic_id,

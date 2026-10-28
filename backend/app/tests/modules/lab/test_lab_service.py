@@ -1717,6 +1717,58 @@ def test_list_orders_for_patient_returns_pagination(
     paginate.assert_called_once()
 
 
+def test_list_orders_for_patient_preloads_items_and_tests(
+    lab_service,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        lab_service,
+        "_get_patient",
+        Mock(
+            return_value=patient_obj(
+                id=7,
+                clinic_id=2,
+            )
+        ),
+    )
+
+    expected = pagination(
+        [],
+        total=0,
+        page=1,
+        per_page=50,
+    )
+
+    paginate = Mock(
+        return_value=expected
+    )
+
+    monkeypatch.setattr(
+        lab_service,
+        "_paginate",
+        paginate,
+    )
+
+    result = lab_service.list_orders_for_patient(
+        7,
+        2,
+        page=1,
+        per_page=50,
+    )
+
+    assert result is expected
+
+    statement = paginate.call_args.args[0]
+    options = list(statement._with_options)
+
+    assert len(options) == 1
+
+    option_path = str(options[0].path)
+
+    assert "LabOrder.items" in option_path
+    assert "LabOrderItem.test" in option_path
+
+
 def test_list_orders_for_patient_forwards_pagination(
     lab_service,
     monkeypatch,

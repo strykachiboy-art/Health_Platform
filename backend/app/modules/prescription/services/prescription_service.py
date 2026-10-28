@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from itertools import combinations
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from app.core.audit.services.audit_service import create_audit_log
 from app.core.enums.audit_enums import AuditAction
@@ -782,6 +783,11 @@ def list_prescriptions_for_patient(
 
     statement = (
         select(Prescription)
+        .options(
+            selectinload(
+                Prescription.items,
+            )
+        )
         .where(*filters)
         .order_by(
             Prescription.issued_at.desc(),

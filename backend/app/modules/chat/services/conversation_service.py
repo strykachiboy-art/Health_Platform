@@ -882,11 +882,19 @@ def list_conversations(
     )
 
     if user_id is not None:
-        _get_user(
+        user = db.session.get(
+            User,
             user_id,
-            clinic_id=clinic_id,
-            active_only=True,
         )
+
+        if (
+            user is None
+            or user.clinic_id != clinic_id
+            or not user.is_active
+        ):
+            raise NotFoundError(
+                f"User {user_id} not found"
+            )
 
     status = (
         _normalize_enum(

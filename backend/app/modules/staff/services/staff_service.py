@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import selectinload
 
 from app.extensions import db
 
@@ -297,8 +298,16 @@ def list_staff(
         per_page,
     )
 
-    statement = select(Staff).where(
-        Staff.clinic_id == clinic_id,
+    statement = (
+        select(Staff)
+        .options(
+            selectinload(
+                Staff.department_memberships,
+            )
+        )
+        .where(
+            Staff.clinic_id == clinic_id,
+        )
     )
 
     count_statement = select(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sqlalchemy.orm import joinedload
+
 from app.extensions import db
 
 from app.core.audit.services.audit_service import create_audit_log
@@ -25,6 +27,9 @@ def _get_user(
     user = db.session.get(
         User,
         user_id,
+        options=(
+            joinedload(User.staff),
+        ),
     )
 
     if user is None:
