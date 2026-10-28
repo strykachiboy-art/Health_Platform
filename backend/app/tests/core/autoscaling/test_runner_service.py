@@ -56,7 +56,7 @@ def runtime_env(tmp_path):
     route_file = tmp_path / "runtime" / "phase9" / "nginx-upstream" / "backend.conf"
     route_file.parent.mkdir(parents=True, exist_ok=True)
     route_file.write_text("".join(
-        f"    server clinic-system-backend-{i}:5000 resolve max_fails=2 fail_timeout=10s;\n"
+        f"    server clinic-system-backend-{i}:5000 resolve max_fails=1 fail_timeout=10s;\n"
         for i in range(1, 4)
     ), encoding="utf-8")
     return {
@@ -173,7 +173,7 @@ def test_scale_in_enabled_wires_both_adapters(runtime_env):
     route_file = root / "runtime" / "phase9" / "nginx-upstream" / "backend.conf"
     route_file.parent.mkdir(parents=True, exist_ok=True)
     route_file.write_text("".join(
-        f"    server clinic-system-backend-{i}:5000 resolve max_fails=2 fail_timeout=10s;\n"
+        f"    server clinic-system-backend-{i}:5000 resolve max_fails=1 fail_timeout=10s;\n"
         for i in range(1, 5)
     ), encoding="utf-8")
 

@@ -12,7 +12,7 @@ from app.core.autoscaling.nginx_routing import (
 def render(count: int) -> str:
     return "".join(
         f"    server clinic-system-backend-{i}:5000 resolve "
-        "max_fails=2 fail_timeout=10s;\n"
+        "max_fails=1 fail_timeout=10s;\n"
         for i in range(1, count + 1)
     )
 

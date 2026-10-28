@@ -197,8 +197,8 @@ def test_recovery_service_builds_dependencies_without_running_docker(tmp_path):
     route_file = tmp_path / "runtime" / "phase9" / "nginx-upstream" / "backend.conf"
     route_file.parent.mkdir(parents=True, exist_ok=True)
     route_file.write_text(
-        "    server clinic-system-backend-1:5000 resolve max_fails=2 fail_timeout=10s;\n"
-        "    server clinic-system-backend-2:5000 resolve max_fails=2 fail_timeout=10s;\n",
+        "    server clinic-system-backend-1:5000 resolve max_fails=1 fail_timeout=10s;\n"
+        "    server clinic-system-backend-2:5000 resolve max_fails=1 fail_timeout=10s;\n",
         encoding="utf-8",
     )
     env = {

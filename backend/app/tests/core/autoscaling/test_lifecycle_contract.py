@@ -59,7 +59,7 @@ def test_phase9_nginx_keeps_dynamic_backend_resolution_and_retry():
     ).read_text(encoding="utf-8")
 
     assert ":5000 resolve " in routing
-    assert "max_fails=2 fail_timeout=10s" in routing
+    assert "max_fails=1 fail_timeout=10s" in routing
     assert re.search(
         r"proxy_next_upstream\s+error\s+timeout\s+http_502\s+http_503\s+http_504;",
         nginx,

@@ -82,7 +82,7 @@ class NginxBackendRoutingAdapter:
             r"^\s*server\s+("
             + re.escape(project_name)
             + r"-backend-([1-9][0-9]*))"
-            + r":5000 resolve max_fails=2 fail_timeout=10s;\s*$"
+            + r":5000 resolve max_fails=1 fail_timeout=10s;\s*$"
         )
 
     def withdraw(self, container_name: str) -> RouteOperationResult:
@@ -276,7 +276,7 @@ class NginxBackendRoutingAdapter:
     def _render(self, names: list[str]) -> str:
         return "".join(
             f"    server {name}:5000 resolve "
-            "max_fails=2 fail_timeout=10s;\n"
+            "max_fails=1 fail_timeout=10s;\n"
             for name in names
         )
 
