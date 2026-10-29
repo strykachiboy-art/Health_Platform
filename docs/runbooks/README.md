@@ -98,3 +98,4 @@ Current resilience engineering covers controlled dependency failure, worker fail
 provider/storage failure, timeout behavior, unknown outcomes, idempotency, and recovery.
 
 The current resilience baseline is ``66 passed in 95.74s``.
+- [Gate 11 concurrency correctness evidence](wave4-gate11-concurrency-correctness-evidence.md)
