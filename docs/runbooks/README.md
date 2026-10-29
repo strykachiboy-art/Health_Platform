@@ -24,6 +24,7 @@ These runbooks support Phase 4 Observability / Operations.
 - [Gate 7 system-mixed capacity boundary evidence](wave4-gate7-system-mixed-capacity-evidence.md)
 - [Gate 8 system-mixed spike resilience evidence](wave4-gate8-system-mixed-spike-resilience-evidence.md)
 - [Gate 9 system-mixed soak stability evidence](wave4-gate9-system-mixed-soak-stability-evidence.md)
+- [Gate 10 controlled failure recovery evidence](wave4-gate10-system-mixed-recovery-evidence.md)
 
 ### Observability Incident
 Use for application failures, HTTP 5xx spikes, correlated trace failures, or unknown operational incidents.
