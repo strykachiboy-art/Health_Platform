@@ -5,9 +5,13 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from app import extensions
 from app.core.audit.models.audit_model import AuditLog
 from app.core.enums.ai_enums import AIFeature
 from app.extensions import db
+from app.core.resilience.circuit_breaker_store import (
+    RedisCircuitBreakerStore,
+)
 from app.modules.ai.ai_provider_exceptions import (
     AIProviderError,
     AIProviderFailureClass,
@@ -16,6 +20,23 @@ from app.modules.ai.ai_provider_exceptions import (
 from app.modules.ai.models.ai_model import AILog
 from app.modules.ai.services import ai_service
 from app.modules.clinic.models.clinic_model import Clinic
+
+
+@pytest.fixture(autouse=True)
+def isolate_openai_circuit_state(app):
+    def delete_state():
+        RedisCircuitBreakerStore(
+            redis_client=extensions.redis_client,
+            circuit_name=ai_service.OPENAI_CIRCUIT_NAME,
+        ).delete()
+
+    with app.app_context():
+        delete_state()
+
+    yield
+
+    with app.app_context():
+        delete_state()
 
 
 def make_drug_result():

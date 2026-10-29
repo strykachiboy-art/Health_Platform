@@ -315,6 +315,7 @@ def test_gate11_cross_domain_notification_provider_failure_is_retryable(
         "/api/v1/billing/invoices",
         json={
             "patient_id": patient_id,
+            "currency": "NGN",
             "appointment_id": appointment_id,
             "due_date": (
                 date.today()

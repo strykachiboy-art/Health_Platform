@@ -94,7 +94,13 @@ def test_request_limits_and_socketio_forwarding_are_configured(
     )
 
     assert "upstream clinic_api_backend {" in config
-    assert "server backend:5000 resolve max_fails=2 fail_timeout=10s;" in config
+
+    if filename == "nginx.phase9.conf":
+        assert "zone clinic_api_backend 64k;" in config
+        assert "include /etc/nginx/upstreams/backend.conf;" in config
+    else:
+        assert "server backend:5000 resolve max_fails=2 fail_timeout=10s;" in config
+
     assert "proxy_pass http://clinic_api_backend;" in config
     assert (
         "proxy_next_upstream error timeout http_502 http_503 http_504;"

@@ -44,6 +44,7 @@ def _make_invoice(
     invoice = Invoice(
         clinic_id=clinic.id,
         patient_id=patient.id,
+        currency="NGN",
         invoice_number=(
             f"E2E-WEBHOOK-{clinic.id}-001"
         ),

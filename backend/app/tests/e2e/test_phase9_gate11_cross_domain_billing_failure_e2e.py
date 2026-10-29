@@ -284,6 +284,7 @@ def test_gate11_cross_domain_billing_payment_failure_rolls_back_and_recovers(
         "/api/v1/billing/invoices",
         json={
             "patient_id": patient_id,
+            "currency": "NGN",
             "appointment_id": appointment_id,
             "due_date": (
                 date.today()

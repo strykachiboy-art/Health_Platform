@@ -14,7 +14,8 @@ class APIVersionNotSupportedError(DomainError):
         self.version = version
 
         super().__init__(
-            f"API version '{version}' is not supported."
+            f"API version '{version}' is not supported.",
+            code=self.code,
         )
 
 

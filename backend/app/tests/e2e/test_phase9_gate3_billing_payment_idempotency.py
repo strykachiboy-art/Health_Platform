@@ -44,6 +44,7 @@ def test_gate3_billing_payment_idempotency_replay_and_conflict(
 
     invoice_payload = {
         "patient_id": patient.id,
+        "currency": "NGN",
         "items": [
             {
                 "description": "Gate 3 consultation",

@@ -101,6 +101,7 @@ def test_payment_success_transition_is_single_economic_effect_under_concurrency(
             invoice = Invoice(
                 clinic_id=clinic.id,
                 patient_id=patient.id,
+                currency="NGN",
                 invoice_number="G9-BILL-INV-001",
                 total_amount=Decimal("100.00"),
                 amount_paid=Decimal("0.00"),
@@ -115,6 +116,7 @@ def test_payment_success_transition_is_single_economic_effect_under_concurrency(
             payment = Payment(
                 invoice_id=invoice.id,
                 amount=Decimal("100.00"),
+                currency="NGN",
                 method=PaymentMethod.CARD,
                 status=PaymentStatus.PENDING,
                 gateway=PaymentGateway.PAYSTACK,

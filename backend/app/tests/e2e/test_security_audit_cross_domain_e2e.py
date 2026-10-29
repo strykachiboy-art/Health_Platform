@@ -189,6 +189,7 @@ def test_security_audit_cross_domain_e2e(
         "/api/v1/billing/invoices",
         json={
             "patient_id": patient_id,
+            "currency": "NGN",
             "due_date": (
                 date.today()
                 + timedelta(days=7)

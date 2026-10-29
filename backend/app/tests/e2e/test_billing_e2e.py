@@ -143,6 +143,7 @@ def test_billing_e2e(
         "/api/v1/billing/invoices",
         json={
             "patient_id": patient_id,
+            "currency": "NGN",
             "appointment_id": appointment_id,
             "due_date": (
                 date.today()
@@ -372,6 +373,7 @@ def test_billing_e2e(
         "/api/v1/billing/invoices",
         json={
             "patient_id": patient_id,
+            "currency": "NGN",
             "due_date": (
                 date.today()
                 - timedelta(days=1)
