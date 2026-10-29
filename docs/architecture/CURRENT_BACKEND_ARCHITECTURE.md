@@ -44,7 +44,7 @@ database completion state is committed.
 Current failure-injection work covers dependency failure, unknown outcomes, timeouts,
 worker failure, provider failure, storage failure, and recovery/idempotency behavior.
 
-Resilience baseline: ``66 passed in 95.74s``
+Resilience baseline: ``273 passed in 120.49s (0:02:00)``
 
 ## Gate 12 Failure-Injection Slices
 
@@ -93,8 +93,10 @@ Backend E2E after lifecycle hardening: ``50 passed in 252.32s``
 
 ## Final Backend Verification
 
-Final full backend regression: `7,811 passed in 7,971.67s (2:12:51)`
+Final full backend regression: `8,749 passed in 9,667.28s (2:41:07)`
 with `0 failed` and `0 errors`.
+
+Combined verified backend baseline: `9,022 passed` (`8,749` backend application + `273` resilience), with `0 failed`.
 
 Concurrency verification: `7 passed in 65.92s` using the disposable
 PostgreSQL concurrency environment on `127.0.0.1:55434`.

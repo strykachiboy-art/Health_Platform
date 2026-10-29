@@ -97,5 +97,7 @@ secret rotation, TLS renewal, configuration drift, and security incident evidenc
 Current resilience engineering covers controlled dependency failure, worker failure,
 provider/storage failure, timeout behavior, unknown outcomes, idempotency, and recovery.
 
-The current resilience baseline is ``66 passed in 95.74s``.
+The current resilience baseline is ``273 passed in 120.49s (0:02:00)``.
+
+The current combined backend verification baseline is ``9,022 passed`` (``8,749`` backend application + ``273`` resilience), with ``0 failed``.
 - [Gate 11 concurrency correctness evidence](wave4-gate11-concurrency-correctness-evidence.md)

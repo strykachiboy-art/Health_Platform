@@ -2,9 +2,13 @@
 
 Enterprise-oriented healthcare clinic management platform designed around secure multi-tenant architecture, clinical safety, auditable workflows, resilient backend services, and a future Flutter client.
 
-**Current status: Backend current-cycle implementation and hardening are substantially complete; resilience, encryption/data-protection, concurrency, E2E, and the final full backend regression are VERIFIED. The current backend development boundary is GREEN and LOCKED while Flutter Foundation planning begins. Actual production operation remains unexecuted.**
+**Current status: Backend current-cycle implementation and hardening are VERIFIED. The final backend application regression is 8,749/8,749 GREEN, the resilience regression is 273/273 GREEN, and the combined backend baseline is 9,022/9,022 GREEN. The backend development boundary is LOCKED and the Flutter new-PC continuation prerequisite is satisfied. Actual production operation remains unexecuted.**
 
-**Status date: October 8, 2026**
+**Status date: October 29, 2026**
+
+**Current verified backend baseline:** `9,022 passed / 0 failed` (`8,749` backend application + `273` resilience).
+**Verified repair commit:** `dac3d44c726f315633596dc10a93cebca48b9fe9`
+
 
 ---
 

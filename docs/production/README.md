@@ -128,7 +128,7 @@ The current implementation freeze baseline is:
 
 Current verified engineering evidence includes:
 
-- resilience-all: ``66 passed in 95.74s``
+- resilience-all: ``273 passed in 120.49s (0:02:00)``
 - resilience artifact cleanup: PASS
 - Gate 11 focused regression: ``11 tests in 133.72s``
 - backend E2E after lifecycle hardening: ``50 passed in 252.32s``
@@ -145,8 +145,9 @@ Gate 12 failure-injection slices currently locked:
 Encryption security gates 7.1 through 7.6 are implemented, focused-verified,
 and frozen for documentation reconciliation.
 
-The remaining broad engineering verification is the final full backend regression.
-Only after that regression passes should the backend be described as complete
-for the current development boundary.
+The final full backend application regression is GREEN: `8,749 passed in 9,667.28s (2:41:07)` with `0 failed` and `0 errors`.
+The current resilience regression is GREEN: `273 passed in 120.49s (0:02:00)` with `0 failed`.
+Combined verified backend baseline: `9,022 passed` (`8,749` backend application + `273` resilience), with `0 failed`.
+The backend current development boundary is **GREEN / VERIFIED / LOCKED**.
 
 None of this establishes actual production deployment or production operation.

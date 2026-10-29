@@ -6,13 +6,15 @@ The current backend verification track is Phase 9 resilience / failure injection
 
 Current focused evidence:
 
-- resilience-all: ``66 passed in 95.74s``
+- resilience-all: ``273 passed in 120.49s (0:02:00)``
 - backend E2E after lifecycle hardening: ``50 passed in 252.32s``
 - encryption regression: ``131 passed in 139.23s``
 - Gate 11 focused regression: ``11 tests in 133.72s``
 
-Final full backend regression: `7,811 passed in 7,971.67s (2:12:51)`
+Final full backend regression: `8,749 passed in 9,667.28s (2:41:07)`
 with `0 failed` and `0 errors`.
+
+Combined verified backend baseline: `9,022 passed` (`8,749` backend application + `273` resilience), with `0 failed`.
 
 Concurrency verification: `7 passed in 65.92s`.
 
@@ -752,10 +754,10 @@ Older phase test counts in this document are historical snapshots.
 
 Current verified evidence:
 
-- final full backend regression: `7,811 passed in 7,971.67s (2:12:51)`,
+- final full backend regression: `8,749 passed in 9,667.28s (2:41:07)`,
   `0 failed`, `0 errors`
 - concurrency verification: `7 passed in 65.92s`
-- resilience-all: `66 passed in 95.74s`
+- resilience-all: `273 passed in 120.49s (0:02:00)`
 - Gate 11 focused regression: `11 tests in 133.72s`
 - backend E2E after lifecycle hardening: `50 passed in 252.32s`
 - encryption regression: `131 passed in 139.23s`
