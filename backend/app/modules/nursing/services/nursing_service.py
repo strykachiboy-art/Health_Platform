@@ -24,6 +24,9 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.core.idempotency.services.idempotency_service import (
+    reserve_idempotency_operation,
+)
 from app.core.utils.decorators import transactional
 
 from app.modules.staff.models.staff_model import Staff
@@ -657,6 +660,122 @@ def _audit(
     )
 
 
+def _resolve_idempotent_nursing_replay(
+    *,
+    idempotency_record,
+    clinic_id: int,
+    entity_type: str,
+    entity_id: int,
+    loader,
+    expected_status,
+):
+    if (
+        idempotency_record.entity_type
+        != entity_type
+        or idempotency_record.entity_id
+        is None
+    ):
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "a completed nursing transition",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    if (
+        idempotency_record.entity_id
+        != entity_id
+    ):
+        raise ConflictError(
+            "Idempotency record references "
+            "a different nursing entity",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    existing = loader(
+        entity_id,
+        clinic_id,
+        lock=False,
+    )
+
+    if (
+        existing.status
+        != expected_status
+    ):
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "the expected completed nursing state",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    return existing
+
+
+def _reserve_nursing_transition(
+    *,
+    clinic_id: int,
+    actor: Staff,
+    operation: str,
+    idempotency_key: str | None,
+    idempotency_user_id: int | None,
+    request_payload: dict,
+    entity_type: str,
+    entity_id: int,
+    loader,
+    expected_status,
+):
+    if idempotency_key is None:
+        return (
+            None,
+            None,
+        )
+
+    if idempotency_user_id is None:
+        raise ValidationError(
+            "Idempotency user ID is required"
+        )
+
+    if (
+        actor.user_id
+        != idempotency_user_id
+    ):
+        raise ValidationError(
+            "Idempotency user does not match "
+            "the nursing transition actor"
+        )
+
+    record, created = (
+        reserve_idempotency_operation(
+            clinic_id=clinic_id,
+            user_id=idempotency_user_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request_payload=request_payload,
+        )
+    )
+
+    if not created:
+        replay = (
+            _resolve_idempotent_nursing_replay(
+                idempotency_record=record,
+                clinic_id=clinic_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                loader=loader,
+                expected_status=expected_status,
+            )
+        )
+
+        return (
+            record,
+            replay,
+        )
+
+    return (
+        record,
+        None,
+    )
+
+
 @transactional
 def create_care_plan(
     *,
@@ -927,11 +1046,34 @@ def complete_care_plan(
     *,
     clinic_id: int,
     actor_staff_id: int,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> NursingCarePlan:
     actor = _get_nurse(
         actor_staff_id,
         clinic_id,
     )
+
+    idempotency_record, replay = (
+        _reserve_nursing_transition(
+            clinic_id=clinic_id,
+            actor=actor,
+            operation="nursing.care_plan.complete",
+            idempotency_key=idempotency_key,
+            idempotency_user_id=idempotency_user_id,
+            request_payload={
+                "care_plan_id": care_plan_id,
+                "actor_staff_id": actor_staff_id,
+            },
+            entity_type="NursingCarePlan",
+            entity_id=care_plan_id,
+            loader=_get_care_plan,
+            expected_status=NursingCarePlanStatus.COMPLETED,
+        )
+    )
+
+    if replay is not None:
+        return replay
     plan = _get_care_plan(
         care_plan_id,
         clinic_id,
@@ -999,6 +1141,15 @@ def complete_care_plan(
             "version": plan.version,
         },
     )
+
+
+    if idempotency_record is not None:
+        idempotency_record.entity_type = (
+            "NursingCarePlan"
+        )
+        idempotency_record.entity_id = (
+            plan.id
+        )
 
     return plan
 
@@ -1313,11 +1464,34 @@ def complete_care_task(
     *,
     clinic_id: int,
     actor_staff_id: int,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> NursingCareTask:
     actor = _get_nurse(
         actor_staff_id,
         clinic_id,
     )
+
+    idempotency_record, replay = (
+        _reserve_nursing_transition(
+            clinic_id=clinic_id,
+            actor=actor,
+            operation="nursing.care_task.complete",
+            idempotency_key=idempotency_key,
+            idempotency_user_id=idempotency_user_id,
+            request_payload={
+                "task_id": task_id,
+                "actor_staff_id": actor_staff_id,
+            },
+            entity_type="NursingCareTask",
+            entity_id=task_id,
+            loader=_get_care_task,
+            expected_status=NursingCareTaskStatus.COMPLETED,
+        )
+    )
+
+    if replay is not None:
+        return replay
     task = _get_care_task(
         task_id,
         clinic_id,
@@ -1373,6 +1547,15 @@ def complete_care_task(
             "version": task.version,
         },
     )
+
+
+    if idempotency_record is not None:
+        idempotency_record.entity_type = (
+            "NursingCareTask"
+        )
+        idempotency_record.entity_id = (
+            task.id
+        )
 
     return task
 
@@ -1647,11 +1830,34 @@ def sign_nursing_note(
     *,
     clinic_id: int,
     actor_staff_id: int,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> NursingNote:
     actor = _get_nurse(
         actor_staff_id,
         clinic_id,
     )
+
+    idempotency_record, replay = (
+        _reserve_nursing_transition(
+            clinic_id=clinic_id,
+            actor=actor,
+            operation="nursing.note.sign",
+            idempotency_key=idempotency_key,
+            idempotency_user_id=idempotency_user_id,
+            request_payload={
+                "note_id": note_id,
+                "actor_staff_id": actor_staff_id,
+            },
+            entity_type="NursingNote",
+            entity_id=note_id,
+            loader=_get_note,
+            expected_status=NursingNoteStatus.SIGNED,
+        )
+    )
+
+    if replay is not None:
+        return replay
     note = _get_note(
         note_id,
         clinic_id,
@@ -1704,6 +1910,15 @@ def sign_nursing_note(
             "version": note.version,
         },
     )
+
+
+    if idempotency_record is not None:
+        idempotency_record.entity_type = (
+            "NursingNote"
+        )
+        idempotency_record.entity_id = (
+            note.id
+        )
 
     return note
 
@@ -2095,11 +2310,34 @@ def acknowledge_handoff(
     *,
     clinic_id: int,
     actor_staff_id: int,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> NursingHandoff:
     actor = _get_nurse(
         actor_staff_id,
         clinic_id,
     )
+
+    idempotency_record, replay = (
+        _reserve_nursing_transition(
+            clinic_id=clinic_id,
+            actor=actor,
+            operation="nursing.handoff.acknowledge",
+            idempotency_key=idempotency_key,
+            idempotency_user_id=idempotency_user_id,
+            request_payload={
+                "handoff_id": handoff_id,
+                "actor_staff_id": actor_staff_id,
+            },
+            entity_type="NursingHandoff",
+            entity_id=handoff_id,
+            loader=_get_handoff,
+            expected_status=NursingHandoffStatus.ACKNOWLEDGED,
+        )
+    )
+
+    if replay is not None:
+        return replay
     handoff = _get_handoff(
         handoff_id,
         clinic_id,
@@ -2164,6 +2402,15 @@ def acknowledge_handoff(
             "version": handoff.version,
         },
     )
+
+
+    if idempotency_record is not None:
+        idempotency_record.entity_type = (
+            "NursingHandoff"
+        )
+        idempotency_record.entity_id = (
+            handoff.id
+        )
 
     return handoff
 

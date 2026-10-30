@@ -7,6 +7,9 @@ from app.extensions import db
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
+from app.core.idempotency.services.idempotency_service import (
+    normalize_idempotency_key,
+)
 from app.core.utils.decorators import get_current_clinic_id, role_required
 
 from app.modules.nursing.schemas.nursing_schema import (
@@ -101,6 +104,22 @@ def _request_json() -> dict:
     return payload
 
 
+def _required_idempotency_key() -> str:
+    raw_key = request.headers.get(
+        "Idempotency-Key"
+    )
+
+    if raw_key is None:
+        raise ValidationError(
+            "Idempotency-Key header is required "
+            "for retry-sensitive nursing transitions"
+        )
+
+    return normalize_idempotency_key(
+        raw_key
+    )
+
+
 def _serialize(schema, value):
     return schema.model_validate(value).model_dump(mode="json")
 
@@ -186,14 +205,35 @@ def resume_care_plan_route(care_plan_id: int):
     )
 
 
+
 @nursing_bp.post("/care-plans/<int:care_plan_id>/complete")
 @role_required(*NURSING_WRITE_ROLES)
 def complete_care_plan_route(care_plan_id: int):
-    return _plan_action(
-        complete_care_plan,
-        "Nursing care plan completed",
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
+
+    plan = complete_care_plan(
         care_plan_id,
+        clinic_id=_current_clinic_id(),
+        actor_staff_id=current_user.staff.id,
+        idempotency_key=(
+            _required_idempotency_key()
+        ),
+        idempotency_user_id=current_user.id,
     )
+
+    return jsonify({
+        "message": "Nursing care plan completed",
+        "care_plan": _serialize(
+            NursingCarePlanResponseSchema,
+            plan,
+        ),
+    }), 200
 
 
 @nursing_bp.post("/care-plans/<int:care_plan_id>/cancel")
@@ -269,14 +309,35 @@ def start_care_task_route(task_id: int):
     )
 
 
+
 @nursing_bp.post("/tasks/<int:task_id>/complete")
 @role_required(*NURSING_WRITE_ROLES)
 def complete_care_task_route(task_id: int):
-    return _task_action(
-        complete_care_task,
-        "Nursing care task completed",
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
+
+    task = complete_care_task(
         task_id,
+        clinic_id=_current_clinic_id(),
+        actor_staff_id=current_user.staff.id,
+        idempotency_key=(
+            _required_idempotency_key()
+        ),
+        idempotency_user_id=current_user.id,
     )
+
+    return jsonify({
+        "message": "Nursing care task completed",
+        "task": _serialize(
+            NursingCareTaskResponseSchema,
+            task,
+        ),
+    }), 200
 
 
 @nursing_bp.post("/tasks/<int:task_id>/cancel")
@@ -352,17 +413,34 @@ def update_nursing_note_route(note_id: int):
     }), 200
 
 
+
 @nursing_bp.post("/notes/<int:note_id>/sign")
 @role_required(*NURSING_WRITE_ROLES)
 def sign_nursing_note_route(note_id: int):
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
+
     note = sign_nursing_note(
         note_id,
         clinic_id=_current_clinic_id(),
-        actor_staff_id=_current_staff_id(),
+        actor_staff_id=current_user.staff.id,
+        idempotency_key=(
+            _required_idempotency_key()
+        ),
+        idempotency_user_id=current_user.id,
     )
+
     return jsonify({
         "message": "Nursing note signed",
-        "note": _serialize(NursingNoteResponseSchema, note),
+        "note": _serialize(
+            NursingNoteResponseSchema,
+            note,
+        ),
     }), 200
 
 
@@ -455,14 +533,35 @@ def mark_handoff_ready_route(handoff_id: int):
     )
 
 
+
 @nursing_bp.post("/handoffs/<int:handoff_id>/acknowledge")
 @role_required(*NURSING_WRITE_ROLES)
 def acknowledge_handoff_route(handoff_id: int):
-    return _handoff_action(
-        acknowledge_handoff,
-        "Nursing handoff acknowledged",
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
+
+    handoff = acknowledge_handoff(
         handoff_id,
+        clinic_id=_current_clinic_id(),
+        actor_staff_id=current_user.staff.id,
+        idempotency_key=(
+            _required_idempotency_key()
+        ),
+        idempotency_user_id=current_user.id,
     )
+
+    return jsonify({
+        "message": "Nursing handoff acknowledged",
+        "handoff": _serialize(
+            NursingHandoffResponseSchema,
+            handoff,
+        ),
+    }), 200
 
 
 @nursing_bp.post("/handoffs/<int:handoff_id>/cancel")

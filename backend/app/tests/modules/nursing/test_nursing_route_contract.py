@@ -404,7 +404,10 @@ def test_note_create_update_and_sign_routes_map_service_calls(
     )
     signed = client.post(
         "/api/v1/nursing/notes/301/sign",
-        headers=headers,
+        headers={
+            **headers,
+            "Idempotency-Key": "gate8-note-sign-contract",
+        },
     )
 
     assert created.status_code == 201
@@ -485,7 +488,10 @@ def test_handoff_create_ready_acknowledge_contract(
     )
     ack = client.post(
         "/api/v1/nursing/handoffs/401/acknowledge",
-        headers=headers,
+        headers={
+            **headers,
+            "Idempotency-Key": "gate8-handoff-ack-contract",
+        },
     )
 
     assert created.status_code == 201
