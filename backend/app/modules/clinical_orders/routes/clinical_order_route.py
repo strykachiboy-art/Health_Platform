@@ -35,6 +35,13 @@ from app.modules.clinical_orders.schemas.blood_product_order_schema import (
     BloodProductOrderListResponseSchema,
     BloodProductOrderResponseSchema,
 )
+from app.modules.clinical_orders.schemas.diet_order_schema import (
+    DietOrderCancelSchema,
+    DietOrderCompleteSchema,
+    DietOrderCreateSchema,
+    DietOrderListResponseSchema,
+    DietOrderResponseSchema,
+)
 from app.modules.clinical_orders.services.imaging_order_service import (
     cancel_imaging_order,
     complete_imaging_order,
@@ -57,6 +64,13 @@ from app.modules.clinical_orders.services.blood_product_order_service import (
     get_blood_product_order,
     list_blood_product_orders,
     verify_blood_product_compatibility,
+)
+from app.modules.clinical_orders.services.diet_order_service import (
+    cancel_diet_order,
+    complete_diet_order,
+    create_diet_order,
+    get_diet_order,
+    list_diet_orders,
 )
 
 
@@ -99,6 +113,16 @@ BLOOD_PRODUCT_VIEW_ROLES = (
     Role.DOCTOR,
     Role.NURSE,
     Role.LAB_TECHNICIAN,
+)
+
+DIET_WRITE_ROLES = (
+    Role.DOCTOR,
+)
+
+DIET_VIEW_ROLES = (
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
 )
 
 
@@ -618,4 +642,113 @@ def cancel_blood_product_order_route(
     return jsonify({
         "message": "Blood product order cancelled",
         "order": _serialize(BloodProductOrderResponseSchema, order),
+    }), 200
+
+@clinical_order_bp.post("/diets")
+@role_required(*DIET_WRITE_ROLES)
+def create_diet_order_route():
+    payload = DietOrderCreateSchema.model_validate(_json_body())
+    order = create_diet_order(
+        admission_id=payload.admission_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        diet_type=payload.diet_type,
+        consultation_id=payload.consultation_id,
+        custom_description=payload.custom_description,
+        feeding_route=payload.feeding_route,
+        texture=payload.texture,
+        fluid_restriction_ml_per_day=(
+            payload.fluid_restriction_ml_per_day
+        ),
+        sodium_restriction_mg_per_day=(
+            payload.sodium_restriction_mg_per_day
+        ),
+        calorie_target_kcal_per_day=(
+            payload.calorie_target_kcal_per_day
+        ),
+        instructions=payload.instructions,
+        priority=payload.priority,
+        start_at=payload.start_at,
+    )
+    return jsonify({
+        "message": "Diet order created",
+        "order": _serialize(DietOrderResponseSchema, order),
+    }), 201
+
+
+@clinical_order_bp.get("/diets/<int:diet_order_id>")
+@role_required(*DIET_VIEW_ROLES)
+def get_diet_order_route(diet_order_id: int):
+    order = get_diet_order(
+        diet_order_id,
+        clinic_id=_clinic_id(),
+    )
+    return jsonify(
+        _serialize(DietOrderResponseSchema, order)
+    ), 200
+
+
+@clinical_order_bp.get("/diets")
+@role_required(*DIET_VIEW_ROLES)
+def list_diet_orders_route():
+    raw_admission_id = request.args.get("admission_id")
+    try:
+        admission_id = int(raw_admission_id)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            "admission_id query parameter must be a positive integer"
+        ) from exc
+
+    if admission_id <= 0:
+        raise ValidationError(
+            "admission_id query parameter must be a positive integer"
+        )
+
+    items = list_diet_orders(
+        admission_id=admission_id,
+        clinic_id=_clinic_id(),
+    )
+    payload = {
+        "items": [
+            _serialize(DietOrderResponseSchema, item)
+            for item in items
+        ],
+        "total": len(items),
+    }
+    return jsonify(
+        DietOrderListResponseSchema
+        .model_validate(payload)
+        .model_dump(mode="json")
+    ), 200
+
+
+@clinical_order_bp.post("/diets/<int:diet_order_id>/complete")
+@role_required(*DIET_WRITE_ROLES)
+def complete_diet_order_route(diet_order_id: int):
+    payload = DietOrderCompleteSchema.model_validate(_json_body())
+    order = complete_diet_order(
+        diet_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        completion_note=payload.completion_note,
+    )
+    return jsonify({
+        "message": "Diet order completed",
+        "order": _serialize(DietOrderResponseSchema, order),
+    }), 200
+
+
+@clinical_order_bp.post("/diets/<int:diet_order_id>/cancel")
+@role_required(*DIET_WRITE_ROLES)
+def cancel_diet_order_route(diet_order_id: int):
+    payload = DietOrderCancelSchema.model_validate(_json_body())
+    order = cancel_diet_order(
+        diet_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        reason=payload.reason,
+    )
+    return jsonify({
+        "message": "Diet order cancelled",
+        "order": _serialize(DietOrderResponseSchema, order),
     }), 200

@@ -103,6 +103,9 @@ from app.modules.clinical_orders.models.procedure_order_model import (
 from app.modules.clinical_orders.models.blood_product_order_model import (
     BloodProductOrder,
 )
+from app.modules.clinical_orders.models.diet_order_model import (
+    DietOrder,
+)
 
 # Inventory
 from app.modules.inventory.models.inventory_model import (
@@ -267,6 +270,7 @@ __all__ = [
     "ImagingOrder",
     "ProcedureOrder",
     "BloodProductOrder",
+    "DietOrder",
 
     # Inventory
     "InventoryItem",
