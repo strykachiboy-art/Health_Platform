@@ -78,6 +78,12 @@ from app.modules.ward.models.ward_model import (
     WardTransfer,
 )
 
+# eMAR
+from app.modules.emar.models.emar_model import (
+    MedicationAdministration,
+)
+
+
 # Inventory
 from app.modules.inventory.models.inventory_model import (
     InventoryItem,
@@ -225,6 +231,10 @@ __all__ = [
     "Bed",
     "Admission",
     "WardTransfer",
+
+    # eMAR
+    "MedicationAdministration",
+
 
     # Inventory
     "InventoryItem",

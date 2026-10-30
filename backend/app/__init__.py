@@ -306,6 +306,10 @@ def register_blueprints(app):
         prescription_bp,
     )
 
+    from app.modules.emar.routes.emar_routes import (
+        emar_bp,
+    )
+
     from app.modules.reports.routes.reports_route import (
         reports_bp,
     )
@@ -401,6 +405,7 @@ def register_blueprints(app):
         lab_bp,
         patient_bp,
         prescription_bp,
+        emar_bp,
         reports_bp,
         staff_bp,
         staff_department_bp,
