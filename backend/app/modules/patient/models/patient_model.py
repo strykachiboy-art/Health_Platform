@@ -30,6 +30,16 @@ class Patient(db.Model):
             "first_name",
             "id",
         ),
+        db.UniqueConstraint(
+            "clinic_id",
+            "barcode",
+            name="uq_patients_clinic_barcode",
+        ),
+        Index(
+            "ix_patients_clinic_barcode",
+            "clinic_id",
+            "barcode",
+        ),
         CheckConstraint(
             "length(trim(first_name)) > 0",
             name="ck_patients_first_name_nonempty",
@@ -130,6 +140,11 @@ class Patient(db.Model):
         unique=True,
         nullable=False,
         index=True,
+    )
+
+    barcode = db.Column(
+        db.String(128),
+        nullable=True,
     )
 
     is_active = db.Column(

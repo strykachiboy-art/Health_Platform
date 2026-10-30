@@ -24,7 +24,10 @@ from app.core.utils.decorators import (
 from app.extensions import db
 
 from app.modules.emar.schemas.emar_schema import (
+    BarcodeMedicationVerificationRequestSchema,
     MedicationAdministrationAdministerSchema,
+    MedicationAdministrationEventListResponseSchema,
+    MedicationAdministrationEventResponseSchema,
     MedicationAdministrationCancelSchema,
     MedicationAdministrationDueSchema,
     MedicationAdministrationHoldSchema,
@@ -36,8 +39,12 @@ from app.modules.emar.schemas.emar_schema import (
     MedicationAdministrationResponseSchema,
     MedicationAdministrationScheduleSchema,
 )
+from app.modules.emar.services.barcode_verification_service import (
+    list_barcode_verification_events,
+    verify_barcode_medication_administration,
+)
 from app.modules.emar.services.emar_service import (
-    administer_medication,
+    administer_barcode_verified_medication,
     administer_prn_medication,
     cancel_medication_administration,
     get_medication_administration,
@@ -174,6 +181,39 @@ def _serialize(
     )
 
 
+def _serialize_barcode_event(
+    event,
+) -> dict:
+    return (
+        MedicationAdministrationEventResponseSchema
+        .model_validate(event)
+        .model_dump(mode="json")
+    )
+
+
+def _serialize_barcode_event_history(
+    events,
+) -> dict:
+    payload = {
+        "items": list(
+            events
+        ),
+        "total": len(
+            events
+        ),
+    }
+
+    return (
+        MedicationAdministrationEventListResponseSchema
+        .model_validate(
+            payload
+        )
+        .model_dump(
+            mode="json"
+        )
+    )
+
+
 def _serialize_page(
     result: dict,
 ) -> dict:
@@ -206,6 +246,70 @@ def _serialize_page(
             mode="json"
         )
     )
+
+
+@emar_bp.post("/barcode/verify")
+@role_required(*EMAR_ROLES)
+def verify_barcode_medication_administration_route():
+    clinic_id = _current_clinic_id()
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked to a staff record"
+        )
+
+    payload = BarcodeMedicationVerificationRequestSchema.model_validate(
+        _json_body()
+    )
+
+    event = verify_barcode_medication_administration(
+        clinic_id=clinic_id,
+        actor_staff_id=current_user.staff.id,
+        patient_barcode=payload.patient_barcode,
+        medication_barcode=payload.medication_barcode,
+        scan_timestamp=payload.scan_timestamp,
+        scan_device=payload.scan_device,
+        operation_identity=_required_idempotency_key(),
+    )
+
+    return jsonify(
+        {
+            "message": "Barcode medication verification completed",
+            "verification": _serialize_barcode_event(event),
+        }
+    ), 200
+
+
+@emar_bp.get(
+    "/<int:administration_id>/barcode-events"
+)
+@role_required(
+    *EMAR_ROLES
+)
+def list_barcode_verification_events_route(
+    administration_id: int,
+):
+    events = (
+        list_barcode_verification_events(
+            administration_id=(
+                administration_id
+            ),
+            clinic_id=(
+                _current_clinic_id()
+            ),
+        )
+    )
+
+    return jsonify(
+        {
+            "history": (
+                _serialize_barcode_event_history(
+                    events
+                )
+            ),
+        }
+    ), 200
 
 
 @emar_bp.post(
@@ -356,10 +460,13 @@ def administer_medication_route(
             "to a staff record"
         )
 
-    record = administer_medication(
+    record = administer_barcode_verified_medication(
         administration_id=administration_id,
         clinic_id=_current_clinic_id(),
         actor_staff_id=current_user.staff.id,
+        barcode_verification_event_id=(
+            payload.barcode_verification_event_id
+        ),
         administered_at=(
             payload.administered_at
         ),

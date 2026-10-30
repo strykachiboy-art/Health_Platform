@@ -65,7 +65,26 @@ def app():
         finally:
             _db.session.rollback()
             _db.session.remove()
-            _db.drop_all()
+
+            if _db.engine.dialect.name == "sqlite":
+                # SQLite cannot ALTER cyclic foreign-key constraints
+                # away before DROP TABLE. Keep FK enforcement enabled
+                # for the entire test and disable it only on the exact
+                # connection performing teardown DDL.
+                with _db.engine.connect() as connection:
+                    connection.exec_driver_sql(
+                        "PRAGMA foreign_keys=OFF"
+                    )
+                    try:
+                        _db.metadata.drop_all(
+                            bind=connection
+                        )
+                    finally:
+                        connection.exec_driver_sql(
+                            "PRAGMA foreign_keys=ON"
+                        )
+            else:
+                _db.drop_all()
 
 
 @pytest.fixture(scope="function")

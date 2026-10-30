@@ -176,6 +176,7 @@ def test_emar_blueprint_is_registered_under_api_v1(
     }
 
     expected = {
+        "/api/v1/emar/barcode/verify",
         "/api/v1/emar/scheduled",
         "/api/v1/emar/prn",
         "/api/v1/emar/<int:administration_id>/due",
@@ -333,9 +334,10 @@ def test_prn_route_passes_request_to_service(
         ),
         (
             "administer_medication_route",
-            "administer_medication",
+            "administer_barcode_verified_medication",
             "/api/v1/emar/1/administer",
             {
+                "barcode_verification_event_id": 41,
                 "notes": "Given",
             },
             "notes",

@@ -8,7 +8,10 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.audit.services.audit_service import create_audit_log
 from app.core.enums.audit_enums import AuditAction
-from app.core.enums.emar_enums import MedicationAdministrationStatus
+from app.core.enums.emar_enums import (
+    BarcodeVerificationResult,
+    MedicationAdministrationStatus,
+)
 from app.core.idempotency.services.idempotency_service import (
     reserve_idempotency_operation,
 )
@@ -28,7 +31,10 @@ from app.core.utils.decorators import transactional
 from app.extensions import db
 
 from app.modules.clinic.services.clinic_service import ensure_clinic_active
-from app.modules.emar.models.emar_model import MedicationAdministration
+from app.modules.emar.models.emar_model import (
+    MedicationAdministration,
+    MedicationAdministrationEvent,
+)
 from app.modules.patient.models.patient_model import Patient
 from app.modules.prescription.models.prescription_model import (
     Prescription,
@@ -856,6 +862,179 @@ def mark_medication_administration_due(
     return record
 
 
+def _load_barcode_verification_event(
+    *,
+    verification_event_id: int,
+    clinic_id: int,
+) -> MedicationAdministrationEvent:
+    _validate_positive_id(
+        verification_event_id,
+        "barcode_verification_event_id",
+    )
+
+    event = db.session.execute(
+        select(MedicationAdministrationEvent).where(
+            MedicationAdministrationEvent.id == verification_event_id,
+            MedicationAdministrationEvent.clinic_id == clinic_id,
+        )
+    ).scalar_one_or_none()
+
+    if event is None:
+        raise ConflictError(
+            "Barcode verification event could not be resolved in the clinic"
+        )
+
+    return event
+
+
+def _latest_barcode_event_id(
+    administration_id: int,
+) -> int | None:
+    return db.session.execute(
+        select(MedicationAdministrationEvent.id)
+        .where(
+            MedicationAdministrationEvent.medication_administration_id
+            == administration_id
+        )
+        .order_by(
+            MedicationAdministrationEvent.scan_timestamp.desc(),
+            MedicationAdministrationEvent.id.desc(),
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _validate_barcode_verification_binding(
+    *,
+    record: MedicationAdministration,
+    item: PrescriptionItem,
+    actor: Staff,
+    verification_event_id: int,
+    administered_at: datetime,
+) -> MedicationAdministrationEvent:
+    event = _load_barcode_verification_event(
+        verification_event_id=verification_event_id,
+        clinic_id=record.clinic_id,
+    )
+
+    if (
+        event.verification_result
+        != BarcodeVerificationResult.BARCODE_VERIFIED
+        or event.failure_code is not None
+        or event.failure_reason is not None
+    ):
+        raise ConflictError(
+            "Medication administration requires a successful barcode verification"
+        )
+
+    if not all(
+        (
+            event.patient_match,
+            event.medication_match,
+            event.dose_match,
+            event.route_match,
+            event.time_window_match,
+        )
+    ):
+        raise ConflictError(
+            "Barcode verification evidence is incomplete"
+        )
+
+    if not (
+        event.medication_administration_id == record.id
+        and event.patient_id == record.patient_id
+        and event.admission_id == record.admission_id
+        and event.prescription_id == record.prescription_id
+        and event.prescription_item_id == record.prescription_item_id
+    ):
+        raise ConflictError(
+            "Barcode verification does not match the medication administration"
+        )
+
+    if event.actor_staff_id != actor.id:
+        raise ConflictError(
+            "Barcode verification actor does not match the medication administration actor"
+        )
+
+    if _latest_barcode_event_id(record.id) != event.id:
+        raise ConflictError(
+            "Barcode verification is no longer the latest verification attempt"
+        )
+
+    if (
+        record.verification_result
+        != BarcodeVerificationResult.BARCODE_VERIFIED
+        or _db_comparable(record.scan_timestamp)
+        != _db_comparable(event.scan_timestamp)
+        or record.patient_barcode != event.patient_barcode
+        or record.medication_barcode != event.medication_barcode
+        or record.scan_device != event.scan_device
+        or record.barcode_verified_by_staff_id != event.actor_staff_id
+    ):
+        raise ConflictError(
+            "Barcode verification is stale relative to the current eMAR verification snapshot"
+        )
+
+    administered_db = _db_comparable(administered_at)
+    event_scan_db = _db_comparable(event.scan_timestamp)
+    window_end_db = _db_comparable(event.verification_window_end)
+
+    if (
+        event_scan_db is None
+        or administered_db is None
+        or administered_db < event_scan_db
+    ):
+        raise ConflictError(
+            "Medication cannot be administered before barcode verification"
+        )
+
+    if window_end_db is None or administered_db > window_end_db:
+        raise ConflictError(
+            "Barcode verification is outside the permitted administration window"
+        )
+
+    if (
+        event.source_order_version != record.source_order_version
+        or event.expected_drug_id != item.drug_id
+        or event.expected_dose_value != item.dose_value
+        or event.expected_dose_unit != item.dose_unit
+        or event.expected_route_code != item.route_code
+    ):
+        raise ConflictError(
+            "Medication order changed after barcode verification"
+        )
+
+    return event
+
+
+def administer_barcode_verified_medication(
+    *,
+    administration_id: int,
+    clinic_id: int,
+    actor_staff_id: int,
+    barcode_verification_event_id: int,
+    administered_at: datetime | None = None,
+    notes: str | None = None,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
+) -> MedicationAdministration:
+    _validate_positive_id(
+        barcode_verification_event_id,
+        "barcode_verification_event_id",
+    )
+
+    return administer_medication(
+        administration_id=administration_id,
+        clinic_id=clinic_id,
+        actor_staff_id=actor_staff_id,
+        administered_at=administered_at,
+        notes=notes,
+        idempotency_key=idempotency_key,
+        idempotency_user_id=idempotency_user_id,
+        barcode_verification_event_id=barcode_verification_event_id,
+    )
+
+
 @transactional
 def administer_medication(
     *,
@@ -866,6 +1045,7 @@ def administer_medication(
     notes: str | None = None,
     idempotency_key: str | None = None,
     idempotency_user_id: int | None = None,
+    barcode_verification_event_id: int | None = None,
 ) -> MedicationAdministration:
     requested_administered_at = administered_at
 
@@ -888,18 +1068,25 @@ def administer_medication(
                 "Idempotency user ID is required"
             )
 
+        request_payload = {
+            "administration_id": administration_id,
+            "actor_staff_id": actor_staff_id,
+            "administered_at": requested_administered_at,
+            "notes": notes,
+        }
+
+        if barcode_verification_event_id is not None:
+            request_payload["barcode_verification_event_id"] = (
+                barcode_verification_event_id
+            )
+
         idempotency_record, created = (
             reserve_idempotency_operation(
                 clinic_id=clinic_id,
                 user_id=idempotency_user_id,
                 operation="emar.administer",
                 idempotency_key=idempotency_key,
-                request_payload={
-                    "administration_id": administration_id,
-                    "actor_staff_id": actor_staff_id,
-                    "administered_at": requested_administered_at,
-                    "notes": notes,
-                },
+                request_payload=request_payload,
             )
         )
 
@@ -935,6 +1122,17 @@ def administer_medication(
             "the medication administration actor"
         )
 
+    barcode_verification_event = None
+
+    if barcode_verification_event_id is not None:
+        barcode_verification_event = _validate_barcode_verification_binding(
+            record=record,
+            item=item,
+            actor=actor,
+            verification_event_id=barcode_verification_event_id,
+            administered_at=administered_at,
+        )
+
     snapshot = _copy_order_snapshot(
         item
     )
@@ -962,6 +1160,9 @@ def administer_medication(
     record.administered_at = administered_at
     record.administered_by_staff_id = actor.id
     record.notes = notes
+
+    if barcode_verification_event is not None:
+        record.barcode_verification_event_id = barcode_verification_event.id
 
     _audit_status_change(
         record=record,

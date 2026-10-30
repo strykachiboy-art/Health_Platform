@@ -81,6 +81,7 @@ from app.modules.ward.models.ward_model import (
 # eMAR
 from app.modules.emar.models.emar_model import (
     MedicationAdministration,
+    MedicationAdministrationEvent,
 )
 
 
@@ -234,6 +235,7 @@ __all__ = [
 
     # eMAR
     "MedicationAdministration",
+    "MedicationAdministrationEvent",
 
 
     # Inventory

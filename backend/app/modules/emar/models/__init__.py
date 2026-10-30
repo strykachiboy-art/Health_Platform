@@ -1,3 +1,9 @@
-from .emar_model import MedicationAdministration
+from .emar_model import (
+    MedicationAdministration,
+    MedicationAdministrationEvent,
+)
 
-__all__ = ["MedicationAdministration"]
+__all__ = [
+    "MedicationAdministration",
+    "MedicationAdministrationEvent",
+]

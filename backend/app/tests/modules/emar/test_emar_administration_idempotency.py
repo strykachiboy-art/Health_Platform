@@ -467,7 +467,7 @@ def test_administer_route_requires_idempotency_key(
     )
     monkeypatch.setattr(
         emar_routes,
-        "administer_medication",
+        "administer_barcode_verified_medication",
         lambda **_kwargs: pytest.fail(
             "Service must not run without Idempotency-Key"
         ),
@@ -480,7 +480,9 @@ def test_administer_route_requires_idempotency_key(
     with app.test_request_context(
         "/api/v1/emar/1/administer",
         method="POST",
-        json={},
+        json={
+            "barcode_verification_event_id": 41,
+        },
     ):
         with pytest.raises(
             ValidationError,
@@ -548,7 +550,7 @@ def test_administer_route_passes_idempotency_scope(
 
     monkeypatch.setattr(
         emar_routes,
-        "administer_medication",
+        "administer_barcode_verified_medication",
         fake_administer,
     )
 
@@ -559,7 +561,9 @@ def test_administer_route_passes_idempotency_scope(
     with app.test_request_context(
         "/api/v1/emar/1/administer",
         method="POST",
-        json={},
+        json={
+            "barcode_verification_event_id": 41,
+        },
         headers={
             "Idempotency-Key": " gate6-route-key ",
         },
@@ -571,6 +575,7 @@ def test_administer_route_passes_idempotency_scope(
     assert status == 200
     assert captured["idempotency_key"] == "gate6-route-key"
     assert captured["idempotency_user_id"] == 23
+    assert captured["barcode_verification_event_id"] == 41
     assert captured["actor_staff_id"] == 17
     assert (
         response.get_json()["administration"]["status"]
