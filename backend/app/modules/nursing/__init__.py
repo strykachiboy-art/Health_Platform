@@ -1,0 +1,1 @@
+"""Nursing inpatient workflow domain."""

@@ -85,6 +85,14 @@ from app.modules.emar.models.emar_model import (
 )
 
 
+# Nursing
+from app.modules.nursing.models.nursing_model import (
+    NursingCarePlan,
+    NursingCareTask,
+    NursingNote,
+    NursingHandoff,
+)
+
 # Inventory
 from app.modules.inventory.models.inventory_model import (
     InventoryItem,
@@ -237,6 +245,12 @@ __all__ = [
     "MedicationAdministration",
     "MedicationAdministrationEvent",
 
+
+    # Nursing
+    "NursingCarePlan",
+    "NursingCareTask",
+    "NursingNote",
+    "NursingHandoff",
 
     # Inventory
     "InventoryItem",
