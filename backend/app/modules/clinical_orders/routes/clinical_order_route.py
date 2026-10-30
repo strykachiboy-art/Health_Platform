@@ -42,6 +42,16 @@ from app.modules.clinical_orders.schemas.diet_order_schema import (
     DietOrderListResponseSchema,
     DietOrderResponseSchema,
 )
+from app.modules.clinical_orders.schemas.nursing_order_schema import (
+    NursingOrderCancelSchema,
+    NursingOrderCompleteSchema,
+    NursingOrderCreateSchema,
+    NursingOrderExecuteSchema,
+    NursingOrderExecutionListResponseSchema,
+    NursingOrderExecutionResponseSchema,
+    NursingOrderListResponseSchema,
+    NursingOrderResponseSchema,
+)
 from app.modules.clinical_orders.services.imaging_order_service import (
     cancel_imaging_order,
     complete_imaging_order,
@@ -71,6 +81,15 @@ from app.modules.clinical_orders.services.diet_order_service import (
     create_diet_order,
     get_diet_order,
     list_diet_orders,
+)
+from app.modules.clinical_orders.services.nursing_order_service import (
+    cancel_nursing_order,
+    complete_nursing_order,
+    create_nursing_order,
+    get_nursing_order,
+    list_nursing_order_executions,
+    list_nursing_orders,
+    record_nursing_order_execution,
 )
 
 
@@ -120,6 +139,20 @@ DIET_WRITE_ROLES = (
 )
 
 DIET_VIEW_ROLES = (
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
+)
+
+NURSING_ORDER_WRITE_ROLES = (
+    Role.DOCTOR,
+)
+
+NURSING_ORDER_EXECUTION_ROLES = (
+    Role.NURSE,
+)
+
+NURSING_ORDER_VIEW_ROLES = (
     Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
@@ -751,4 +784,221 @@ def cancel_diet_order_route(diet_order_id: int):
     return jsonify({
         "message": "Diet order cancelled",
         "order": _serialize(DietOrderResponseSchema, order),
+    }), 200
+
+@clinical_order_bp.post("/nursing-orders")
+@role_required(*NURSING_ORDER_WRITE_ROLES)
+def create_nursing_order_route():
+    payload = NursingOrderCreateSchema.model_validate(
+        _json_body()
+    )
+    order = create_nursing_order(
+        admission_id=payload.admission_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        category=payload.category,
+        order_text=payload.order_text,
+        frequency=payload.frequency,
+        consultation_id=payload.consultation_id,
+        instructions=payload.instructions,
+        custom_frequency=payload.custom_frequency,
+        assigned_to_staff_id=payload.assigned_to_staff_id,
+        priority=payload.priority,
+        scheduled_at=payload.scheduled_at,
+    )
+    return jsonify({
+        "message": "Nursing order created",
+        "order": _serialize(
+            NursingOrderResponseSchema,
+            order,
+        ),
+    }), 201
+
+
+@clinical_order_bp.get(
+    "/nursing-orders/<int:nursing_order_id>"
+)
+@role_required(*NURSING_ORDER_VIEW_ROLES)
+def get_nursing_order_route(
+    nursing_order_id: int,
+):
+    order = get_nursing_order(
+        nursing_order_id,
+        clinic_id=_clinic_id(),
+    )
+    return jsonify(
+        _serialize(
+            NursingOrderResponseSchema,
+            order,
+        )
+    ), 200
+
+
+@clinical_order_bp.get("/nursing-orders")
+@role_required(*NURSING_ORDER_VIEW_ROLES)
+def list_nursing_orders_route():
+    raw_admission_id = request.args.get(
+        "admission_id"
+    )
+
+    try:
+        admission_id = int(
+            raw_admission_id
+        )
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ValidationError(
+            "admission_id query parameter "
+            "must be a positive integer"
+        ) from exc
+
+    if admission_id <= 0:
+        raise ValidationError(
+            "admission_id query parameter "
+            "must be a positive integer"
+        )
+
+    items = list_nursing_orders(
+        admission_id=admission_id,
+        clinic_id=_clinic_id(),
+    )
+
+    payload = {
+        "items": [
+            _serialize(
+                NursingOrderResponseSchema,
+                item,
+            )
+            for item in items
+        ],
+        "total": len(items),
+    }
+
+    return jsonify(
+        NursingOrderListResponseSchema
+        .model_validate(payload)
+        .model_dump(mode="json")
+    ), 200
+
+
+@clinical_order_bp.get(
+    "/nursing-orders/<int:nursing_order_id>/executions"
+)
+@role_required(*NURSING_ORDER_VIEW_ROLES)
+def list_nursing_order_executions_route(
+    nursing_order_id: int,
+):
+    items = list_nursing_order_executions(
+        nursing_order_id,
+        clinic_id=_clinic_id(),
+    )
+
+    payload = {
+        "items": [
+            _serialize(
+                NursingOrderExecutionResponseSchema,
+                item,
+            )
+            for item in items
+        ],
+        "total": len(items),
+    }
+
+    return jsonify(
+        NursingOrderExecutionListResponseSchema
+        .model_validate(payload)
+        .model_dump(mode="json")
+    ), 200
+
+
+@clinical_order_bp.post(
+    "/nursing-orders/<int:nursing_order_id>/execute"
+)
+@role_required(*NURSING_ORDER_EXECUTION_ROLES)
+def execute_nursing_order_route(
+    nursing_order_id: int,
+):
+    payload = NursingOrderExecuteSchema.model_validate(
+        _json_body()
+    )
+
+    execution = record_nursing_order_execution(
+        nursing_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        result_note=payload.result_note,
+        performed_at=payload.performed_at,
+    )
+
+    order = get_nursing_order(
+        nursing_order_id,
+        clinic_id=_clinic_id(),
+    )
+
+    return jsonify({
+        "message": "Nursing order execution recorded",
+        "execution": _serialize(
+            NursingOrderExecutionResponseSchema,
+            execution,
+        ),
+        "order": _serialize(
+            NursingOrderResponseSchema,
+            order,
+        ),
+    }), 200
+
+
+@clinical_order_bp.post(
+    "/nursing-orders/<int:nursing_order_id>/complete"
+)
+@role_required(*NURSING_ORDER_WRITE_ROLES)
+def complete_nursing_order_route(
+    nursing_order_id: int,
+):
+    payload = NursingOrderCompleteSchema.model_validate(
+        _json_body()
+    )
+
+    order = complete_nursing_order(
+        nursing_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        completion_note=payload.completion_note,
+    )
+
+    return jsonify({
+        "message": "Nursing order completed",
+        "order": _serialize(
+            NursingOrderResponseSchema,
+            order,
+        ),
+    }), 200
+
+
+@clinical_order_bp.post(
+    "/nursing-orders/<int:nursing_order_id>/cancel"
+)
+@role_required(*NURSING_ORDER_WRITE_ROLES)
+def cancel_nursing_order_route(
+    nursing_order_id: int,
+):
+    payload = NursingOrderCancelSchema.model_validate(
+        _json_body()
+    )
+
+    order = cancel_nursing_order(
+        nursing_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        reason=payload.reason,
+    )
+
+    return jsonify({
+        "message": "Nursing order cancelled",
+        "order": _serialize(
+            NursingOrderResponseSchema,
+            order,
+        ),
     }), 200
