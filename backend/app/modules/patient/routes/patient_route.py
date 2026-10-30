@@ -18,6 +18,15 @@ from app.core.utils.decorators import active_staff_required, get_current_clinic_
 
 from app.modules.patient.models.patient_model import Patient
 from app.modules.staff.models.staff_model import Staff
+from app.modules.patient.schemas.patient_allergy_schema import (
+    PatientAllergyCreateSchema,
+    PatientAllergyListQuerySchema,
+    PatientAllergyListResponseSchema,
+    PatientAllergyResponseSchema,
+    PatientAllergyStatusTransitionSchema,
+    PatientAllergyUpdateSchema,
+)
+
 from app.modules.patient.schemas.patient_schema import (
     PatientCreateSchema,
     PatientFamilyMemberCreateSchema,
@@ -43,6 +52,9 @@ from app.modules.patient.schemas.patient_schema import (
 
 from app.modules.patient.services.patient_service import (
     add_family_member,
+    create_patient_allergy,
+    get_patient_allergy,
+    list_patient_allergies,
     add_insurance,
     create_patient,
     get_latest_vitals,
@@ -57,6 +69,8 @@ from app.modules.patient.services.patient_service import (
     update_family_member,
     update_insurance,
     update_patient,
+    update_patient_allergy,
+    transition_patient_allergy_status,
 )
 
 
@@ -249,6 +263,38 @@ def _serialize_vitals(
         .model_dump(mode="json")
     )
 
+
+def _serialize_allergy(
+    allergy,
+) -> dict:
+    return (
+        PatientAllergyResponseSchema
+        .model_validate(
+            allergy
+        )
+        .model_dump(
+            mode="json"
+        )
+    )
+
+
+def _serialize_allergy_page(
+    page,
+) -> dict:
+    return (
+        PatientAllergyListResponseSchema
+        .model_validate(
+            {
+                "items": page.items,
+                "total": page.total,
+                "page": page.page,
+                "per_page": page.per_page,
+            }
+        )
+        .model_dump(
+            mode="json"
+        )
+    )
 
 def _serialize_patient_page(page):
     return (
@@ -976,3 +1022,272 @@ def record_vitals_route(
 
     except DomainError as exc:
         return _domain_error_response(exc)
+
+
+@patient_bp.get(
+    "/<int:patient_id>/allergies"
+)
+@role_required(
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.LAB_TECHNICIAN,
+    Role.PARAMEDIC,
+    Role.EMT,
+)
+@active_staff_required
+def list_patient_allergies_route(
+    patient_id: int,
+):
+    try:
+        patient = _get_patient_in_current_clinic(
+            patient_id
+        )
+
+        query = _validate_query(
+            PatientAllergyListQuerySchema
+        )
+
+        page = list_patient_allergies(
+            clinic_id=_get_current_clinic_id(),
+            patient_id=patient.id,
+            active_only=query.active_only,
+            include_refuted=query.include_refuted,
+            page=query.page,
+            per_page=query.per_page,
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "data": _serialize_allergy_page(
+                    page
+                ),
+            }
+        ), 200
+
+    except PydanticValidationError as exc:
+        return _validation_error_response(
+            exc
+        )
+
+    except DomainError as exc:
+        return _domain_error_response(
+            exc
+        )
+
+
+@patient_bp.get(
+    "/<int:patient_id>/allergies/"
+    "<int:allergy_id>"
+)
+@role_required(
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.LAB_TECHNICIAN,
+    Role.PARAMEDIC,
+    Role.EMT,
+)
+@active_staff_required
+def get_patient_allergy_route(
+    patient_id: int,
+    allergy_id: int,
+):
+    try:
+        patient = _get_patient_in_current_clinic(
+            patient_id
+        )
+
+        allergy = get_patient_allergy(
+            clinic_id=_get_current_clinic_id(),
+            patient_id=patient.id,
+            allergy_id=allergy_id,
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "data": _serialize_allergy(
+                    allergy
+                ),
+            }
+        ), 200
+
+    except DomainError as exc:
+        return _domain_error_response(
+            exc
+        )
+
+
+@patient_bp.post(
+    "/<int:patient_id>/allergies"
+)
+@role_required(
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
+    Role.PHARMACIST,
+)
+@active_staff_required
+def create_patient_allergy_route(
+    patient_id: int,
+):
+    try:
+        patient = _get_patient_in_current_clinic(
+            patient_id
+        )
+
+        data = _validate_payload(
+            PatientAllergyCreateSchema
+        )
+
+        user = _get_current_user()
+        staff = _get_current_staff()
+
+        allergy = create_patient_allergy(
+            clinic_id=_get_current_clinic_id(),
+            patient_id=patient.id,
+            data=data.model_dump(
+                exclude_unset=True
+            ),
+            recorded_by_id=staff.id,
+            actor_id=user.id,
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "data": _serialize_allergy(
+                    allergy
+                ),
+            }
+        ), 201
+
+    except PydanticValidationError as exc:
+        return _validation_error_response(
+            exc
+        )
+
+    except DomainError as exc:
+        return _domain_error_response(
+            exc
+        )
+
+
+@patient_bp.patch(
+    "/<int:patient_id>/allergies/"
+    "<int:allergy_id>"
+)
+@role_required(
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
+    Role.PHARMACIST,
+)
+@active_staff_required
+def update_patient_allergy_route(
+    patient_id: int,
+    allergy_id: int,
+):
+    try:
+        patient = _get_patient_in_current_clinic(
+            patient_id
+        )
+
+        data = _validate_payload(
+            PatientAllergyUpdateSchema
+        )
+
+        user = _get_current_user()
+
+        allergy = update_patient_allergy(
+            clinic_id=_get_current_clinic_id(),
+            patient_id=patient.id,
+            allergy_id=allergy_id,
+            data=data.model_dump(
+                exclude_unset=True
+            ),
+            actor_id=user.id,
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "data": _serialize_allergy(
+                    allergy
+                ),
+            }
+        ), 200
+
+    except PydanticValidationError as exc:
+        return _validation_error_response(
+            exc
+        )
+
+    except DomainError as exc:
+        return _domain_error_response(
+            exc
+        )
+
+
+@patient_bp.patch(
+    "/<int:patient_id>/allergies/"
+    "<int:allergy_id>/status"
+)
+@role_required(
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
+    Role.PHARMACIST,
+)
+@active_staff_required
+def transition_patient_allergy_status_route(
+    patient_id: int,
+    allergy_id: int,
+):
+    try:
+        patient = _get_patient_in_current_clinic(
+            patient_id
+        )
+
+        data = _validate_payload(
+            PatientAllergyStatusTransitionSchema
+        )
+
+        user = _get_current_user()
+
+        allergy = transition_patient_allergy_status(
+            clinic_id=_get_current_clinic_id(),
+            patient_id=patient.id,
+            allergy_id=allergy_id,
+            clinical_status=data.clinical_status,
+            verification_status=(
+                data.verification_status
+            ),
+            reason=data.reason,
+            actor_id=user.id,
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "data": _serialize_allergy(
+                    allergy
+                ),
+            }
+        ), 200
+
+    except PydanticValidationError as exc:
+        return _validation_error_response(
+            exc
+        )
+
+    except DomainError as exc:
+        return _domain_error_response(
+            exc
+        )

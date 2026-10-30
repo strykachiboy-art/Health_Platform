@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 
 from app.extensions import db
 from app.core.audit.services.audit_service import create_audit_log
@@ -21,6 +21,7 @@ from app.core.utils.qrcode_util import generate_tracking_code
 from app.modules.clinic.services.clinic_service import ensure_clinic_active
 from app.modules.patient.models.patient_model import (
     Patient,
+    PatientAllergy,
     PatientFamilyMember,
     PatientInsurance,
     PatientVitals,
@@ -75,6 +76,16 @@ _EDITABLE_VITAL_FIELDS = {
     "weight",
     "height",
     "recorded_at",
+}
+
+_EDITABLE_ALLERGY_FIELDS = {
+    "allergen_name",
+    "allergen_code",
+    "allergen_type",
+    "reaction",
+    "severity",
+    "onset_at",
+    "notes",
 }
 
 
@@ -1477,3 +1488,814 @@ def record_vitals(
     )
 
     return vitals
+
+
+def _normalize_allergy_text(
+    value,
+    *,
+    field_name: str,
+    required: bool = False,
+):
+    if value is None:
+        if required:
+            raise ValidationError(
+                f"{field_name} is required"
+            )
+        return None
+
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise ValidationError(
+            f"{field_name} must be a string"
+        )
+
+    normalized = value.strip()
+
+    if required and not normalized:
+        raise ValidationError(
+            f"{field_name} is required"
+        )
+
+    return (
+        normalized
+        if normalized
+        else None
+    )
+
+
+def _coerce_allergy_choice(
+    value,
+    *,
+    field_name: str,
+    allowed: set[str],
+    default: Optional[str] = None,
+) -> str:
+    if value is None:
+        if default is not None:
+            return default
+
+        raise ValidationError(
+            f"{field_name} is required"
+        )
+
+    if isinstance(
+        value,
+        Enum,
+    ):
+        value = value.value
+
+    if not isinstance(
+        value,
+        str,
+    ):
+        raise ValidationError(
+            f"{field_name} is invalid"
+        )
+
+    normalized = value.strip().lower()
+
+    if normalized not in allowed:
+        raise ValidationError(
+            f"{field_name} is invalid"
+        )
+
+    return normalized
+
+
+def _normalize_allergy_datetime(
+    value,
+    *,
+    field_name: str,
+):
+    if value is None:
+        return None
+
+    if not isinstance(
+        value,
+        datetime,
+    ):
+        raise ValidationError(
+            f"{field_name} must be a datetime"
+        )
+
+    if (
+        value.tzinfo is None
+        or value.utcoffset() is None
+    ):
+        raise ValidationError(
+            f"{field_name} must include timezone information"
+        )
+
+    return value.astimezone(
+        timezone.utc
+    )
+
+
+def _get_patient_for_clinic_or_404(
+    clinic_id: int,
+    patient_id: int,
+) -> Patient:
+    clinic_id = _validate_positive_id(
+        clinic_id,
+        "Clinic ID",
+    )
+
+    patient = _get_patient_or_404(
+        patient_id
+    )
+
+    if patient.clinic_id != clinic_id:
+        raise ValidationError(
+            "Patient does not belong to clinic"
+        )
+
+    return patient
+
+
+def _get_allergy_or_404(
+    *,
+    clinic_id: int,
+    patient_id: int,
+    allergy_id: int,
+) -> PatientAllergy:
+    clinic_id = _validate_positive_id(
+        clinic_id,
+        "Clinic ID",
+    )
+
+    patient_id = _validate_positive_id(
+        patient_id,
+        "Patient ID",
+    )
+
+    allergy_id = _validate_positive_id(
+        allergy_id,
+        "Allergy ID",
+    )
+
+    record = db.session.execute(
+        select(
+            PatientAllergy
+        )
+        .where(
+            PatientAllergy.id == allergy_id,
+            PatientAllergy.clinic_id == clinic_id,
+            PatientAllergy.patient_id == patient_id,
+        )
+        .limit(
+            1
+        )
+    ).scalar_one_or_none()
+
+    if record is None:
+        raise NotFoundError(
+            f"Allergy {allergy_id} not found "
+            f"for patient {patient_id}"
+        )
+
+    return record
+
+
+def _normalized_allergy_identity(
+    *,
+    allergen_name: str,
+    allergen_code: Optional[str],
+    allergen_type: str,
+) -> tuple[str, Optional[str], str]:
+    normalized_name = (
+        _normalize_allergy_text(
+            allergen_name,
+            field_name="allergen_name",
+            required=True,
+        )
+        or ""
+    )
+
+    normalized_code = (
+        _normalize_allergy_text(
+            allergen_code,
+            field_name="allergen_code",
+        )
+    )
+
+    normalized_type = _coerce_allergy_choice(
+        allergen_type,
+        field_name="allergen_type",
+        allowed={
+            "drug",
+            "food",
+            "environmental",
+            "latex",
+            "biologic",
+            "other",
+        },
+        default="other",
+    )
+
+    return (
+        normalized_name,
+        normalized_code,
+        normalized_type,
+    )
+
+
+def _find_duplicate_active_allergy(
+    *,
+    clinic_id: int,
+    patient_id: int,
+    allergen_name: str,
+    allergen_code: Optional[str],
+    allergen_type: str,
+    exclude_allergy_id: Optional[int] = None,
+) -> Optional[PatientAllergy]:
+    statement = select(
+        PatientAllergy
+    ).where(
+        PatientAllergy.clinic_id == clinic_id,
+        PatientAllergy.patient_id == patient_id,
+        PatientAllergy.clinical_status == "active",
+        PatientAllergy.verification_status != "refuted",
+        PatientAllergy.allergen_type == allergen_type,
+    )
+
+    if allergen_code:
+        statement = statement.where(
+            func.lower(
+                PatientAllergy.allergen_code
+            )
+            == allergen_code.lower()
+        )
+    else:
+        statement = statement.where(
+            PatientAllergy.allergen_code.is_(None),
+            func.lower(
+                func.trim(
+                    PatientAllergy.allergen_name
+                )
+            )
+            == allergen_name.lower(),
+        )
+
+    if exclude_allergy_id is not None:
+        statement = statement.where(
+            PatientAllergy.id
+            != exclude_allergy_id
+        )
+
+    return db.session.execute(
+        statement.limit(
+            1
+        )
+    ).scalar_one_or_none()
+
+
+def get_patient_allergy(
+    *,
+    clinic_id: int,
+    patient_id: int,
+    allergy_id: int,
+) -> PatientAllergy:
+    _get_patient_for_clinic_or_404(
+        clinic_id,
+        patient_id,
+    )
+
+    return _get_allergy_or_404(
+        clinic_id=clinic_id,
+        patient_id=patient_id,
+        allergy_id=allergy_id,
+    )
+
+
+def list_patient_allergies(
+    *,
+    clinic_id: int,
+    patient_id: int,
+    active_only: bool = False,
+    include_refuted: bool = True,
+    page: int = DEFAULT_PAGE,
+    per_page: int = DEFAULT_PER_PAGE,
+):
+    patient = _get_patient_for_clinic_or_404(
+        clinic_id,
+        patient_id,
+    )
+
+    page, per_page = _validate_pagination(
+        page,
+        per_page,
+    )
+
+    if not isinstance(
+        active_only,
+        bool,
+    ):
+        raise ValidationError(
+            "active_only must be a boolean"
+        )
+
+    if not isinstance(
+        include_refuted,
+        bool,
+    ):
+        raise ValidationError(
+            "include_refuted must be a boolean"
+        )
+
+    statement = select(
+        PatientAllergy
+    ).where(
+        PatientAllergy.clinic_id == patient.clinic_id,
+        PatientAllergy.patient_id == patient.id,
+    )
+
+    if active_only:
+        statement = statement.where(
+            PatientAllergy.clinical_status == "active"
+        )
+
+    if not include_refuted:
+        statement = statement.where(
+            PatientAllergy.verification_status != "refuted"
+        )
+
+    statement = statement.order_by(
+        PatientAllergy.recorded_at.desc(),
+        PatientAllergy.id.desc(),
+    )
+
+    return db.paginate(
+        statement,
+        page=page,
+        per_page=per_page,
+        error_out=False,
+    )
+
+
+@transactional
+def create_patient_allergy(
+    *,
+    clinic_id: int,
+    patient_id: int,
+    data: dict,
+    recorded_by_id: Optional[int] = None,
+    actor_id: Optional[int] = None,
+) -> PatientAllergy:
+    patient = _get_patient_for_clinic_or_404(
+        clinic_id,
+        patient_id,
+    )
+
+    ensure_clinic_active(
+        patient.clinic_id
+    )
+
+    if not isinstance(
+        data,
+        dict,
+    ):
+        raise ValidationError(
+            "Allergy data must be an object"
+        )
+
+    _validate_fields(
+        data,
+        _EDITABLE_ALLERGY_FIELDS,
+    )
+
+    recorded_by = _validate_staff_for_patient(
+        patient.clinic_id,
+        recorded_by_id,
+    )
+
+    allergen_name, allergen_code, allergen_type = (
+        _normalized_allergy_identity(
+            allergen_name=data.get(
+                "allergen_name"
+            ),
+            allergen_code=data.get(
+                "allergen_code"
+            ),
+            allergen_type=data.get(
+                "allergen_type",
+                "other",
+            ),
+        )
+    )
+
+    reaction = _normalize_allergy_text(
+        data.get(
+            "reaction"
+        ),
+        field_name="reaction",
+    )
+
+    notes = _normalize_allergy_text(
+        data.get(
+            "notes"
+        ),
+        field_name="notes",
+    )
+
+    severity = _coerce_allergy_choice(
+        data.get(
+            "severity",
+            "unknown",
+        ),
+        field_name="severity",
+        allowed={
+            "unknown",
+            "mild",
+            "moderate",
+            "severe",
+            "life_threatening",
+        },
+        default="unknown",
+    )
+
+    onset_at = _normalize_allergy_datetime(
+        data.get(
+            "onset_at"
+        ),
+        field_name="onset_at",
+    )
+
+    duplicate = _find_duplicate_active_allergy(
+        clinic_id=patient.clinic_id,
+        patient_id=patient.id,
+        allergen_name=allergen_name,
+        allergen_code=allergen_code,
+        allergen_type=allergen_type,
+    )
+
+    if duplicate is not None:
+        raise ConflictError(
+            "An active non-refuted allergy with the same "
+            "allergen identity already exists"
+        )
+
+    now = _utcnow()
+
+    record = PatientAllergy(
+        clinic_id=patient.clinic_id,
+        patient_id=patient.id,
+        allergen_name=allergen_name,
+        allergen_code=allergen_code,
+        allergen_type=allergen_type,
+        reaction=reaction,
+        severity=severity,
+        clinical_status="active",
+        verification_status="unconfirmed",
+        onset_at=onset_at,
+        recorded_at=now,
+        recorded_by_id=(
+            recorded_by.id
+            if recorded_by is not None
+            else None
+        ),
+        notes=notes,
+    )
+
+    db.session.add(
+        record
+    )
+
+    db.session.flush()
+
+    _audit(
+        actor_id=actor_id,
+        clinic_id=patient.clinic_id,
+        action=AuditAction.CREATE,
+        entity_type="patient_allergy",
+        entity_id=record.id,
+        description=(
+            f"Created allergy {record.id} "
+            f"for patient {patient.id}"
+        ),
+        changes={
+            "clinic_id": patient.clinic_id,
+            "patient_id": patient.id,
+            "allergen_name": record.allergen_name,
+            "allergen_code": record.allergen_code,
+            "allergen_type": record.allergen_type,
+            "severity": record.severity,
+            "clinical_status": record.clinical_status,
+            "verification_status": (
+                record.verification_status
+            ),
+            "recorded_by_id": record.recorded_by_id,
+        },
+    )
+
+    return record
+
+
+@transactional
+def update_patient_allergy(
+    *,
+    clinic_id: int,
+    patient_id: int,
+    allergy_id: int,
+    data: dict,
+    actor_id: Optional[int] = None,
+) -> PatientAllergy:
+    patient = _get_patient_for_clinic_or_404(
+        clinic_id,
+        patient_id,
+    )
+
+    ensure_clinic_active(
+        patient.clinic_id
+    )
+
+    record = _get_allergy_or_404(
+        clinic_id=patient.clinic_id,
+        patient_id=patient.id,
+        allergy_id=allergy_id,
+    )
+
+    if not isinstance(
+        data,
+        dict,
+    ):
+        raise ValidationError(
+            "Allergy data must be an object"
+        )
+
+    _validate_fields(
+        data,
+        _EDITABLE_ALLERGY_FIELDS,
+    )
+
+    if not data:
+        raise ValidationError(
+            "At least one allergy field must be supplied"
+        )
+
+    proposed_name = record.allergen_name
+    proposed_code = record.allergen_code
+    proposed_type = record.allergen_type
+
+    if "allergen_name" in data:
+        proposed_name = (
+            _normalize_allergy_text(
+                data["allergen_name"],
+                field_name="allergen_name",
+                required=True,
+            )
+            or ""
+        )
+
+    if "allergen_code" in data:
+        proposed_code = _normalize_allergy_text(
+            data["allergen_code"],
+            field_name="allergen_code",
+        )
+
+    if "allergen_type" in data:
+        proposed_type = _coerce_allergy_choice(
+            data["allergen_type"],
+            field_name="allergen_type",
+            allowed={
+                "drug",
+                "food",
+                "environmental",
+                "latex",
+                "biologic",
+                "other",
+            },
+        )
+
+    duplicate = _find_duplicate_active_allergy(
+        clinic_id=patient.clinic_id,
+        patient_id=patient.id,
+        allergen_name=proposed_name,
+        allergen_code=proposed_code,
+        allergen_type=proposed_type,
+        exclude_allergy_id=record.id,
+    )
+
+    if (
+        record.clinical_status == "active"
+        and record.verification_status != "refuted"
+        and duplicate is not None
+    ):
+        raise ConflictError(
+            "An active non-refuted allergy with the same "
+            "allergen identity already exists"
+        )
+
+    normalized = {}
+
+    for field, value in data.items():
+        if field == "allergen_name":
+            normalized[field] = proposed_name
+        elif field == "allergen_code":
+            normalized[field] = proposed_code
+        elif field == "allergen_type":
+            normalized[field] = proposed_type
+        elif field in {
+            "reaction",
+            "notes",
+        }:
+            normalized[field] = _normalize_allergy_text(
+                value,
+                field_name=field,
+            )
+        elif field == "severity":
+            normalized[field] = _coerce_allergy_choice(
+                value,
+                field_name="severity",
+                allowed={
+                    "unknown",
+                    "mild",
+                    "moderate",
+                    "severe",
+                    "life_threatening",
+                },
+            )
+        elif field == "onset_at":
+            normalized[field] = _normalize_allergy_datetime(
+                value,
+                field_name="onset_at",
+            )
+
+    changed_fields = {}
+
+    for field, value in normalized.items():
+        old_value = getattr(
+            record,
+            field,
+        )
+
+        if old_value != value:
+            changed_fields[field] = {
+                "old": old_value,
+                "new": value,
+            }
+
+            setattr(
+                record,
+                field,
+                value,
+            )
+
+    if changed_fields:
+        record.updated_at = _utcnow()
+
+        _audit(
+            actor_id=actor_id,
+            clinic_id=patient.clinic_id,
+            action=AuditAction.UPDATE,
+            entity_type="patient_allergy",
+            entity_id=record.id,
+            description=(
+                f"Updated allergy {record.id} "
+                f"for patient {patient.id}"
+            ),
+            changes={
+                "clinic_id": patient.clinic_id,
+                "patient_id": patient.id,
+                "changed_fields": changed_fields,
+            },
+        )
+
+    return record
+
+
+@transactional
+def transition_patient_allergy_status(
+    *,
+    clinic_id: int,
+    patient_id: int,
+    allergy_id: int,
+    clinical_status: Optional[str] = None,
+    verification_status: Optional[str] = None,
+    reason: str,
+    actor_id: Optional[int] = None,
+) -> PatientAllergy:
+    patient = _get_patient_for_clinic_or_404(
+        clinic_id,
+        patient_id,
+    )
+
+    ensure_clinic_active(
+        patient.clinic_id
+    )
+
+    record = _get_allergy_or_404(
+        clinic_id=patient.clinic_id,
+        patient_id=patient.id,
+        allergy_id=allergy_id,
+    )
+
+    normalized_reason = (
+        _normalize_allergy_text(
+            reason,
+            field_name="reason",
+            required=True,
+        )
+        or ""
+    )
+
+    next_clinical_status = record.clinical_status
+    next_verification_status = record.verification_status
+
+    if clinical_status is not None:
+        next_clinical_status = _coerce_allergy_choice(
+            clinical_status,
+            field_name="clinical_status",
+            allowed={
+                "active",
+                "inactive",
+                "resolved",
+            },
+        )
+
+    if verification_status is not None:
+        next_verification_status = _coerce_allergy_choice(
+            verification_status,
+            field_name="verification_status",
+            allowed={
+                "unconfirmed",
+                "confirmed",
+                "refuted",
+            },
+        )
+
+    if (
+        clinical_status is None
+        and verification_status is None
+    ):
+        raise ValidationError(
+            "At least one allergy status must change"
+        )
+
+    if next_verification_status == "refuted":
+        next_clinical_status = "inactive"
+
+    if (
+        next_clinical_status == record.clinical_status
+        and next_verification_status
+        == record.verification_status
+    ):
+        raise ConflictError(
+            "Allergy status transition does not change state"
+        )
+
+    if (
+        next_clinical_status == "active"
+        and next_verification_status != "refuted"
+    ):
+        duplicate = _find_duplicate_active_allergy(
+            clinic_id=patient.clinic_id,
+            patient_id=patient.id,
+            allergen_name=record.allergen_name,
+            allergen_code=record.allergen_code,
+            allergen_type=record.allergen_type,
+            exclude_allergy_id=record.id,
+        )
+
+        if duplicate is not None:
+            raise ConflictError(
+                "Cannot activate allergy because an active "
+                "non-refuted duplicate already exists"
+            )
+
+    old_clinical_status = record.clinical_status
+    old_verification_status = record.verification_status
+
+    record.clinical_status = next_clinical_status
+    record.verification_status = (
+        next_verification_status
+    )
+    record.updated_at = _utcnow()
+
+    _audit(
+        actor_id=actor_id,
+        clinic_id=patient.clinic_id,
+        action=AuditAction.UPDATE,
+        entity_type="patient_allergy",
+        entity_id=record.id,
+        description=(
+            f"Transitioned allergy {record.id} "
+            f"for patient {patient.id}"
+        ),
+        changes={
+            "clinic_id": patient.clinic_id,
+            "patient_id": patient.id,
+            "clinical_status": {
+                "old": old_clinical_status,
+                "new": record.clinical_status,
+            },
+            "verification_status": {
+                "old": old_verification_status,
+                "new": record.verification_status,
+            },
+            "reason": normalized_reason,
+        },
+    )
+
+    return record

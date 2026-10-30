@@ -4,6 +4,10 @@ from sqlalchemy import CheckConstraint, Index
 
 from app.extensions import db
 from app.core.enums.patient_enums import (
+    AllergyClinicalStatus,
+    AllergySeverity,
+    AllergyType,
+    AllergyVerificationStatus,
     BloodType,
     FamilyRelation,
     Gender,
@@ -225,6 +229,13 @@ class Patient(db.Model):
         back_populates="patient",
     )
 
+    allergy_records = db.relationship(
+        "PatientAllergy",
+        back_populates="patient",
+        cascade="all, delete-orphan",
+        order_by="PatientAllergy.recorded_at.desc()",
+    )
+
     admissions = db.relationship(
         "Admission",
         back_populates="patient",
@@ -251,6 +262,170 @@ class Patient(db.Model):
             f"{self.last_name} ({self.patient_number})>"
         )
 
+
+class PatientAllergy(db.Model):
+    __tablename__ = "patient_allergies"
+
+    __table_args__ = (
+        Index(
+            "ix_patient_allergies_clinic_patient_status",
+            "clinic_id",
+            "patient_id",
+            "clinical_status",
+            "verification_status",
+            "id",
+        ),
+        Index(
+            "ix_patient_allergies_patient_allergen",
+            "patient_id",
+            "allergen_name",
+            "allergen_code",
+            "id",
+        ),
+        CheckConstraint(
+            "length(trim(allergen_name)) > 0",
+            name="ck_patient_allergies_name_nonempty",
+        ),
+        CheckConstraint(
+            "allergen_type IN "
+            "('drug', 'food', 'environmental', "
+            "'latex', 'biologic', 'other')",
+            name="ck_patient_allergies_type",
+        ),
+        CheckConstraint(
+            "severity IN "
+            "('unknown', 'mild', 'moderate', "
+            "'severe', 'life_threatening')",
+            name="ck_patient_allergies_severity",
+        ),
+        CheckConstraint(
+            "clinical_status IN "
+            "('active', 'inactive', 'resolved')",
+            name="ck_patient_allergies_clinical_status",
+        ),
+        CheckConstraint(
+            "verification_status IN "
+            "('unconfirmed', 'confirmed', 'refuted')",
+            name="ck_patient_allergies_verification_status",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    clinic_id = db.Column(
+        db.Integer,
+        db.ForeignKey("clinics.id"),
+        nullable=False,
+        index=True,
+    )
+
+    patient_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "patients.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    allergen_name = db.Column(
+        db.String(255),
+        nullable=False,
+    )
+
+    allergen_code = db.Column(
+        db.String(64),
+        nullable=True,
+        index=True,
+    )
+
+    allergen_type = db.Column(
+        db.String(32),
+        default=AllergyType.OTHER.value,
+        nullable=False,
+    )
+
+    reaction = db.Column(
+        db.String(500),
+        nullable=True,
+    )
+
+    severity = db.Column(
+        db.String(32),
+        default=AllergySeverity.UNKNOWN.value,
+        nullable=False,
+    )
+
+    clinical_status = db.Column(
+        db.String(16),
+        default=AllergyClinicalStatus.ACTIVE.value,
+        nullable=False,
+        index=True,
+    )
+
+    verification_status = db.Column(
+        db.String(16),
+        default=AllergyVerificationStatus.UNCONFIRMED.value,
+        nullable=False,
+        index=True,
+    )
+
+    onset_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=True,
+    )
+
+    recorded_at = db.Column(
+        db.DateTime(timezone=True),
+        default=_utcnow,
+        nullable=False,
+        index=True,
+    )
+
+    recorded_by_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "staff.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    notes = db.Column(
+        db.String(1000),
+        nullable=True,
+    )
+
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        default=_utcnow,
+        nullable=False,
+    )
+
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        default=_utcnow,
+        onupdate=_utcnow,
+        nullable=False,
+    )
+
+    patient = db.relationship(
+        "Patient",
+        back_populates="allergy_records",
+    )
+
+    recorded_by = db.relationship(
+        "Staff",
+        foreign_keys=[recorded_by_id],
+    )
+
+    def __repr__(self):
+        return (
+            f"<PatientAllergy "
+            f"{self.patient_id} {self.allergen_name}>"
+        )
 
 class PatientFamilyMember(db.Model):
     __tablename__ = "patient_family_members"

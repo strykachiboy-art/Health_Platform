@@ -25,3 +25,31 @@ class FamilyRelation(str, Enum):
     SIBLING = "sibling"
     GUARDIAN = "guardian"
     OTHER = "other"
+
+class AllergyType(str, Enum):
+    DRUG = "drug"
+    FOOD = "food"
+    ENVIRONMENTAL = "environmental"
+    LATEX = "latex"
+    BIOLOGIC = "biologic"
+    OTHER = "other"
+
+
+class AllergySeverity(str, Enum):
+    UNKNOWN = "unknown"
+    MILD = "mild"
+    MODERATE = "moderate"
+    SEVERE = "severe"
+    LIFE_THREATENING = "life_threatening"
+
+
+class AllergyClinicalStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    RESOLVED = "resolved"
+
+
+class AllergyVerificationStatus(str, Enum):
+    UNCONFIRMED = "unconfirmed"
+    CONFIRMED = "confirmed"
+    REFUTED = "refuted"
