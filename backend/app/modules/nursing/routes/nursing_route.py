@@ -23,6 +23,7 @@ from app.modules.nursing.schemas.nursing_schema import (
     NursingHandoffCreateSchema,
     NursingHandoffListResponseSchema,
     NursingHandoffResponseSchema,
+    NursingHandoffSummaryResponseSchema,
     NursingHandoffUpdateSchema,
     NursingNoteCreateSchema,
     NursingNoteListResponseSchema,
@@ -43,6 +44,7 @@ from app.modules.nursing.services.nursing_service import (
     get_care_plan,
     get_care_task,
     get_handoff,
+    get_handoff_summary,
     get_nursing_note,
     hold_care_plan,
     list_care_plans,
@@ -487,6 +489,23 @@ def list_handoffs_route(admission_id: int):
 def get_handoff_route(handoff_id: int):
     handoff = get_handoff(handoff_id, clinic_id=_current_clinic_id())
     return jsonify(_serialize(NursingHandoffResponseSchema, handoff)), 200
+
+
+@nursing_bp.get("/handoffs/<int:handoff_id>/summary")
+@role_required(*NURSING_VIEW_ROLES)
+def get_handoff_summary_route(handoff_id: int):
+    summary = get_handoff_summary(
+        handoff_id,
+        clinic_id=_current_clinic_id(),
+    )
+
+    payload = (
+        NursingHandoffSummaryResponseSchema
+        .model_validate(summary)
+        .model_dump(mode="json")
+    )
+
+    return jsonify(payload), 200
 
 
 @nursing_bp.patch("/handoffs/<int:handoff_id>")

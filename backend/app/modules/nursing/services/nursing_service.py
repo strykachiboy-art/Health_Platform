@@ -2,12 +2,24 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from app.extensions import db
 
 from app.core.audit.services.audit_service import create_audit_log
 from app.core.enums.audit_enums import AuditAction
+from app.core.enums.clinical_safety_enums import (
+    ClinicalAlertStatus,
+    ClinicalRuleSeverity,
+)
+from app.core.enums.consultation_enums import ConsultationStatus
+from app.core.enums.emar_enums import MedicationAdministrationStatus
+from app.core.enums.lab_enums import LabOrderStatus
+from app.core.enums.patient_enums import (
+    AllergyClinicalStatus,
+    AllergyVerificationStatus,
+)
+from app.core.enums.prescription_enums import PrescriptionStatus
 from app.core.enums.nursing_enums import (
     NursingCarePlanStatus,
     NursingCareTaskPriority,
@@ -29,6 +41,16 @@ from app.core.idempotency.services.idempotency_service import (
 )
 from app.core.utils.decorators import transactional
 
+from app.core.clinical_safety.models.clinical_alert_model import ClinicalAlert
+from app.modules.consultation.models.consultation_model import Consultation
+from app.modules.emar.models.emar_model import MedicationAdministration
+from app.modules.lab.models.lab_model import LabOrder
+from app.modules.patient.models.patient_model import Patient, PatientAllergy
+from app.modules.pharmacy.models.pharmacy_model import Drug
+from app.modules.prescription.models.prescription_model import (
+    Prescription,
+    PrescriptionItem,
+)
 from app.modules.staff.models.staff_model import Staff
 from app.modules.ward.models.ward_model import (
     Admission,
@@ -2104,6 +2126,498 @@ def list_handoffs(
             )
         ).scalars().all()
     )
+
+
+def _enum_value(value):
+    if value is None:
+        return None
+    return getattr(value, "value", value)
+
+
+def _highest_task_priority(
+    tasks: list[NursingCareTask],
+):
+    rank = {
+        NursingCareTaskPriority.ROUTINE: 1,
+        NursingCareTaskPriority.HIGH: 2,
+        NursingCareTaskPriority.URGENT: 3,
+    }
+
+    if not tasks:
+        return None
+
+    return max(
+        tasks,
+        key=lambda item: rank[item.priority],
+    ).priority.value
+
+
+def get_handoff_summary(
+    handoff_id: int,
+    *,
+    clinic_id: int,
+) -> dict:
+    handoff = _get_handoff(
+        handoff_id,
+        clinic_id,
+    )
+
+    admission = _get_admission(
+        handoff.admission_id,
+        clinic_id,
+        require_active=False,
+    )
+
+    patient = db.session.execute(
+        select(Patient).where(
+            Patient.id == handoff.patient_id,
+            Patient.clinic_id == clinic_id,
+        )
+    ).scalar_one_or_none()
+
+    if patient is None:
+        raise ConflictError(
+            "Nursing handoff patient context mismatch"
+        )
+
+    bed = db.session.get(
+        Bed,
+        admission.bed_id,
+    )
+
+    if bed is None:
+        raise ConflictError(
+            "Admission bed could not be resolved"
+        )
+
+    ward = db.session.get(
+        Ward,
+        bed.ward_id,
+    )
+
+    if (
+        ward is None
+        or ward.clinic_id != clinic_id
+    ):
+        raise ConflictError(
+            "Admission ward context mismatch"
+        )
+
+    diagnoses = list(
+        db.session.execute(
+            select(Consultation)
+            .where(
+                Consultation.clinic_id == clinic_id,
+                Consultation.patient_id == patient.id,
+                Consultation.status
+                != ConsultationStatus.CANCELLED,
+                Consultation.diagnosis.is_not(None),
+                Consultation.diagnosis != "",
+            )
+            .order_by(
+                Consultation.started_at.desc(),
+                Consultation.id.desc(),
+            )
+            .limit(10)
+        ).scalars().all()
+    )
+
+    allergies = list(
+        db.session.execute(
+            select(PatientAllergy)
+            .where(
+                PatientAllergy.clinic_id == clinic_id,
+                PatientAllergy.patient_id == patient.id,
+                PatientAllergy.clinical_status
+                == AllergyClinicalStatus.ACTIVE.value,
+                PatientAllergy.verification_status
+                != AllergyVerificationStatus.REFUTED.value,
+            )
+            .order_by(
+                PatientAllergy.recorded_at.desc(),
+                PatientAllergy.id.desc(),
+            )
+        ).scalars().all()
+    )
+
+    medication_rows = list(
+        db.session.execute(
+            select(
+                Prescription,
+                PrescriptionItem,
+                Drug,
+            )
+            .join(
+                PrescriptionItem,
+                PrescriptionItem.prescription_id
+                == Prescription.id,
+            )
+            .join(
+                Drug,
+                Drug.id
+                == PrescriptionItem.drug_id,
+            )
+            .where(
+                Prescription.clinic_id == clinic_id,
+                Prescription.patient_id == patient.id,
+                Prescription.status
+                == PrescriptionStatus.ACTIVE,
+            )
+            .order_by(
+                PrescriptionItem.ordered_at.desc(),
+                PrescriptionItem.id.desc(),
+            )
+        ).all()
+    )
+
+    administration_rows = list(
+        db.session.execute(
+            select(
+                MedicationAdministration,
+                PrescriptionItem,
+                Drug,
+            )
+            .join(
+                PrescriptionItem,
+                PrescriptionItem.id
+                == MedicationAdministration.prescription_item_id,
+            )
+            .join(
+                Drug,
+                Drug.id
+                == PrescriptionItem.drug_id,
+            )
+            .where(
+                MedicationAdministration.clinic_id
+                == clinic_id,
+                MedicationAdministration.patient_id
+                == patient.id,
+                MedicationAdministration.admission_id
+                == admission.id,
+                or_(
+                    MedicationAdministration.status
+                    == MedicationAdministrationStatus.DUE,
+                    and_(
+                        MedicationAdministration.status
+                        == MedicationAdministrationStatus.SCHEDULED,
+                        MedicationAdministration.scheduled_at
+                        >= handoff.shift_start_at,
+                        MedicationAdministration.scheduled_at
+                        <= handoff.shift_end_at,
+                    ),
+                ),
+            )
+            .order_by(
+                MedicationAdministration.scheduled_at.asc(),
+                MedicationAdministration.id.asc(),
+            )
+        ).all()
+    )
+
+    pending_lab_orders = list(
+        db.session.execute(
+            select(LabOrder)
+            .where(
+                LabOrder.clinic_id == clinic_id,
+                LabOrder.patient_id == patient.id,
+                LabOrder.status.in_(
+                    (
+                        LabOrderStatus.ORDERED,
+                        LabOrderStatus.SAMPLE_COLLECTED,
+                        LabOrderStatus.IN_PROGRESS,
+                    )
+                ),
+            )
+            .order_by(
+                LabOrder.created_at.desc(),
+                LabOrder.id.desc(),
+            )
+            .limit(20)
+        ).scalars().all()
+    )
+
+    open_tasks = list(
+        db.session.execute(
+            select(NursingCareTask)
+            .where(
+                NursingCareTask.clinic_id == clinic_id,
+                NursingCareTask.patient_id == patient.id,
+                NursingCareTask.admission_id == admission.id,
+                NursingCareTask.status.in_(
+                    (
+                        NursingCareTaskStatus.PENDING,
+                        NursingCareTaskStatus.IN_PROGRESS,
+                    )
+                ),
+            )
+            .order_by(
+                NursingCareTask.due_at.asc(),
+                NursingCareTask.id.asc(),
+            )
+        ).scalars().all()
+    )
+
+    care_plans = list(
+        db.session.execute(
+            select(NursingCarePlan)
+            .where(
+                NursingCarePlan.clinic_id == clinic_id,
+                NursingCarePlan.patient_id == patient.id,
+                NursingCarePlan.admission_id == admission.id,
+                NursingCarePlan.status.in_(
+                    (
+                        NursingCarePlanStatus.ACTIVE,
+                        NursingCarePlanStatus.ON_HOLD,
+                    )
+                ),
+            )
+            .order_by(
+                NursingCarePlan.started_at.desc(),
+                NursingCarePlan.id.desc(),
+            )
+        ).scalars().all()
+    )
+
+    tasks_by_plan: dict[int, list[NursingCareTask]] = {}
+
+    for task in open_tasks:
+        tasks_by_plan.setdefault(
+            task.care_plan_id,
+            [],
+        ).append(task)
+
+    critical_alerts = list(
+        db.session.execute(
+            select(ClinicalAlert)
+            .where(
+                ClinicalAlert.clinic_id == clinic_id,
+                ClinicalAlert.patient_id == patient.id,
+                ClinicalAlert.status.in_(
+                    (
+                        ClinicalAlertStatus.OPEN,
+                        ClinicalAlertStatus.ACKNOWLEDGED,
+                    )
+                ),
+                ClinicalAlert.severity.in_(
+                    (
+                        ClinicalRuleSeverity.HIGH,
+                        ClinicalRuleSeverity.CRITICAL,
+                    )
+                ),
+            )
+            .order_by(
+                ClinicalAlert.generated_at.desc(),
+                ClinicalAlert.id.desc(),
+            )
+            .limit(20)
+        ).scalars().all()
+    )
+
+    recent_notes = list(
+        db.session.execute(
+            select(NursingNote)
+            .where(
+                NursingNote.clinic_id == clinic_id,
+                NursingNote.patient_id == patient.id,
+                NursingNote.admission_id == admission.id,
+                NursingNote.status
+                == NursingNoteStatus.SIGNED,
+            )
+            .order_by(
+                NursingNote.observed_at.desc(),
+                NursingNote.id.desc(),
+            )
+            .limit(10)
+        ).scalars().all()
+    )
+
+    return {
+        "generated_at": _utcnow(),
+        "handoff": handoff,
+        "patient": {
+            "id": patient.id,
+            "patient_number": patient.patient_number,
+            "first_name": patient.first_name,
+            "last_name": patient.last_name,
+            "date_of_birth": patient.date_of_birth,
+            "gender": _enum_value(patient.gender),
+        },
+        "admission": {
+            "id": admission.id,
+            "status": _enum_value(admission.status),
+            "admitted_at": admission.admitted_at,
+            "ward_id": ward.id,
+            "ward_name": ward.name,
+            "ward_type": _enum_value(ward.ward_type),
+            "bed_id": bed.id,
+            "bed_number": bed.bed_number,
+        },
+        "active_diagnoses": [
+            {
+                "consultation_id": item.id,
+                "icd10_code": item.icd10_code,
+                "diagnosis": item.diagnosis,
+                "consultation_status": _enum_value(
+                    item.status
+                ),
+                "started_at": item.started_at,
+            }
+            for item in diagnoses
+        ],
+        "allergies": [
+            {
+                "id": item.id,
+                "allergen_code": item.allergen_code,
+                "allergen_name": item.allergen_name,
+                "allergen_type": item.allergen_type,
+                "reaction": item.reaction,
+                "severity": item.severity,
+                "verification_status": (
+                    item.verification_status
+                ),
+            }
+            for item in allergies
+        ],
+        "active_medication_orders": [
+            {
+                "prescription_id": prescription.id,
+                "prescription_item_id": item.id,
+                "drug_id": drug.id,
+                "drug_name": drug.name,
+                "generic_name": drug.generic_name,
+                "dose_value": item.dose_value,
+                "dose_unit": item.dose_unit,
+                "route_code": item.route_code,
+                "frequency_code": item.frequency_code,
+                "order_priority": item.order_priority,
+                "order_type": item.order_type,
+                "is_prn": item.is_prn,
+                "start_at": item.start_at,
+                "end_at": item.end_at,
+                "ordered_at": item.ordered_at,
+            }
+            for (
+                prescription,
+                item,
+                drug,
+            ) in medication_rows
+        ],
+        "due_medication_administrations": [
+            {
+                "id": administration.id,
+                "prescription_item_id": (
+                    administration.prescription_item_id
+                ),
+                "drug_id": drug.id,
+                "drug_name": drug.name,
+                "scheduled_at": administration.scheduled_at,
+                "dose_value": administration.dose_value,
+                "dose_unit": administration.dose_unit,
+                "route_code": administration.route_code,
+                "status": _enum_value(
+                    administration.status
+                ),
+            }
+            for (
+                administration,
+                _item,
+                drug,
+            ) in administration_rows
+        ],
+        "pending_lab_orders": [
+            {
+                "id": order.id,
+                "status": _enum_value(order.status),
+                "created_at": order.created_at,
+                "results": [
+                    {
+                        "item_id": item.id,
+                        "test_id": item.test_id,
+                        "test_name": item.test.name,
+                        "result_value": item.result_value,
+                        "flag": _enum_value(item.flag),
+                        "resulted_at": item.resulted_at,
+                    }
+                    for item in sorted(
+                        order.items,
+                        key=lambda row: row.id,
+                    )
+                ],
+            }
+            for order in pending_lab_orders
+        ],
+        "care_plan_priorities": [
+            {
+                "id": plan.id,
+                "title": plan.title,
+                "problem": plan.problem,
+                "goal": plan.goal,
+                "status": _enum_value(plan.status),
+                "highest_open_task_priority": (
+                    _highest_task_priority(
+                        tasks_by_plan.get(
+                            plan.id,
+                            [],
+                        )
+                    )
+                ),
+                "open_task_count": len(
+                    tasks_by_plan.get(
+                        plan.id,
+                        [],
+                    )
+                ),
+            }
+            for plan in care_plans
+        ],
+        "critical_alerts": [
+            {
+                "id": alert.id,
+                "severity": _enum_value(
+                    alert.severity
+                ),
+                "action": _enum_value(
+                    alert.action
+                ),
+                "status": _enum_value(
+                    alert.status
+                ),
+                "title": alert.title,
+                "message": alert.message,
+                "generated_at": alert.generated_at,
+            }
+            for alert in critical_alerts
+        ],
+        "tasks": [
+            {
+                "id": task.id,
+                "care_plan_id": task.care_plan_id,
+                "description": task.description,
+                "priority": _enum_value(task.priority),
+                "status": _enum_value(task.status),
+                "due_at": task.due_at,
+                "assigned_to_staff_id": (
+                    task.assigned_to_staff_id
+                ),
+            }
+            for task in open_tasks
+        ],
+        "recent_significant_notes": [
+            {
+                "id": note.id,
+                "note_type": _enum_value(
+                    note.note_type
+                ),
+                "note_text": note.note_text,
+                "observed_at": note.observed_at,
+                "signed_at": note.signed_at,
+                "author_staff_id": (
+                    note.author_staff_id
+                ),
+            }
+            for note in recent_notes
+        ],
+    }
 
 
 @transactional

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -190,3 +191,37 @@ class NursingHandoffResponseSchema(_ResponseModel):
 class NursingHandoffListResponseSchema(_ResponseModel):
     items: list[NursingHandoffResponseSchema] = Field(default_factory=list)
     total: int = Field(..., ge=0)
+
+
+class NursingHandoffSummaryResponseSchema(_ResponseModel):
+    generated_at: datetime
+    handoff: NursingHandoffResponseSchema
+    patient: dict[str, Any]
+    admission: dict[str, Any]
+    active_diagnoses: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    allergies: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    active_medication_orders: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    due_medication_administrations: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    pending_lab_orders: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    care_plan_priorities: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    critical_alerts: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    tasks: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
+    recent_significant_notes: list[dict[str, Any]] = Field(
+        default_factory=list
+    )
