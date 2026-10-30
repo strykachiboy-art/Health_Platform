@@ -52,6 +52,9 @@ from app.modules.clinical_orders.schemas.nursing_order_schema import (
     NursingOrderListResponseSchema,
     NursingOrderResponseSchema,
 )
+from app.modules.clinical_orders.schemas.clinical_order_schema import (
+    ClinicalOrderListResponseSchema,
+)
 from app.modules.clinical_orders.services.imaging_order_service import (
     cancel_imaging_order,
     complete_imaging_order,
@@ -90,6 +93,9 @@ from app.modules.clinical_orders.services.nursing_order_service import (
     list_nursing_order_executions,
     list_nursing_orders,
     record_nursing_order_execution,
+)
+from app.modules.clinical_orders.services.unified_order_service import (
+    list_unified_clinical_orders,
 )
 
 
@@ -153,6 +159,12 @@ NURSING_ORDER_EXECUTION_ROLES = (
 )
 
 NURSING_ORDER_VIEW_ROLES = (
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
+)
+
+UNIFIED_CPOE_VIEW_ROLES = (
     Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
@@ -1002,3 +1014,31 @@ def cancel_nursing_order_route(
             order,
         ),
     }), 200
+
+@clinical_order_bp.get(
+    "/patients/<int:patient_id>"
+)
+@role_required(*UNIFIED_CPOE_VIEW_ROLES)
+def list_unified_clinical_orders_route(
+    patient_id: int,
+):
+    items = list_unified_clinical_orders(
+        patient_id=patient_id,
+        clinic_id=_clinic_id(),
+        order_type=request.args.get(
+            "order_type"
+        ),
+        status=request.args.get(
+            "status"
+        ),
+    )
+
+    payload = (
+        ClinicalOrderListResponseSchema(
+            items=items,
+            total=len(items),
+        )
+        .model_dump(mode="json")
+    )
+
+    return jsonify(payload), 200

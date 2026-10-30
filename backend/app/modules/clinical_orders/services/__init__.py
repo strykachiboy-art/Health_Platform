@@ -21,3 +21,4 @@ from app.modules.clinical_orders.services import procedure_order_service
 from app.modules.clinical_orders.services import blood_product_order_service
 from app.modules.clinical_orders.services import diet_order_service
 from app.modules.clinical_orders.services import nursing_order_service
+from app.modules.clinical_orders.services import unified_order_service
