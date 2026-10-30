@@ -27,6 +27,14 @@ from app.modules.clinical_orders.schemas.procedure_order_schema import (
     ProcedureOrderListResponseSchema,
     ProcedureOrderResponseSchema,
 )
+from app.modules.clinical_orders.schemas.blood_product_order_schema import (
+    BloodProductCancelSchema,
+    BloodProductCompatibilitySchema,
+    BloodProductFulfillSchema,
+    BloodProductOrderCreateSchema,
+    BloodProductOrderListResponseSchema,
+    BloodProductOrderResponseSchema,
+)
 from app.modules.clinical_orders.services.imaging_order_service import (
     cancel_imaging_order,
     complete_imaging_order,
@@ -41,6 +49,14 @@ from app.modules.clinical_orders.services.procedure_order_service import (
     get_procedure_order,
     list_procedure_orders,
     verify_procedure_consent,
+)
+from app.modules.clinical_orders.services.blood_product_order_service import (
+    cancel_blood_product_order,
+    create_blood_product_order,
+    fulfill_blood_product_order,
+    get_blood_product_order,
+    list_blood_product_orders,
+    verify_blood_product_compatibility,
 )
 
 
@@ -68,6 +84,21 @@ PROCEDURE_VIEW_ROLES = (
     Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
+)
+
+BLOOD_PRODUCT_ORDER_ROLES = (
+    Role.DOCTOR,
+)
+
+BLOOD_PRODUCT_VERIFY_ROLES = (
+    Role.LAB_TECHNICIAN,
+)
+
+BLOOD_PRODUCT_VIEW_ROLES = (
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
+    Role.LAB_TECHNICIAN,
 )
 
 
@@ -453,4 +484,138 @@ def complete_procedure_order_route(procedure_order_id: int):
     return jsonify({
         "message": "Procedure order completed",
         "order": _serialize(ProcedureOrderResponseSchema, order),
+    }), 200
+
+@clinical_order_bp.post("/blood-products")
+@role_required(*BLOOD_PRODUCT_ORDER_ROLES)
+def create_blood_product_order_route():
+    payload = BloodProductOrderCreateSchema.model_validate(_json_body())
+    order = create_blood_product_order(
+        admission_id=payload.admission_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        product_type=payload.product_type,
+        units_requested=payload.units_requested,
+        indication=payload.indication,
+        consultation_id=payload.consultation_id,
+        special_requirements=payload.special_requirements,
+        priority=payload.priority,
+        scheduled_at=payload.scheduled_at,
+    )
+    return jsonify({
+        "message": "Blood product order created",
+        "order": _serialize(BloodProductOrderResponseSchema, order),
+    }), 201
+
+
+@clinical_order_bp.get("/blood-products/<int:blood_product_order_id>")
+@role_required(*BLOOD_PRODUCT_VIEW_ROLES)
+def get_blood_product_order_route(blood_product_order_id: int):
+    order = get_blood_product_order(
+        blood_product_order_id,
+        clinic_id=_clinic_id(),
+    )
+    return jsonify(
+        _serialize(BloodProductOrderResponseSchema, order)
+    ), 200
+
+
+@clinical_order_bp.get("/blood-products")
+@role_required(*BLOOD_PRODUCT_VIEW_ROLES)
+def list_blood_product_orders_route():
+    raw_admission_id = request.args.get("admission_id")
+    try:
+        admission_id = int(raw_admission_id)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            "admission_id query parameter must be a positive integer"
+        ) from exc
+
+    if admission_id <= 0:
+        raise ValidationError(
+            "admission_id query parameter must be a positive integer"
+        )
+
+    items = list_blood_product_orders(
+        admission_id=admission_id,
+        clinic_id=_clinic_id(),
+    )
+    payload = {
+        "items": [
+            _serialize(BloodProductOrderResponseSchema, item)
+            for item in items
+        ],
+        "total": len(items),
+    }
+    return jsonify(
+        BloodProductOrderListResponseSchema
+        .model_validate(payload)
+        .model_dump(mode="json")
+    ), 200
+
+
+@clinical_order_bp.post(
+    "/blood-products/<int:blood_product_order_id>/verify-compatibility"
+)
+@role_required(*BLOOD_PRODUCT_VERIFY_ROLES)
+def verify_blood_product_compatibility_route(
+    blood_product_order_id: int,
+):
+    payload = BloodProductCompatibilitySchema.model_validate(
+        _json_body()
+    )
+    order = verify_blood_product_compatibility(
+        blood_product_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        emergency_release=payload.emergency_release,
+        crossmatch_reference=payload.crossmatch_reference,
+        product_blood_type=payload.product_blood_type,
+        notes=payload.notes,
+        emergency_release_reason=payload.emergency_release_reason,
+    )
+    return jsonify({
+        "message": "Blood product compatibility verified",
+        "order": _serialize(BloodProductOrderResponseSchema, order),
+    }), 200
+
+
+@clinical_order_bp.post(
+    "/blood-products/<int:blood_product_order_id>/fulfill"
+)
+@role_required(*BLOOD_PRODUCT_VERIFY_ROLES)
+def fulfill_blood_product_order_route(
+    blood_product_order_id: int,
+):
+    payload = BloodProductFulfillSchema.model_validate(_json_body())
+    order = fulfill_blood_product_order(
+        blood_product_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        units_issued=payload.units_issued,
+        fulfillment_note=payload.fulfillment_note,
+    )
+    return jsonify({
+        "message": "Blood product order fulfilled",
+        "order": _serialize(BloodProductOrderResponseSchema, order),
+    }), 200
+
+
+@clinical_order_bp.post(
+    "/blood-products/<int:blood_product_order_id>/cancel"
+)
+@role_required(*BLOOD_PRODUCT_ORDER_ROLES)
+def cancel_blood_product_order_route(
+    blood_product_order_id: int,
+):
+    payload = BloodProductCancelSchema.model_validate(_json_body())
+    order = cancel_blood_product_order(
+        blood_product_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        reason=payload.reason,
+    )
+    return jsonify({
+        "message": "Blood product order cancelled",
+        "order": _serialize(BloodProductOrderResponseSchema, order),
     }), 200
