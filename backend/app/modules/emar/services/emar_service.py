@@ -9,6 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from app.core.audit.services.audit_service import create_audit_log
 from app.core.enums.audit_enums import AuditAction
 from app.core.enums.emar_enums import MedicationAdministrationStatus
+from app.core.idempotency.services.idempotency_service import (
+    reserve_idempotency_operation,
+)
 from app.core.enums.prescription_enums import (
     MedicationOrderType,
     PrescriptionStatus,
@@ -187,16 +190,22 @@ def _get_active_admission(
     *,
     clinic_id: int,
     patient_id: int,
+    lock: bool = False,
 ) -> Admission:
     _validate_positive_id(
         admission_id,
         "admission_id",
     )
 
-    admission = db.session.get(
-        Admission,
-        admission_id,
+    query = Admission.query.filter(
+        Admission.id
+        == admission_id
     )
+
+    if lock:
+        query = query.with_for_update()
+
+    admission = query.first()
 
     if admission is None:
         raise NotFoundError(
@@ -286,23 +295,30 @@ def _get_authorized_actor(
 
     return staff
 
-
 def _get_order_context(
     prescription_item_id: int,
     *,
     clinic_id: int,
     patient_id: int,
     event_at: datetime,
+    lock: bool = False,
 ) -> tuple[Prescription, PrescriptionItem]:
     _validate_positive_id(
         prescription_item_id,
         "prescription_item_id",
     )
 
-    item = db.session.get(
-        PrescriptionItem,
-        prescription_item_id,
+    item_query = PrescriptionItem.query.filter(
+        PrescriptionItem.id
+        == prescription_item_id
     )
+
+    if lock:
+        item_query = (
+            item_query.with_for_update()
+        )
+
+    item = item_query.first()
 
     if item is None:
         raise NotFoundError(
@@ -310,7 +326,21 @@ def _get_order_context(
             f"{prescription_item_id} not found"
         )
 
-    prescription = item.prescription
+    prescription_query = (
+        Prescription.query.filter(
+            Prescription.id
+            == item.prescription_id
+        )
+    )
+
+    if lock:
+        prescription_query = (
+            prescription_query.with_for_update()
+        )
+
+    prescription = (
+        prescription_query.first()
+    )
 
     if prescription is None:
         raise ValidationError(
@@ -425,6 +455,7 @@ def _get_context_for_event(
     prescription_item_id: int,
     actor_staff_id: int,
     event_at: datetime,
+    lock: bool = False,
 ) -> tuple[
     Patient,
     Admission,
@@ -450,6 +481,7 @@ def _get_context_for_event(
         admission_id,
         clinic_id=clinic_id,
         patient_id=patient_id,
+        lock=lock,
     )
 
     actor = _get_authorized_actor(
@@ -462,6 +494,7 @@ def _get_context_for_event(
         clinic_id=clinic_id,
         patient_id=patient_id,
         event_at=event_at,
+        lock=lock,
     )
 
     return (
@@ -471,7 +504,6 @@ def _get_context_for_event(
         prescription,
         item,
     )
-
 
 def _audit_user_id(
     actor: Staff,
@@ -555,16 +587,27 @@ def _load_administration(
     administration_id: int,
     *,
     clinic_id: int,
+    lock: bool = False,
 ) -> MedicationAdministration:
     _validate_positive_id(
         administration_id,
         "administration_id",
     )
 
-    record = db.session.get(
-        MedicationAdministration,
-        administration_id,
+    query = (
+        MedicationAdministration.query
+        .filter(
+            MedicationAdministration.id
+            == administration_id,
+            MedicationAdministration.clinic_id
+            == clinic_id,
+        )
     )
+
+    if lock:
+        query = query.with_for_update()
+
+    record = query.first()
 
     if record is None:
         raise NotFoundError(
@@ -572,14 +615,53 @@ def _load_administration(
             f"{administration_id} not found"
         )
 
-    if record.clinic_id != clinic_id:
-        raise ValidationError(
-            "Medication administration does not "
-            "belong to the clinic"
-        )
-
     return record
 
+
+def _resolve_idempotent_administration_replay(
+    *,
+    idempotency_record,
+    clinic_id: int,
+    administration_id: int,
+) -> MedicationAdministration:
+    if (
+        idempotency_record.entity_type
+        != "MedicationAdministration"
+        or idempotency_record.entity_id
+        is None
+    ):
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "a completed medication administration",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    if (
+        idempotency_record.entity_id
+        != administration_id
+    ):
+        raise ConflictError(
+            "Idempotency record references a different "
+            "medication administration",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    existing = _load_administration(
+        idempotency_record.entity_id,
+        clinic_id=clinic_id,
+    )
+
+    if (
+        existing.status
+        != MedicationAdministrationStatus.ADMINISTERED
+    ):
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "a completed medication administration",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    return existing
 
 def _validate_pending_transition(
     record: MedicationAdministration,
@@ -607,6 +689,7 @@ def _revalidate_record_context(
             ),
             actor_staff_id=actor_staff_id,
             event_at=event_at,
+            lock=True,
         )
     )
 
@@ -623,7 +706,6 @@ def _revalidate_record_context(
         actor,
         item,
     )
-
 
 @transactional
 def schedule_medication_administration(
@@ -782,7 +864,11 @@ def administer_medication(
     actor_staff_id: int,
     administered_at: datetime | None = None,
     notes: str | None = None,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> MedicationAdministration:
+    requested_administered_at = administered_at
+
     administered_at = _normalize_event_time(
         administered_at,
         field_name="administered_at",
@@ -794,9 +880,40 @@ def administer_medication(
         max_length=4000,
     )
 
+    idempotency_record = None
+
+    if idempotency_key is not None:
+        if idempotency_user_id is None:
+            raise ValidationError(
+                "Idempotency user ID is required"
+            )
+
+        idempotency_record, created = (
+            reserve_idempotency_operation(
+                clinic_id=clinic_id,
+                user_id=idempotency_user_id,
+                operation="emar.administer",
+                idempotency_key=idempotency_key,
+                request_payload={
+                    "administration_id": administration_id,
+                    "actor_staff_id": actor_staff_id,
+                    "administered_at": requested_administered_at,
+                    "notes": notes,
+                },
+            )
+        )
+
+        if not created:
+            return _resolve_idempotent_administration_replay(
+                idempotency_record=idempotency_record,
+                clinic_id=clinic_id,
+                administration_id=administration_id,
+            )
+
     record = _load_administration(
         administration_id,
         clinic_id=clinic_id,
+        lock=True,
     )
 
     _validate_pending_transition(
@@ -808,6 +925,15 @@ def administer_medication(
         actor_staff_id=actor_staff_id,
         event_at=administered_at,
     )
+
+    if (
+        idempotency_user_id is not None
+        and actor.user_id != idempotency_user_id
+    ):
+        raise ValidationError(
+            "Idempotency user does not match "
+            "the medication administration actor"
+        )
 
     snapshot = _copy_order_snapshot(
         item
@@ -831,15 +957,10 @@ def administer_medication(
     old_status = record.status
 
     record.status = (
-        MedicationAdministrationStatus
-        .ADMINISTERED
+        MedicationAdministrationStatus.ADMINISTERED
     )
-    record.administered_at = (
-        administered_at
-    )
-    record.administered_by_staff_id = (
-        actor.id
-    )
+    record.administered_at = administered_at
+    record.administered_by_staff_id = actor.id
     record.notes = notes
 
     _audit_status_change(
@@ -852,8 +973,13 @@ def administer_medication(
         ),
     )
 
-    return record
+    if idempotency_record is not None:
+        idempotency_record.entity_type = (
+            "MedicationAdministration"
+        )
+        idempotency_record.entity_id = record.id
 
+    return record
 
 @transactional
 def administer_prn_medication(

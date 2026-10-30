@@ -110,6 +110,17 @@ def _patch_identity(
         lambda: 17,
     )
 
+    monkeypatch.setattr(
+        emar_routes,
+        "_current_user",
+        lambda: SimpleNamespace(
+            id=23,
+            staff=SimpleNamespace(
+                id=17,
+            ),
+        ),
+    )
+
 
 def test_schedule_schema_rejects_naive_datetime_and_extra_fields():
     with pytest.raises(
@@ -421,6 +432,9 @@ def test_transition_routes_are_wired(
         path,
         method="POST",
         json=payload,
+        headers={
+            "Idempotency-Key": "gate6-route-test",
+        },
     ):
         response, status = _raw(
             handler

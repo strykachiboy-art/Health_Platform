@@ -14,6 +14,9 @@ from app.core.auth.user.models.user_model import (
 )
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
+from app.core.idempotency.services.idempotency_service import (
+    normalize_idempotency_key,
+)
 from app.core.utils.decorators import (
     get_current_clinic_id,
     role_required,
@@ -82,6 +85,22 @@ def _json_body() -> dict:
 def _query_params() -> dict:
     return request.args.to_dict(
         flat=True
+    )
+
+
+def _required_idempotency_key() -> str:
+    raw_key = request.headers.get(
+        "Idempotency-Key"
+    )
+
+    if raw_key is None:
+        raise ValidationError(
+            "Idempotency-Key header is required "
+            "for medication administration"
+        )
+
+    return normalize_idempotency_key(
+        raw_key
     )
 
 
@@ -329,14 +348,26 @@ def administer_medication_route(
         )
     )
 
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
+
     record = administer_medication(
         administration_id=administration_id,
         clinic_id=_current_clinic_id(),
-        actor_staff_id=_current_staff_id(),
+        actor_staff_id=current_user.staff.id,
         administered_at=(
             payload.administered_at
         ),
         notes=payload.notes,
+        idempotency_key=(
+            _required_idempotency_key()
+        ),
+        idempotency_user_id=current_user.id,
     )
 
     return jsonify(
