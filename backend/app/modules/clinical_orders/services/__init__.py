@@ -16,3 +16,5 @@ __all__ = [
     "list_imaging_orders",
     "to_clinical_order_summary",
 ]
+
+from app.modules.clinical_orders.services import procedure_order_service

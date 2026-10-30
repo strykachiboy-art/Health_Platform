@@ -20,12 +20,27 @@ from app.modules.clinical_orders.schemas.imaging_order_schema import (
     ImagingOrderListResponseSchema,
     ImagingOrderResponseSchema,
 )
+from app.modules.clinical_orders.schemas.procedure_order_schema import (
+    ProcedureOrderCancelSchema,
+    ProcedureOrderCompleteSchema,
+    ProcedureOrderCreateSchema,
+    ProcedureOrderListResponseSchema,
+    ProcedureOrderResponseSchema,
+)
 from app.modules.clinical_orders.services.imaging_order_service import (
     cancel_imaging_order,
     complete_imaging_order,
     create_imaging_order,
     get_imaging_order,
     list_imaging_orders,
+)
+from app.modules.clinical_orders.services.procedure_order_service import (
+    cancel_procedure_order,
+    complete_procedure_order,
+    create_procedure_order,
+    get_procedure_order,
+    list_procedure_orders,
+    verify_procedure_consent,
 )
 
 
@@ -40,6 +55,16 @@ IMAGING_WRITE_ROLES = (
 )
 
 IMAGING_VIEW_ROLES = (
+    Role.ADMIN,
+    Role.DOCTOR,
+    Role.NURSE,
+)
+
+PROCEDURE_WRITE_ROLES = (
+    Role.DOCTOR,
+)
+
+PROCEDURE_VIEW_ROLES = (
     Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
@@ -304,3 +329,128 @@ def complete_imaging_order_route(
             ),
         }
     ), 200
+
+@clinical_order_bp.post("/procedures")
+@role_required(*PROCEDURE_WRITE_ROLES)
+def create_procedure_order_route():
+    payload = ProcedureOrderCreateSchema.model_validate(_json_body())
+    order = create_procedure_order(
+        admission_id=payload.admission_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        procedure_name=payload.procedure_name,
+        procedure_type=payload.procedure_type,
+        indication=payload.indication,
+        procedure_code=payload.procedure_code,
+        consultation_id=payload.consultation_id,
+        body_site=payload.body_site,
+        laterality=payload.laterality,
+        prep_instructions=payload.prep_instructions,
+        anesthesia_type=payload.anesthesia_type,
+        consent_required=payload.consent_required,
+        priority=payload.priority,
+        scheduled_at=payload.scheduled_at,
+    )
+    return jsonify({
+        "message": "Procedure order created",
+        "order": _serialize(ProcedureOrderResponseSchema, order),
+    }), 201
+
+
+@clinical_order_bp.get("/procedures/<int:procedure_order_id>")
+@role_required(*PROCEDURE_VIEW_ROLES)
+def get_procedure_order_route(procedure_order_id: int):
+    order = get_procedure_order(
+        procedure_order_id,
+        clinic_id=_clinic_id(),
+    )
+    return jsonify(
+        _serialize(ProcedureOrderResponseSchema, order)
+    ), 200
+
+
+@clinical_order_bp.get("/procedures")
+@role_required(*PROCEDURE_VIEW_ROLES)
+def list_procedure_orders_route():
+    raw_admission_id = request.args.get("admission_id")
+    try:
+        admission_id = int(raw_admission_id)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(
+            "admission_id query parameter must be a positive integer"
+        ) from exc
+    if admission_id <= 0:
+        raise ValidationError(
+            "admission_id query parameter must be a positive integer"
+        )
+
+    items = list_procedure_orders(
+        admission_id=admission_id,
+        clinic_id=_clinic_id(),
+    )
+    payload = {
+        "items": [
+            _serialize(ProcedureOrderResponseSchema, item)
+            for item in items
+        ],
+        "total": len(items),
+    }
+    return jsonify(
+        ProcedureOrderListResponseSchema
+        .model_validate(payload)
+        .model_dump(mode="json")
+    ), 200
+
+
+@clinical_order_bp.post(
+    "/procedures/<int:procedure_order_id>/verify-consent"
+)
+@role_required(*PROCEDURE_WRITE_ROLES)
+def verify_procedure_consent_route(procedure_order_id: int):
+    order = verify_procedure_consent(
+        procedure_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+    )
+    return jsonify({
+        "message": "Procedure consent verified",
+        "order": _serialize(ProcedureOrderResponseSchema, order),
+    }), 200
+
+
+@clinical_order_bp.post(
+    "/procedures/<int:procedure_order_id>/cancel"
+)
+@role_required(*PROCEDURE_WRITE_ROLES)
+def cancel_procedure_order_route(procedure_order_id: int):
+    payload = ProcedureOrderCancelSchema.model_validate(_json_body())
+    order = cancel_procedure_order(
+        procedure_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        reason=payload.reason,
+    )
+    return jsonify({
+        "message": "Procedure order cancelled",
+        "order": _serialize(ProcedureOrderResponseSchema, order),
+    }), 200
+
+
+@clinical_order_bp.post(
+    "/procedures/<int:procedure_order_id>/complete"
+)
+@role_required(*PROCEDURE_WRITE_ROLES)
+def complete_procedure_order_route(procedure_order_id: int):
+    payload = ProcedureOrderCompleteSchema.model_validate(_json_body())
+    order = complete_procedure_order(
+        procedure_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        procedure_note=payload.procedure_note,
+        outcome_summary=payload.outcome_summary,
+        performed_at=payload.performed_at,
+    )
+    return jsonify({
+        "message": "Procedure order completed",
+        "order": _serialize(ProcedureOrderResponseSchema, order),
+    }), 200
