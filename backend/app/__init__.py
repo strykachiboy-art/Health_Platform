@@ -334,6 +334,10 @@ def register_blueprints(app):
         nursing_bp,
     )
 
+    from app.modules.clinical_orders.routes.clinical_order_route import (
+        clinical_order_bp,
+    )
+
     from app.core.auth.user.routes.user_device_routes import (
         user_device_bp,
     )
@@ -415,6 +419,7 @@ def register_blueprints(app):
         staff_department_bp,
         ward_bp,
         nursing_bp,
+        clinical_order_bp,
         notification_bp,
         settings_bp,
         user_device_bp,

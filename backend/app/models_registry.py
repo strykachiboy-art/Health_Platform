@@ -93,6 +93,11 @@ from app.modules.nursing.models.nursing_model import (
     NursingHandoff,
 )
 
+# Clinical Orders
+from app.modules.clinical_orders.models.imaging_order_model import (
+    ImagingOrder,
+)
+
 # Inventory
 from app.modules.inventory.models.inventory_model import (
     InventoryItem,
@@ -251,6 +256,9 @@ __all__ = [
     "NursingCareTask",
     "NursingNote",
     "NursingHandoff",
+
+    # Clinical Orders
+    "ImagingOrder",
 
     # Inventory
     "InventoryItem",
