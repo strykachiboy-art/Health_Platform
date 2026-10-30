@@ -1278,6 +1278,409 @@ def list_prescriptions_for_patient(
 # Prescription creation
 # =====================================================================
 
+_CLINICAL_SAFETY_OUTCOME_RANK = {
+    "safe": 0,
+    "information": 1,
+    "warning": 2,
+    "acknowledgement_required": 3,
+    "justification_required": 4,
+    "blocked": 5,
+}
+
+
+def _normalize_clinical_safety_authorization(
+    *,
+    acknowledged: bool,
+    justification: str | None,
+) -> tuple[bool, str | None]:
+    if not isinstance(acknowledged, bool):
+        raise ValidationError(
+            "clinical_safety_acknowledged must be a boolean"
+        )
+
+    if justification is not None:
+        if not isinstance(justification, str):
+            raise ValidationError(
+                "clinical_safety_justification must be a string"
+            )
+
+        justification = justification.strip() or None
+
+        if (
+            justification is not None
+            and len(justification) > 2000
+        ):
+            raise ValidationError(
+                "clinical_safety_justification must not exceed "
+                "2000 characters"
+            )
+
+    return acknowledged, justification
+
+def _clinical_safety_outcome(evaluation) -> str:
+    outcome = getattr(evaluation, "outcome", None)
+
+    if isinstance(outcome, str) and outcome.strip():
+        return outcome.strip()
+
+    if bool(getattr(evaluation, "blocked", False)):
+        return "blocked"
+
+    if bool(getattr(evaluation, "requires_justification", False)):
+        return "justification_required"
+
+    if bool(getattr(evaluation, "requires_acknowledgement", False)):
+        return "acknowledgement_required"
+
+    return "safe"
+
+
+def _requires_clinical_safety_justification(
+    evaluation,
+) -> bool:
+    if bool(
+        getattr(
+            evaluation,
+            "requires_justification",
+            False,
+        )
+    ):
+        return True
+
+    if (
+        _clinical_safety_outcome(evaluation)
+        == "justification_required"
+    ):
+        return True
+
+    clinical_evaluation = getattr(
+        evaluation,
+        "clinical_safety",
+        evaluation,
+    )
+
+    for result in (
+        getattr(
+            clinical_evaluation,
+            "results",
+            (),
+        )
+        or ()
+    ):
+        if not bool(
+            _clinical_rule_value(
+                result,
+                "matched",
+            )
+        ):
+            continue
+
+        if (
+            _clinical_rule_value(
+                result,
+                "outcome",
+            )
+            == "justification_required"
+        ):
+            return True
+
+    return False
+
+def _requires_clinical_safety_acknowledgement(
+    evaluation,
+) -> bool:
+    if bool(
+        getattr(
+            evaluation,
+            "requires_acknowledgement",
+            False,
+        )
+    ):
+        return True
+
+    if (
+        _clinical_safety_outcome(evaluation)
+        == "acknowledgement_required"
+    ):
+        return True
+
+    clinical_evaluation = getattr(
+        evaluation,
+        "clinical_safety",
+        evaluation,
+    )
+
+    for result in (
+        getattr(
+            clinical_evaluation,
+            "results",
+            (),
+        )
+        or ()
+    ):
+        if not bool(
+            _clinical_rule_value(
+                result,
+                "matched",
+            )
+        ):
+            continue
+
+        if (
+            _clinical_rule_value(
+                result,
+                "outcome",
+            )
+            == "acknowledgement_required"
+        ):
+            return True
+
+    return False
+
+def _clinical_rule_value(result, key: str):
+    if isinstance(result, dict):
+        return result.get(key)
+
+    return getattr(result, key, None)
+
+
+def _matched_clinical_rule_summaries(evaluation) -> list[dict]:
+    clinical_evaluation = getattr(
+        evaluation,
+        "clinical_safety",
+        evaluation,
+    )
+
+    results = getattr(
+        clinical_evaluation,
+        "results",
+        (),
+    ) or ()
+
+    summaries: list[dict] = []
+
+    for result in results:
+        if not bool(
+            _clinical_rule_value(
+                result,
+                "matched",
+            )
+        ):
+            continue
+
+        summaries.append(
+            {
+                "rule_id": _clinical_rule_value(
+                    result,
+                    "rule_id",
+                ),
+                "rule_code": _clinical_rule_value(
+                    result,
+                    "rule_code",
+                ),
+                "rule_version": _clinical_rule_value(
+                    result,
+                    "rule_version",
+                ),
+                "severity": _clinical_rule_value(
+                    result,
+                    "severity",
+                ),
+                "action": _clinical_rule_value(
+                    result,
+                    "action",
+                ),
+                "outcome": _clinical_rule_value(
+                    result,
+                    "outcome",
+                ),
+                "reason": _clinical_rule_value(
+                    result,
+                    "reason",
+                ),
+            }
+        )
+
+    return summaries
+
+
+def _enforce_required_clinical_safety_actions(
+    *,
+    prescription_evaluation,
+    item_evaluations,
+    acknowledged: bool,
+    justification: str | None,
+) -> None:
+    evaluations = [
+        (None, prescription_evaluation)
+    ]
+
+    evaluations.extend(
+        (
+            index,
+            evaluation,
+        )
+        for index, evaluation in enumerate(
+            item_evaluations,
+            start=1,
+        )
+    )
+
+    for index, evaluation in evaluations:
+        if (
+            _requires_clinical_safety_justification(
+                evaluation
+            )
+            and justification is None
+        ):
+            if index is None:
+                raise ValidationError(
+                    "Prescription requires clinical safety justification "
+                    "before creation"
+                )
+
+            raise ValidationError(
+                f"Prescription item {index} requires clinical safety "
+                "justification before creation"
+            )
+
+    for index, evaluation in evaluations:
+        if (
+            _requires_clinical_safety_acknowledgement(
+                evaluation
+            )
+            and not acknowledged
+        ):
+            if index is None:
+                raise ValidationError(
+                    "Prescription requires clinical safety acknowledgement "
+                    "before creation"
+                )
+
+            raise ValidationError(
+                f"Prescription item {index} requires clinical safety "
+                "acknowledgement before creation"
+            )
+
+def _aggregate_prescription_clinical_safety_outcome(
+    *,
+    prescription_evaluation,
+    item_evaluations,
+) -> str:
+    outcomes = [
+        _clinical_safety_outcome(
+            prescription_evaluation
+        )
+    ]
+
+    outcomes.extend(
+        _clinical_safety_outcome(
+            evaluation
+        )
+        for evaluation in item_evaluations
+    )
+
+    return max(
+        outcomes,
+        key=lambda outcome: (
+            _CLINICAL_SAFETY_OUTCOME_RANK.get(
+                outcome,
+                -1,
+            )
+        ),
+    )
+
+
+def _build_prescription_clinical_safety_audit(
+    *,
+    evaluated_at: datetime,
+    prescription_evaluation,
+    item_evaluations,
+    items: list[dict],
+    acknowledged: bool,
+    justification: str | None,
+) -> dict:
+    item_payloads = []
+
+    evaluations = [
+        prescription_evaluation,
+        *item_evaluations,
+    ]
+
+    acknowledgement_required = any(
+        _requires_clinical_safety_acknowledgement(
+            evaluation
+        )
+        for evaluation in evaluations
+    )
+
+    justification_required = any(
+        _requires_clinical_safety_justification(
+            evaluation
+        )
+        for evaluation in evaluations
+    )
+
+    for index, evaluation in enumerate(
+        item_evaluations,
+        start=1,
+    ):
+        item = (
+            items[index - 1]
+            if index <= len(items)
+            else {}
+        )
+
+        item_payloads.append(
+            {
+                "item_index": index,
+                "drug_id": (
+                    item.get("drug_id")
+                    if isinstance(item, dict)
+                    else None
+                ),
+                "outcome": (
+                    _clinical_safety_outcome(
+                        evaluation
+                    )
+                ),
+                "matched_rules": (
+                    _matched_clinical_rule_summaries(
+                        evaluation
+                    )
+                ),
+            }
+        )
+
+    return {
+        "evaluated_at": evaluated_at.isoformat(),
+        "overall_outcome": (
+            _aggregate_prescription_clinical_safety_outcome(
+                prescription_evaluation=prescription_evaluation,
+                item_evaluations=item_evaluations,
+            )
+        ),
+        "authorization": {
+            "acknowledgement_required": acknowledgement_required,
+            "acknowledged": acknowledged,
+            "justification_required": justification_required,
+            "justification": justification,
+        },
+        "prescription_level": {
+            "outcome": (
+                _clinical_safety_outcome(
+                    prescription_evaluation
+                )
+            ),
+            "matched_rules": (
+                _matched_clinical_rule_summaries(
+                    prescription_evaluation
+                )
+            ),
+        },
+        "items": item_payloads,
+    }
+
 @transactional
 def create_prescription(
     clinic_id: int,
@@ -1289,6 +1692,8 @@ def create_prescription(
     notes: str | None = None,
     idempotency_key: str | None = None,
     idempotency_user_id: int | None = None,
+    clinical_safety_acknowledged: bool = False,
+    clinical_safety_justification: str | None = None,
 ) -> tuple[Prescription, list[dict]]:
     """
     Create a prescription for a patient.
@@ -1299,6 +1704,14 @@ def create_prescription(
     Returns:
         (prescription, interaction_warnings)
     """
+    (
+        clinical_safety_acknowledged,
+        clinical_safety_justification,
+    ) = _normalize_clinical_safety_authorization(
+        acknowledged=clinical_safety_acknowledged,
+        justification=clinical_safety_justification,
+    )
+
     idempotency_record = None
     if idempotency_key is not None:
         if idempotency_user_id is None:
@@ -1316,6 +1729,12 @@ def create_prescription(
                 "consultation_id": consultation_id,
                 "expires_at": expires_at,
                 "notes": notes,
+                "clinical_safety_acknowledged": (
+                    clinical_safety_acknowledged
+                ),
+                "clinical_safety_justification": (
+                    clinical_safety_justification
+                ),
             },
         )
 
@@ -1379,16 +1798,27 @@ def create_prescription(
         for drug in drugs
     ]
 
+    from app.core.clinical_safety.services.clinical_safety_context_service import (
+        build_clinical_safety_context,
+    )
     from app.core.clinical_safety.services.medication_safety_service import (
         evaluate_medication_safety,
+        evaluate_structured_medication_items,
     )
+
+    safety_evaluation_at = _utcnow()
+
+    safety_context = build_clinical_safety_context(
+        clinic_id=clinic_id,
+        patient_id=patient_id,
+        evaluation_at=safety_evaluation_at,
+    ).to_dict()
 
     safety_evaluation = evaluate_medication_safety(
         clinic_id=clinic_id,
         medication_ids=drug_ids,
-        context={
-            "patient_id": patient_id,
-        },
+        context=safety_context,
+        evaluation_at=safety_evaluation_at,
     )
 
     warnings = [
@@ -1400,6 +1830,44 @@ def create_prescription(
         raise ValidationError(
             "Prescription blocked by clinical safety rules"
         )
+
+    item_safety_evaluations = (
+        evaluate_structured_medication_items(
+            clinic_id=clinic_id,
+            medication_ids=drug_ids,
+            context=safety_context,
+            proposed_medications=items,
+            evaluation_at=safety_evaluation_at,
+        )
+    )
+
+    for index, item_evaluation in enumerate(
+        item_safety_evaluations,
+        start=1,
+    ):
+        if item_evaluation.blocked:
+            raise ValidationError(
+                f"Prescription item {index} blocked "
+                "by clinical safety rules"
+            )
+
+    _enforce_required_clinical_safety_actions(
+        prescription_evaluation=safety_evaluation,
+        item_evaluations=item_safety_evaluations,
+        acknowledged=clinical_safety_acknowledged,
+        justification=clinical_safety_justification,
+    )
+
+    clinical_safety_audit = (
+        _build_prescription_clinical_safety_audit(
+            evaluated_at=safety_evaluation_at,
+            prescription_evaluation=safety_evaluation,
+            item_evaluations=item_safety_evaluations,
+            items=items,
+            acknowledged=clinical_safety_acknowledged,
+            justification=clinical_safety_justification,
+        )
+    )
 
     if notes is not None:
         notes = notes.strip() or None
@@ -1495,6 +1963,7 @@ def create_prescription(
             "consultation_id": consultation_id,
             "drug_ids": drug_ids,
             "interaction_warnings": warnings,
+            "clinical_safety": clinical_safety_audit,
             "expires_at": (
                 expires_at.isoformat()
                 if expires_at

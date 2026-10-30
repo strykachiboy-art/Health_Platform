@@ -415,6 +415,12 @@ def create_prescription_route():
         "consultation_id": payload.consultation_id,
         "expires_at": payload.expires_at,
         "notes": payload.notes,
+        "clinical_safety_acknowledged": (
+            payload.clinical_safety_acknowledged
+        ),
+        "clinical_safety_justification": (
+            payload.clinical_safety_justification
+        ),
     }
 
     if idempotency_key is not None:

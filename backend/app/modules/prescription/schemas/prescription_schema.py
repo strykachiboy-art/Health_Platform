@@ -465,6 +465,23 @@ class PrescriptionCreateSchema(BaseModel):
         description="Additional prescription notes",
     )
 
+    clinical_safety_acknowledged: bool = Field(
+        default=False,
+        strict=True,
+        description=(
+            "Explicit acknowledgement of acknowledgement-required "
+            "clinical safety rules"
+        ),
+    )
+
+    clinical_safety_justification: str | None = Field(
+        default=None,
+        max_length=2000,
+        description=(
+            "Clinical justification when a safety rule requires one"
+        ),
+    )
+
     @field_validator("items")
     @classmethod
     def validate_unique_drugs(cls, value):
@@ -481,6 +498,25 @@ class PrescriptionCreateSchema(BaseModel):
             )
 
         return value
+
+    @field_validator(
+        "clinical_safety_justification",
+        mode="before",
+    )
+    @classmethod
+    def normalize_clinical_safety_justification(
+        cls,
+        value,
+    ):
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            return value
+
+        value = value.strip()
+
+        return value or None
 
     @field_validator("expires_at")
     @classmethod
