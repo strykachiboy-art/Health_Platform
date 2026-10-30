@@ -111,6 +111,11 @@ from app.modules.clinical_orders.models.nursing_order_model import (
     NursingOrderExecution,
 )
 
+# Clinical Records
+from app.modules.clinical_records.models.clinical_record_amendment_model import (
+    ClinicalRecordAmendment,
+)
+
 # Inventory
 from app.modules.inventory.models.inventory_model import (
     InventoryItem,
@@ -277,6 +282,9 @@ __all__ = [
     "DietOrder",
     "NursingOrder",
     "NursingOrderExecution",
+
+    # Clinical Records
+    "ClinicalRecordAmendment",
 
     # Inventory
     "InventoryItem",
