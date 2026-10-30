@@ -345,6 +345,446 @@ def _validate_expiry(
     return expires_at
 
 
+def _is_positive_number(
+    value,
+) -> bool:
+    return (
+        isinstance(
+            value,
+            (int, float),
+        )
+        and not isinstance(
+            value,
+            bool,
+        )
+        and value > 0
+    )
+
+
+def _validate_scheduled_times(
+    scheduled_times,
+    *,
+    item_index: int,
+) -> None:
+    if scheduled_times is None:
+        return
+
+    if not isinstance(
+        scheduled_times,
+        list,
+    ):
+        raise ValidationError(
+            f"Prescription item {item_index} "
+            "scheduled_times must be a list"
+        )
+
+    seen: set[str] = set()
+
+    for raw in scheduled_times:
+        if not isinstance(
+            raw,
+            str,
+        ):
+            raise ValidationError(
+                f"Prescription item {item_index} "
+                "scheduled_times entries must be strings"
+            )
+
+        candidate = raw.strip()
+        parts = candidate.split(":")
+
+        if (
+            len(parts) != 2
+            or len(parts[0]) != 2
+            or len(parts[1]) != 2
+            or not parts[0].isdigit()
+            or not parts[1].isdigit()
+        ):
+            raise ValidationError(
+                f"Prescription item {item_index} "
+                "scheduled_times entries must use HH:MM format"
+            )
+
+        hour = int(
+            parts[0]
+        )
+        minute = int(
+            parts[1]
+        )
+
+        if (
+            hour < 0
+            or hour > 23
+            or minute < 0
+            or minute > 59
+        ):
+            raise ValidationError(
+                f"Prescription item {item_index} "
+                "contains an invalid scheduled clock time"
+            )
+
+        normalized = (
+            f"{hour:02d}:{minute:02d}"
+        )
+
+        if normalized in seen:
+            raise ValidationError(
+                f"Prescription item {item_index} "
+                "scheduled_times cannot contain duplicates"
+            )
+
+        seen.add(
+            normalized
+        )
+
+
+def _validate_structured_datetime(
+    value,
+    *,
+    field_name: str,
+    item_index: int,
+) -> datetime | None:
+    if value is None:
+        return None
+
+    if not isinstance(
+        value,
+        datetime,
+    ):
+        raise ValidationError(
+            f"Prescription item {item_index} "
+            f"{field_name} must be a datetime"
+        )
+
+    if (
+        value.tzinfo is None
+        or value.utcoffset() is None
+    ):
+        raise ValidationError(
+            f"Prescription item {item_index} "
+            f"{field_name} must include timezone information"
+        )
+
+    return value.astimezone(
+        timezone.utc
+    )
+
+
+def _validate_structured_item(
+    entry: dict,
+    *,
+    drug_id: int,
+    item_index: int,
+) -> None:
+    dose_value = entry.get(
+        "dose_value"
+    )
+    dose_unit = entry.get(
+        "dose_unit"
+    )
+
+    if (
+        (dose_value is None)
+        != (dose_unit is None)
+    ):
+        raise ValidationError(
+            f"Structured dose for drug {drug_id} "
+            "requires dose_value and dose_unit together"
+        )
+
+    if (
+        dose_value is not None
+        and not _is_positive_number(
+            dose_value
+        )
+    ):
+        raise ValidationError(
+            f"dose_value for drug {drug_id} "
+            "must be greater than zero"
+        )
+
+    if dose_unit is not None:
+        if (
+            not isinstance(
+                dose_unit,
+                str,
+            )
+            or not dose_unit.strip()
+            or len(
+                dose_unit.strip()
+            ) > 32
+        ):
+            raise ValidationError(
+                f"dose_unit for drug {drug_id} is invalid"
+            )
+
+    route_code = entry.get(
+        "route_code"
+    )
+    route_display = entry.get(
+        "route_display"
+    )
+
+    if route_code is not None:
+        if (
+            not isinstance(
+                route_code,
+                str,
+            )
+            or not route_code.strip()
+            or len(
+                route_code.strip()
+            ) > 64
+        ):
+            raise ValidationError(
+                f"route_code for drug {drug_id} is invalid"
+            )
+
+    if route_display is not None:
+        if (
+            route_code is None
+        ):
+            raise ValidationError(
+                f"route_display for drug {drug_id} "
+                "requires route_code"
+            )
+
+        if (
+            not isinstance(
+                route_display,
+                str,
+            )
+            or not route_display.strip()
+            or len(
+                route_display.strip()
+            ) > 128
+        ):
+            raise ValidationError(
+                f"route_display for drug {drug_id} is invalid"
+            )
+
+    frequency_code = entry.get(
+        "frequency_code"
+    )
+
+    if frequency_code is not None:
+        if (
+            not isinstance(
+                frequency_code,
+                str,
+            )
+            or not frequency_code.strip()
+            or len(
+                frequency_code.strip()
+            ) > 64
+        ):
+            raise ValidationError(
+                f"frequency_code for drug {drug_id} is invalid"
+            )
+
+    frequency_interval = entry.get(
+        "frequency_interval"
+    )
+    frequency_interval_unit = entry.get(
+        "frequency_interval_unit"
+    )
+
+    if (
+        (frequency_interval is None)
+        != (frequency_interval_unit is None)
+    ):
+        raise ValidationError(
+            f"Structured frequency for drug {drug_id} "
+            "requires frequency_interval and "
+            "frequency_interval_unit together"
+        )
+
+    if frequency_interval is not None:
+        if (
+            not isinstance(
+                frequency_interval,
+                int,
+            )
+            or isinstance(
+                frequency_interval,
+                bool,
+            )
+            or frequency_interval <= 0
+        ):
+            raise ValidationError(
+                f"frequency_interval for drug {drug_id} "
+                "must be a positive integer"
+            )
+
+    if (
+        frequency_interval_unit is not None
+        and frequency_interval_unit
+        not in {
+            "minute",
+            "hour",
+            "day",
+            "week",
+        }
+    ):
+        raise ValidationError(
+            f"frequency_interval_unit for drug {drug_id} "
+            "is invalid"
+        )
+
+    scheduled_times = entry.get(
+        "scheduled_times"
+    )
+
+    _validate_scheduled_times(
+        scheduled_times,
+        item_index=item_index,
+    )
+
+    is_prn = entry.get(
+        "is_prn",
+        False,
+    )
+
+    if not isinstance(
+        is_prn,
+        bool,
+    ):
+        raise ValidationError(
+            f"is_prn for drug {drug_id} "
+            "must be boolean"
+        )
+
+    prn_reason = entry.get(
+        "prn_reason"
+    )
+
+    if is_prn:
+        if (
+            not isinstance(
+                prn_reason,
+                str,
+            )
+            or not prn_reason.strip()
+        ):
+            raise ValidationError(
+                f"PRN medication for drug {drug_id} "
+                "requires prn_reason"
+            )
+
+        if scheduled_times:
+            raise ValidationError(
+                f"PRN medication for drug {drug_id} "
+                "cannot define fixed scheduled_times"
+            )
+    elif prn_reason is not None:
+        raise ValidationError(
+            f"prn_reason for drug {drug_id} "
+            "requires is_prn=true"
+        )
+
+    max_single_dose = entry.get(
+        "max_single_dose"
+    )
+    max_daily_dose = entry.get(
+        "max_daily_dose"
+    )
+
+    for field_name, value in (
+        (
+            "max_single_dose",
+            max_single_dose,
+        ),
+        (
+            "max_daily_dose",
+            max_daily_dose,
+        ),
+    ):
+        if (
+            value is not None
+            and not _is_positive_number(
+                value
+            )
+        ):
+            raise ValidationError(
+                f"{field_name} for drug {drug_id} "
+                "must be greater than zero"
+            )
+
+    if (
+        max_single_dose is not None
+        or max_daily_dose is not None
+    ):
+        if dose_unit is None:
+            raise ValidationError(
+                f"Maximum dose limits for drug {drug_id} "
+                "require structured dose_unit"
+            )
+
+    if (
+        max_single_dose is not None
+        and max_daily_dose is not None
+        and max_daily_dose < max_single_dose
+    ):
+        raise ValidationError(
+            f"max_daily_dose for drug {drug_id} "
+            "cannot be less than max_single_dose"
+        )
+
+    order_priority = entry.get(
+        "order_priority",
+        "routine",
+    )
+
+    if order_priority not in {
+        "routine",
+        "urgent",
+        "stat",
+    }:
+        raise ValidationError(
+            f"order_priority for drug {drug_id} is invalid"
+        )
+
+    order_type = entry.get(
+        "order_type",
+        "outpatient",
+    )
+
+    if order_type not in {
+        "inpatient",
+        "outpatient",
+        "discharge",
+    }:
+        raise ValidationError(
+            f"order_type for drug {drug_id} is invalid"
+        )
+
+    start_at = _validate_structured_datetime(
+        entry.get(
+            "start_at"
+        ),
+        field_name="start_at",
+        item_index=item_index,
+    )
+
+    end_at = _validate_structured_datetime(
+        entry.get(
+            "end_at"
+        ),
+        field_name="end_at",
+        item_index=item_index,
+    )
+
+    if (
+        start_at is not None
+        and end_at is not None
+        and end_at < start_at
+    ):
+        raise ValidationError(
+            f"end_at for drug {drug_id} "
+            "cannot be earlier than start_at"
+        )
+
+
 def _validate_items(
     items: list[dict],
     clinic_id: int,
@@ -361,7 +801,10 @@ def _validate_items(
         items,
         start=1,
     ):
-        if not isinstance(entry, dict):
+        if not isinstance(
+            entry,
+            dict,
+        ):
             raise ValidationError(
                 f"Prescription item {index} must be an object"
             )
@@ -371,8 +814,14 @@ def _validate_items(
         )
 
         if (
-            not isinstance(drug_id, int)
-            or isinstance(drug_id, bool)
+            not isinstance(
+                drug_id,
+                int,
+            )
+            or isinstance(
+                drug_id,
+                bool,
+            )
             or drug_id <= 0
         ):
             raise ValidationError(
@@ -391,14 +840,26 @@ def _validate_items(
 
         if quantity is not None:
             if (
-                not isinstance(quantity, int)
-                or isinstance(quantity, bool)
+                not isinstance(
+                    quantity,
+                    int,
+                )
+                or isinstance(
+                    quantity,
+                    bool,
+                )
                 or quantity <= 0
             ):
                 raise ValidationError(
                     f"Quantity for drug {drug_id} "
                     "must be greater than zero"
                 )
+
+        _validate_structured_item(
+            entry,
+            drug_id=drug_id,
+            item_index=index,
+        )
 
         drug = _validate_drug_for_clinic(
             drug_id=drug_id,
@@ -408,12 +869,12 @@ def _validate_items(
         seen_drug_ids.add(
             drug_id
         )
+
         drugs.append(
             drug
         )
 
     return drugs
-
 
 # =====================================================================
 # Drug interactions
@@ -969,6 +1430,42 @@ def create_prescription(
             duration=entry.get("duration"),
             quantity=entry.get("quantity"),
             instructions=entry.get("instructions"),
+            dose_value=entry.get("dose_value"),
+            dose_unit=entry.get("dose_unit"),
+            route_code=entry.get("route_code"),
+            route_display=entry.get("route_display"),
+            frequency_code=entry.get("frequency_code"),
+            frequency_interval=entry.get("frequency_interval"),
+            frequency_interval_unit=entry.get(
+                "frequency_interval_unit"
+            ),
+            scheduled_times=list(
+                entry.get("scheduled_times") or []
+            ),
+            start_at=_normalize_datetime(
+                entry.get("start_at")
+            ),
+            end_at=_normalize_datetime(
+                entry.get("end_at")
+            ),
+            is_prn=bool(
+                entry.get("is_prn", False)
+            ),
+            prn_reason=entry.get("prn_reason"),
+            max_single_dose=entry.get("max_single_dose"),
+            max_daily_dose=entry.get("max_daily_dose"),
+            administration_instructions=entry.get(
+                "administration_instructions"
+            ),
+            order_priority=(
+                entry.get("order_priority")
+                or "routine"
+            ),
+            order_type=(
+                entry.get("order_type")
+                or "outpatient"
+            ),
+            ordered_at=_utcnow(),
         )
 
         db.session.add(

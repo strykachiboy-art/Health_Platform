@@ -7,9 +7,15 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
+    model_validator,
 )
 
-from app.core.enums.prescription_enums import DrugInteractionSeverity
+from app.core.enums.prescription_enums import (
+    DrugInteractionSeverity,
+    MedicationIntervalUnit,
+    MedicationOrderPriority,
+    MedicationOrderType,
+)
 
 
 # =====================================================================
@@ -72,11 +78,16 @@ class PaginationResponseSchema(BaseModel):
 
 class PrescriptionItemSchema(BaseModel):
     """
-    Request schema for an individual prescription item.
+    Request schema for an individual medication order.
+
+    Legacy human-readable fields remain supported while structured
+    medication semantics are introduced for CDS/eMAR workflows.
     """
 
     model_config = ConfigDict(
-        extra="forbid"
+        extra="forbid",
+        use_enum_values=True,
+        validate_default=True,
     )
 
     drug_id: int = Field(
@@ -85,22 +96,26 @@ class PrescriptionItemSchema(BaseModel):
         description="ID of the prescribed drug",
     )
 
+    # -------------------------------------------------------------
+    # Legacy / display fields
+    # -------------------------------------------------------------
+
     dosage: str | None = Field(
         default=None,
         max_length=255,
-        description="Medication dosage",
+        description="Legacy human-readable medication dosage",
     )
 
     frequency: str | None = Field(
         default=None,
         max_length=255,
-        description="How frequently the medication should be taken",
+        description="Legacy human-readable medication frequency",
     )
 
     duration: str | None = Field(
         default=None,
         max_length=255,
-        description="Duration of the medication",
+        description="Legacy human-readable medication duration",
     )
 
     quantity: int | None = Field(
@@ -112,7 +127,109 @@ class PrescriptionItemSchema(BaseModel):
     instructions: str | None = Field(
         default=None,
         max_length=1000,
-        description="Additional instructions for the patient",
+        description="Legacy/display patient instructions",
+    )
+
+    # -------------------------------------------------------------
+    # Structured medication semantics
+    # -------------------------------------------------------------
+
+    dose_value: float | None = Field(
+        default=None,
+        gt=0,
+        description="Structured single-dose numeric value",
+    )
+
+    dose_unit: str | None = Field(
+        default=None,
+        max_length=32,
+        description="Structured dose unit/code",
+    )
+
+    route_code: str | None = Field(
+        default=None,
+        max_length=64,
+        pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$",
+        description="Normalized medication administration route code",
+    )
+
+    route_display: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Human-readable route display",
+    )
+
+    frequency_code: str | None = Field(
+        default=None,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        description="Structured frequency code",
+    )
+
+    frequency_interval: int | None = Field(
+        default=None,
+        gt=0,
+        description="Structured repeating interval",
+    )
+
+    frequency_interval_unit: MedicationIntervalUnit | None = Field(
+        default=None,
+        description="Unit for the repeating frequency interval",
+    )
+
+    scheduled_times: list[str] = Field(
+        default_factory=list,
+        max_length=24,
+        description="Scheduled local administration times in HH:MM format",
+    )
+
+    start_at: datetime | None = Field(
+        default=None,
+        description="Medication order start timestamp",
+    )
+
+    end_at: datetime | None = Field(
+        default=None,
+        description="Medication order end timestamp",
+    )
+
+    is_prn: bool = Field(
+        default=False,
+        description="Whether medication is ordered as-needed",
+    )
+
+    prn_reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Clinical indication/reason for PRN use",
+    )
+
+    max_single_dose: float | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum permitted single dose",
+    )
+
+    max_daily_dose: float | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum permitted dose in 24 hours",
+    )
+
+    administration_instructions: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Structured administration instructions",
+    )
+
+    order_priority: MedicationOrderPriority = Field(
+        default=MedicationOrderPriority.ROUTINE,
+        description="Medication order priority",
+    )
+
+    order_type: MedicationOrderType = Field(
+        default=MedicationOrderType.OUTPATIENT,
+        description="Medication order care-setting type",
     )
 
     @field_validator(
@@ -120,6 +237,12 @@ class PrescriptionItemSchema(BaseModel):
         "frequency",
         "duration",
         "instructions",
+        "dose_unit",
+        "route_code",
+        "route_display",
+        "frequency_code",
+        "prn_reason",
+        "administration_instructions",
         mode="before",
     )
     @classmethod
@@ -133,6 +256,167 @@ class PrescriptionItemSchema(BaseModel):
         value = value.strip()
 
         return value or None
+
+    @field_validator(
+        "start_at",
+        "end_at",
+    )
+    @classmethod
+    def normalize_structured_datetime(
+        cls,
+        value,
+    ):
+        if value is None:
+            return None
+
+        if (
+            value.tzinfo is None
+            or value.utcoffset() is None
+        ):
+            raise ValueError(
+                "Structured medication timestamps must include timezone information"
+            )
+
+        return value.astimezone(
+            timezone.utc
+        )
+
+    @field_validator(
+        "scheduled_times",
+    )
+    @classmethod
+    def validate_scheduled_times(
+        cls,
+        value,
+    ):
+        normalized = []
+        seen = set()
+
+        for raw in value:
+            if not isinstance(raw, str):
+                raise ValueError(
+                    "scheduled_times entries must be strings"
+                )
+
+            candidate = raw.strip()
+
+            parts = candidate.split(":")
+
+            if (
+                len(parts) != 2
+                or len(parts[0]) != 2
+                or len(parts[1]) != 2
+                or not parts[0].isdigit()
+                or not parts[1].isdigit()
+            ):
+                raise ValueError(
+                    "scheduled_times entries must use HH:MM format"
+                )
+
+            hour = int(parts[0])
+            minute = int(parts[1])
+
+            if (
+                hour < 0
+                or hour > 23
+                or minute < 0
+                or minute > 59
+            ):
+                raise ValueError(
+                    "scheduled_times contains an invalid clock time"
+                )
+
+            normalized_value = (
+                f"{hour:02d}:{minute:02d}"
+            )
+
+            if normalized_value in seen:
+                raise ValueError(
+                    "scheduled_times cannot contain duplicates"
+                )
+
+            seen.add(
+                normalized_value
+            )
+
+            normalized.append(
+                normalized_value
+            )
+
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_structured_medication_contract(
+        self,
+    ):
+        if (
+            (self.dose_value is None)
+            != (self.dose_unit is None)
+        ):
+            raise ValueError(
+                "dose_value and dose_unit must be supplied together"
+            )
+
+        if (
+            (self.frequency_interval is None)
+            != (self.frequency_interval_unit is None)
+        ):
+            raise ValueError(
+                "frequency_interval and frequency_interval_unit "
+                "must be supplied together"
+            )
+
+        if (
+            self.route_display is not None
+            and self.route_code is None
+        ):
+            raise ValueError(
+                "route_display requires route_code"
+            )
+
+        if self.is_prn:
+            if self.prn_reason is None:
+                raise ValueError(
+                    "PRN medication requires prn_reason"
+                )
+
+            if self.scheduled_times:
+                raise ValueError(
+                    "PRN medication cannot define fixed scheduled_times"
+                )
+        elif self.prn_reason is not None:
+            raise ValueError(
+                "prn_reason requires is_prn=true"
+            )
+
+        if (
+            self.max_single_dose is not None
+            or self.max_daily_dose is not None
+        ):
+            if self.dose_unit is None:
+                raise ValueError(
+                    "Maximum dose limits require structured dose_value/dose_unit"
+                )
+
+        if (
+            self.max_single_dose is not None
+            and self.max_daily_dose is not None
+            and self.max_daily_dose < self.max_single_dose
+        ):
+            raise ValueError(
+                "max_daily_dose cannot be less than max_single_dose"
+            )
+
+        if (
+            self.start_at is not None
+            and self.end_at is not None
+            and self.end_at < self.start_at
+        ):
+            raise ValueError(
+                "end_at cannot be earlier than start_at"
+            )
+
+        return self
 
 
 # =====================================================================

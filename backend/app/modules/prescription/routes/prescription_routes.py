@@ -163,9 +163,36 @@ def _ensure_prescription_clinic(
 # SERIALIZERS
 # ============================================================================
 
+def _serialize_medication_numeric(
+    value,
+):
+    if value is None:
+        return None
+
+    return float(value)
+
+
 def _serialize_prescription_item(
     item,
 ) -> dict:
+    start_at = getattr(
+        item,
+        "start_at",
+        None,
+    )
+
+    end_at = getattr(
+        item,
+        "end_at",
+        None,
+    )
+
+    ordered_at = getattr(
+        item,
+        "ordered_at",
+        None,
+    )
+
     return {
         "id": item.id,
         "prescription_id": item.prescription_id,
@@ -175,8 +202,114 @@ def _serialize_prescription_item(
         "duration": item.duration,
         "quantity": item.quantity,
         "instructions": item.instructions,
+        "dose_value": _serialize_medication_numeric(
+            getattr(
+                item,
+                "dose_value",
+                None,
+            )
+        ),
+        "dose_unit": getattr(
+            item,
+            "dose_unit",
+            None,
+        ),
+        "route_code": getattr(
+            item,
+            "route_code",
+            None,
+        ),
+        "route_display": getattr(
+            item,
+            "route_display",
+            None,
+        ),
+        "frequency_code": getattr(
+            item,
+            "frequency_code",
+            None,
+        ),
+        "frequency_interval": getattr(
+            item,
+            "frequency_interval",
+            None,
+        ),
+        "frequency_interval_unit": getattr(
+            item,
+            "frequency_interval_unit",
+            None,
+        ),
+        "scheduled_times": list(
+            getattr(
+                item,
+                "scheduled_times",
+                None,
+            )
+            or []
+        ),
+        "start_at": (
+            start_at.isoformat()
+            if start_at
+            else None
+        ),
+        "end_at": (
+            end_at.isoformat()
+            if end_at
+            else None
+        ),
+        "is_prn": bool(
+            getattr(
+                item,
+                "is_prn",
+                False,
+            )
+        ),
+        "prn_reason": getattr(
+            item,
+            "prn_reason",
+            None,
+        ),
+        "max_single_dose": _serialize_medication_numeric(
+            getattr(
+                item,
+                "max_single_dose",
+                None,
+            )
+        ),
+        "max_daily_dose": _serialize_medication_numeric(
+            getattr(
+                item,
+                "max_daily_dose",
+                None,
+            )
+        ),
+        "administration_instructions": getattr(
+            item,
+            "administration_instructions",
+            None,
+        ),
+        "order_priority": (
+            getattr(
+                item,
+                "order_priority",
+                None,
+            )
+            or "routine"
+        ),
+        "order_type": (
+            getattr(
+                item,
+                "order_type",
+                None,
+            )
+            or "outpatient"
+        ),
+        "ordered_at": (
+            ordered_at.isoformat()
+            if ordered_at
+            else None
+        ),
     }
-
 
 def _serialize_prescription(
     prescription,
@@ -273,7 +406,10 @@ def create_prescription_route():
         "patient_id": payload.patient_id,
         "prescribed_by_id": staff.id,
         "items": [
-            item.model_dump()
+            item.model_dump(
+                exclude_none=True,
+                exclude_defaults=True,
+            )
             for item in payload.items
         ],
         "consultation_id": payload.consultation_id,

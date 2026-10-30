@@ -216,10 +216,173 @@ class PrescriptionItem(db.Model):
         nullable=True,
     )
 
+    # -----------------------------------------------------------------
+    # Structured medication-order semantics
+    # -----------------------------------------------------------------
+
+    dose_value = db.Column(
+        db.Numeric(12, 4),
+        nullable=True,
+    )
+
+    dose_unit = db.Column(
+        db.String(32),
+        nullable=True,
+    )
+
+    route_code = db.Column(
+        db.String(64),
+        nullable=True,
+    )
+
+    route_display = db.Column(
+        db.String(128),
+        nullable=True,
+    )
+
+    frequency_code = db.Column(
+        db.String(64),
+        nullable=True,
+    )
+
+    frequency_interval = db.Column(
+        db.Integer,
+        nullable=True,
+    )
+
+    frequency_interval_unit = db.Column(
+        db.String(16),
+        nullable=True,
+    )
+
+    scheduled_times = db.Column(
+        db.JSON,
+        nullable=True,
+        default=list,
+    )
+
+    start_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=True,
+    )
+
+    end_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=True,
+    )
+
+    is_prn = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    prn_reason = db.Column(
+        db.String(500),
+        nullable=True,
+    )
+
+    max_single_dose = db.Column(
+        db.Numeric(12, 4),
+        nullable=True,
+    )
+
+    max_daily_dose = db.Column(
+        db.Numeric(12, 4),
+        nullable=True,
+    )
+
+    administration_instructions = db.Column(
+        db.String(1000),
+        nullable=True,
+    )
+
+    order_priority = db.Column(
+        db.String(16),
+        nullable=False,
+        default="routine",
+    )
+
+    order_type = db.Column(
+        db.String(16),
+        nullable=False,
+        default="outpatient",
+    )
+
+    ordered_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+    )
+
     __table_args__ = (
         db.CheckConstraint(
             "quantity IS NULL OR quantity > 0",
             name="ck_prescription_item_quantity_positive",
+        ),
+        db.CheckConstraint(
+            "dose_value IS NULL OR dose_value > 0",
+            name="ck_prescription_item_dose_value_positive",
+        ),
+        db.CheckConstraint(
+            "(dose_value IS NULL AND dose_unit IS NULL) OR "
+            "(dose_value IS NOT NULL AND dose_unit IS NOT NULL)",
+            name="ck_prescription_item_dose_pair",
+        ),
+        db.CheckConstraint(
+            "frequency_interval IS NULL OR frequency_interval > 0",
+            name="ck_prescription_item_frequency_interval_positive",
+        ),
+        db.CheckConstraint(
+            "(frequency_interval IS NULL AND "
+            "frequency_interval_unit IS NULL) OR "
+            "(frequency_interval IS NOT NULL AND "
+            "frequency_interval_unit IS NOT NULL)",
+            name="ck_prescription_item_frequency_pair",
+        ),
+        db.CheckConstraint(
+            "frequency_interval_unit IS NULL OR "
+            "frequency_interval_unit IN ('minute', 'hour', 'day', 'week')",
+            name="ck_prescription_item_frequency_interval_unit",
+        ),
+        db.CheckConstraint(
+            "route_display IS NULL OR route_code IS NOT NULL",
+            name="ck_prescription_item_route_display_requires_code",
+        ),
+        db.CheckConstraint(
+            "max_single_dose IS NULL OR max_single_dose > 0",
+            name="ck_prescription_item_max_single_dose_positive",
+        ),
+        db.CheckConstraint(
+            "max_daily_dose IS NULL OR max_daily_dose > 0",
+            name="ck_prescription_item_max_daily_dose_positive",
+        ),
+        db.CheckConstraint(
+            "max_single_dose IS NULL OR max_daily_dose IS NULL OR "
+            "max_daily_dose >= max_single_dose",
+            name="ck_prescription_item_max_daily_ge_single",
+        ),
+        db.CheckConstraint(
+            "(max_single_dose IS NULL AND max_daily_dose IS NULL) OR "
+            "dose_unit IS NOT NULL",
+            name="ck_prescription_item_max_dose_requires_unit",
+        ),
+        db.CheckConstraint(
+            "(is_prn = false AND prn_reason IS NULL) OR "
+            "(is_prn = true AND prn_reason IS NOT NULL)",
+            name="ck_prescription_item_prn_reason",
+        ),
+        db.CheckConstraint(
+            "end_at IS NULL OR start_at IS NULL OR end_at >= start_at",
+            name="ck_prescription_item_time_order",
+        ),
+        db.CheckConstraint(
+            "order_priority IN ('routine', 'urgent', 'stat')",
+            name="ck_prescription_item_order_priority",
+        ),
+        db.CheckConstraint(
+            "order_type IN ('inpatient', 'outpatient', 'discharge')",
+            name="ck_prescription_item_order_type",
         ),
         db.Index(
             "ix_prescription_items_prescription_drug",
