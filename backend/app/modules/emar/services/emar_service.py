@@ -12,6 +12,10 @@ from app.core.enums.emar_enums import (
     BarcodeVerificationResult,
     MedicationAdministrationStatus,
 )
+from app.core.enums.clinical_record_enums import (
+    ClinicalRecordStatus,
+    ClinicalRecordType,
+)
 from app.core.idempotency.services.idempotency_service import (
     reserve_idempotency_operation,
 )
@@ -31,6 +35,9 @@ from app.core.utils.decorators import transactional
 from app.extensions import db
 
 from app.modules.clinic.services.clinic_service import ensure_clinic_active
+from app.modules.clinical_records.services import (
+    clinical_record_service,
+)
 from app.modules.emar.models.emar_model import (
     MedicationAdministration,
     MedicationAdministrationEvent,
@@ -624,6 +631,466 @@ def _load_administration(
     return record
 
 
+_TERMINAL_EMAR_STATUSES = {
+    MedicationAdministrationStatus.ADMINISTERED,
+    MedicationAdministrationStatus.HELD,
+    MedicationAdministrationStatus.REFUSED,
+    MedicationAdministrationStatus.MISSED,
+    MedicationAdministrationStatus.CANCELLED,
+}
+
+_EMAR_AMENDMENT_DOCUMENT_FIELDS = (
+    "status",
+    "scheduled_at",
+    "administered_at",
+    "administered_by_staff_id",
+    "held_at",
+    "held_by_staff_id",
+    "hold_reason",
+    "refused_at",
+    "refused_recorded_by_staff_id",
+    "refusal_reason",
+    "missed_at",
+    "missed_reason",
+    "cancelled_at",
+    "cancel_reason",
+    "notes",
+)
+
+
+def _finalize_medication_administration_record(
+    record: MedicationAdministration,
+    *,
+    actor: Staff,
+    finalized_at: datetime,
+) -> None:
+    clinical_record_service.validate_finalization_transition(
+        record.record_status
+    )
+
+    record.record_status = (
+        ClinicalRecordStatus.FINAL.value
+    )
+    record.record_version = 1
+    record.finalized_by_staff_id = actor.id
+    record.finalized_at = finalized_at
+    record.latest_amendment_id = None
+
+
+def _emar_record_status(
+    record: MedicationAdministration,
+) -> ClinicalRecordStatus:
+    try:
+        return ClinicalRecordStatus(
+            record.record_status
+        )
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ConflictError(
+            f"Medication administration {record.id} "
+            "has invalid clinical record state"
+        ) from exc
+
+
+def _validate_emar_record_version(
+    record: MedicationAdministration,
+    expected_version: int,
+) -> None:
+    expected_version = _validate_positive_id(
+        expected_version,
+        "expected_version",
+    )
+
+    if record.record_version != expected_version:
+        raise ConflictError(
+            f"Medication administration {record.id} "
+            "record version mismatch: "
+            f"expected {expected_version}, "
+            f"current {record.record_version}"
+        )
+
+
+def _document_datetime(
+    value,
+    field_name: str,
+):
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(
+                value
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                f"{field_name} must be an ISO-8601 datetime"
+            ) from exc
+
+    normalized = _normalize_event_time(
+        value,
+        field_name=field_name,
+        default_now=False,
+    )
+
+    return normalized.isoformat()
+
+
+def _document_positive_id(
+    value,
+    field_name: str,
+):
+    if value is None:
+        return None
+
+    return _validate_positive_id(
+        value,
+        field_name,
+    )
+
+
+def _normalize_medication_administration_document(
+    record: MedicationAdministration,
+    document: dict,
+) -> dict:
+    if not isinstance(
+        document,
+        dict,
+    ):
+        raise ValidationError(
+            "document must be an object"
+        )
+
+    if set(document) != set(
+        _EMAR_AMENDMENT_DOCUMENT_FIELDS
+    ):
+        raise ValidationError(
+            "Medication administration amendment must contain "
+            "the complete terminal evidence document"
+        )
+
+    try:
+        status = MedicationAdministrationStatus(
+            getattr(
+                document["status"],
+                "value",
+                document["status"],
+            )
+        )
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ValidationError(
+            "Invalid medication administration status"
+        ) from exc
+
+    if status != record.status:
+        raise ValidationError(
+            "Medication administration terminal outcome "
+            "cannot be changed by amendment"
+        )
+
+    if status not in _TERMINAL_EMAR_STATUSES:
+        raise ConflictError(
+            "Only terminal medication administration "
+            "records can be amended"
+        )
+
+    return {
+        "status": status.value,
+        "scheduled_at": _document_datetime(
+            document["scheduled_at"],
+            "scheduled_at",
+        ),
+        "administered_at": _document_datetime(
+            document["administered_at"],
+            "administered_at",
+        ),
+        "administered_by_staff_id": _document_positive_id(
+            document["administered_by_staff_id"],
+            "administered_by_staff_id",
+        ),
+        "held_at": _document_datetime(
+            document["held_at"],
+            "held_at",
+        ),
+        "held_by_staff_id": _document_positive_id(
+            document["held_by_staff_id"],
+            "held_by_staff_id",
+        ),
+        "hold_reason": _normalize_text(
+            document["hold_reason"],
+            field_name="hold_reason",
+            max_length=500,
+        ),
+        "refused_at": _document_datetime(
+            document["refused_at"],
+            "refused_at",
+        ),
+        "refused_recorded_by_staff_id": _document_positive_id(
+            document["refused_recorded_by_staff_id"],
+            "refused_recorded_by_staff_id",
+        ),
+        "refusal_reason": _normalize_text(
+            document["refusal_reason"],
+            field_name="refusal_reason",
+            max_length=500,
+        ),
+        "missed_at": _document_datetime(
+            document["missed_at"],
+            "missed_at",
+        ),
+        "missed_reason": _normalize_text(
+            document["missed_reason"],
+            field_name="missed_reason",
+            max_length=500,
+        ),
+        "cancelled_at": _document_datetime(
+            document["cancelled_at"],
+            "cancelled_at",
+        ),
+        "cancel_reason": _normalize_text(
+            document["cancel_reason"],
+            field_name="cancel_reason",
+            max_length=500,
+        ),
+        "notes": _normalize_text(
+            document["notes"],
+            field_name="notes",
+            max_length=4000,
+        ),
+    }
+
+
+def get_medication_administration_original_document(
+    record: MedicationAdministration,
+) -> dict:
+    def iso(value):
+        if value is None:
+            return None
+
+        # SQLAlchemy/SQLite test round-trips can strip tzinfo from
+        # DateTime(timezone=True) values. These timestamps originated
+        # from validated UTC-aware clinical events, so restore UTC only
+        # at this internal DB serialization boundary. External amendment
+        # input remains subject to the strict timezone validator.
+        if (
+            value.tzinfo is None
+            or value.utcoffset() is None
+        ):
+            value = value.replace(
+                tzinfo=timezone.utc
+            )
+
+        return value.isoformat()
+
+    return {
+        "status": record.status.value,
+        "scheduled_at": iso(record.scheduled_at),
+        "administered_at": iso(record.administered_at),
+        "administered_by_staff_id": (
+            record.administered_by_staff_id
+        ),
+        "held_at": iso(record.held_at),
+        "held_by_staff_id": (
+            record.held_by_staff_id
+        ),
+        "hold_reason": record.hold_reason,
+        "refused_at": iso(record.refused_at),
+        "refused_recorded_by_staff_id": (
+            record.refused_recorded_by_staff_id
+        ),
+        "refusal_reason": record.refusal_reason,
+        "missed_at": iso(record.missed_at),
+        "missed_reason": record.missed_reason,
+        "cancelled_at": iso(record.cancelled_at),
+        "cancel_reason": record.cancel_reason,
+        "notes": record.notes,
+    }
+
+
+def get_medication_administration_effective_document(
+    record: MedicationAdministration,
+) -> dict:
+    status = _emar_record_status(
+        record
+    )
+
+    if status != ClinicalRecordStatus.AMENDED:
+        return (
+            get_medication_administration_original_document(
+                record
+            )
+        )
+
+    amendment = record.latest_amendment
+
+    if amendment is None:
+        raise ConflictError(
+            f"Medication administration {record.id} "
+            "is amended but has no latest amendment"
+        )
+
+    if (
+        amendment.clinic_id != record.clinic_id
+        or amendment.patient_id != record.patient_id
+        or amendment.source_record_type
+        != ClinicalRecordType.MEDICATION_ADMINISTRATION.value
+        or amendment.source_record_id != record.id
+        or amendment.new_version != record.record_version
+    ):
+        raise ConflictError(
+            f"Medication administration {record.id} "
+            "latest amendment linkage is invalid"
+        )
+
+    return dict(
+        amendment.new_content
+    )
+
+
+@transactional
+def amend_medication_administration(
+    *,
+    administration_id: int,
+    clinic_id: int,
+    actor_staff_id: int,
+    expected_version: int,
+    reason: str,
+    document: dict,
+):
+    record = _load_administration(
+        administration_id,
+        clinic_id=clinic_id,
+        lock=True,
+    )
+
+    actor = _get_authorized_actor(
+        actor_staff_id,
+        clinic_id=clinic_id,
+    )
+
+    current_status = _emar_record_status(
+        record
+    )
+
+    clinical_record_service.validate_amendment_transition(
+        current_status
+    )
+
+    if record.status not in _TERMINAL_EMAR_STATUSES:
+        raise ConflictError(
+            "Only terminal medication administration "
+            "records can be amended"
+        )
+
+    _validate_emar_record_version(
+        record,
+        expected_version,
+    )
+
+    normalized = (
+        _normalize_medication_administration_document(
+            record,
+            document,
+        )
+    )
+
+    effective_before = (
+        get_medication_administration_effective_document(
+            record
+        )
+    )
+
+    if normalized == effective_before:
+        raise ValidationError(
+            "Medication administration amendment "
+            "must change the effective clinical document"
+        )
+
+    amendment = (
+        clinical_record_service
+        .append_clinical_record_amendment(
+            clinic_id=record.clinic_id,
+            patient_id=record.patient_id,
+            source_record_type=(
+                ClinicalRecordType.MEDICATION_ADMINISTRATION
+            ),
+            source_record_id=record.id,
+            current_status=current_status,
+            previous_version=record.record_version,
+            amended_by_staff_id=actor.id,
+            reason=reason,
+            new_content=normalized,
+        )
+    )
+
+    old_record_status = record.record_status
+    old_record_version = record.record_version
+
+    record.record_status = (
+        ClinicalRecordStatus.AMENDED.value
+    )
+    record.record_version = amendment.new_version
+    record.latest_amendment_id = amendment.id
+    record.latest_amendment = amendment
+
+    db.session.flush()
+
+    create_audit_log(
+        action=AuditAction.STATUS_CHANGE,
+        entity_type="MedicationAdministration",
+        entity_id=record.id,
+        clinic_id=record.clinic_id,
+        description=(
+            "Medication administration clinical record amended"
+        ),
+        old_value={
+            "record_status": old_record_status,
+            "record_version": old_record_version,
+        },
+        new_value={
+            "record_status": record.record_status,
+            "record_version": record.record_version,
+            "latest_amendment_id": amendment.id,
+            "reason": amendment.reason,
+            "new_content_sha256": (
+                amendment.new_content_sha256
+            ),
+        },
+        user_id=actor.user_id,
+    )
+
+    return (
+        record,
+        amendment,
+    )
+
+
+def get_medication_administration_amendments(
+    administration_id: int,
+    *,
+    clinic_id: int,
+):
+    record = _load_administration(
+        administration_id,
+        clinic_id=clinic_id,
+    )
+
+    return (
+        clinical_record_service
+        .get_clinical_record_amendments(
+            clinic_id=record.clinic_id,
+            source_record_type=(
+                ClinicalRecordType.MEDICATION_ADMINISTRATION
+            ),
+            source_record_id=record.id,
+        )
+    )
+
 def _resolve_idempotent_administration_replay(
     *,
     idempotency_record,
@@ -780,6 +1247,8 @@ def schedule_medication_administration(
             MedicationAdministrationStatus
             .SCHEDULED
         ),
+        record_status=ClinicalRecordStatus.DRAFT.value,
+        record_version=1,
         **_copy_order_snapshot(
             item
         ),
@@ -1161,6 +1630,12 @@ def administer_medication(
     record.administered_by_staff_id = actor.id
     record.notes = notes
 
+    _finalize_medication_administration_record(
+        record,
+        actor=actor,
+        finalized_at=administered_at,
+    )
+
     if barcode_verification_event is not None:
         record.barcode_verification_event_id = barcode_verification_event.id
 
@@ -1236,6 +1711,10 @@ def administer_prn_medication(
             MedicationAdministrationStatus
             .ADMINISTERED
         ),
+        record_status=ClinicalRecordStatus.FINAL.value,
+        record_version=1,
+        finalized_by_staff_id=actor.id,
+        finalized_at=administered_at,
         administered_at=administered_at,
         administered_by_staff_id=actor.id,
         notes=notes,
@@ -1308,6 +1787,12 @@ def hold_medication(
     record.held_by_staff_id = actor.id
     record.hold_reason = reason
 
+    _finalize_medication_administration_record(
+        record,
+        actor=actor,
+        finalized_at=held_at,
+    )
+
     _audit_status_change(
         record=record,
         actor=actor,
@@ -1369,6 +1854,12 @@ def record_medication_refusal(
     )
     record.refusal_reason = reason
 
+    _finalize_medication_administration_record(
+        record,
+        actor=actor,
+        finalized_at=refused_at,
+    )
+
     _audit_status_change(
         record=record,
         actor=actor,
@@ -1427,6 +1918,12 @@ def mark_medication_missed(
     record.missed_at = missed_at
     record.missed_reason = reason
 
+    _finalize_medication_administration_record(
+        record,
+        actor=actor,
+        finalized_at=missed_at,
+    )
+
     _audit_status_change(
         record=record,
         actor=actor,
@@ -1484,6 +1981,12 @@ def cancel_medication_administration(
     )
     record.cancelled_at = cancelled_at
     record.cancel_reason = reason
+
+    _finalize_medication_administration_record(
+        record,
+        actor=actor,
+        finalized_at=cancelled_at,
+    )
 
     _audit_status_change(
         record=record,

@@ -22,10 +22,14 @@ from app.core.utils.decorators import (
     role_required,
 )
 from app.extensions import db
+from app.modules.clinical_records.schemas.clinical_record_schema import (
+    ClinicalRecordAmendmentResponseSchema,
+)
 
 from app.modules.emar.schemas.emar_schema import (
     BarcodeMedicationVerificationRequestSchema,
     MedicationAdministrationAdministerSchema,
+    MedicationAdministrationAmendmentSchema,
     MedicationAdministrationEventListResponseSchema,
     MedicationAdministrationEventResponseSchema,
     MedicationAdministrationCancelSchema,
@@ -46,8 +50,11 @@ from app.modules.emar.services.barcode_verification_service import (
 from app.modules.emar.services.emar_service import (
     administer_barcode_verified_medication,
     administer_prn_medication,
+    amend_medication_administration,
     cancel_medication_administration,
     get_medication_administration,
+    get_medication_administration_amendments,
+    get_medication_administration_effective_document,
     hold_medication,
     list_medication_administrations_for_admission,
     mark_medication_administration_due,
@@ -170,10 +177,28 @@ def _current_staff_id() -> int:
 def _serialize(
     record,
 ) -> dict:
-    return (
+    payload = (
         MedicationAdministrationResponseSchema
         .model_validate(
             record
+        )
+        .model_dump()
+    )
+
+    if hasattr(
+        record,
+        "record_status",
+    ):
+        payload.update(
+            get_medication_administration_effective_document(
+                record
+            )
+        )
+
+    return (
+        MedicationAdministrationResponseSchema
+        .model_validate(
+            payload
         )
         .model_dump(
             mode="json"
@@ -689,3 +714,81 @@ def list_admission_emar_route(
             result
         )
     ), 200
+
+@emar_bp.post(
+    "/<int:administration_id>/amend"
+)
+@role_required(
+    *EMAR_ROLES
+)
+def amend_medication_administration_route(
+    administration_id: int,
+):
+    payload = (
+        MedicationAdministrationAmendmentSchema
+        .model_validate(
+            _json_body()
+        )
+    )
+
+    record, amendment = (
+        amend_medication_administration(
+            administration_id=administration_id,
+            clinic_id=_current_clinic_id(),
+            actor_staff_id=_current_staff_id(),
+            expected_version=payload.expected_version,
+            reason=payload.reason,
+            document=payload.document,
+        )
+    )
+
+    return jsonify({
+        "message": (
+            "Medication administration record amended"
+        ),
+        "administration": _serialize(
+            record
+        ),
+        "amendment": (
+            ClinicalRecordAmendmentResponseSchema
+            .model_validate(
+                amendment
+            )
+            .model_dump(
+                mode="json"
+            )
+        ),
+    }), 200
+
+
+@emar_bp.get(
+    "/<int:administration_id>/amendments"
+)
+@role_required(
+    *EMAR_ROLES
+)
+def get_medication_administration_amendments_route(
+    administration_id: int,
+):
+    rows = (
+        get_medication_administration_amendments(
+            administration_id,
+            clinic_id=_current_clinic_id(),
+        )
+    )
+
+    return jsonify({
+        "items": [
+            (
+                ClinicalRecordAmendmentResponseSchema
+                .model_validate(
+                    row
+                )
+                .model_dump(
+                    mode="json"
+                )
+            )
+            for row in rows
+        ],
+        "total": len(rows),
+    }), 200

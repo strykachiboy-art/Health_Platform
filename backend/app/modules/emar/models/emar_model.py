@@ -7,6 +7,9 @@ from app.core.enums.emar_enums import (
     BarcodeVerificationResult,
     MedicationAdministrationStatus,
 )
+from app.core.enums.clinical_record_enums import (
+    ClinicalRecordStatus,
+)
 from app.extensions import db
 
 
@@ -156,6 +159,38 @@ class MedicationAdministration(db.Model):
             "scan_timestamp",
             "id",
         ),
+        db.CheckConstraint(
+            "record_status IN ('draft', 'final', 'amended')",
+            name="ck_med_admin_record_status",
+        ),
+        db.CheckConstraint(
+            "record_version >= 1",
+            name="ck_med_admin_record_version_positive",
+        ),
+        db.CheckConstraint(
+            "("
+            "record_status = 'draft' "
+            "AND record_version = 1 "
+            "AND finalized_at IS NULL "
+            "AND latest_amendment_id IS NULL"
+            ") OR ("
+            "record_status = 'final' "
+            "AND record_version = 1 "
+            "AND finalized_at IS NOT NULL "
+            "AND latest_amendment_id IS NULL"
+            ") OR ("
+            "record_status = 'amended' "
+            "AND record_version >= 2 "
+            "AND finalized_at IS NOT NULL "
+            "AND latest_amendment_id IS NOT NULL"
+            ")",
+            name="ck_med_admin_record_linkage",
+        ),
+        db.Index(
+            "ix_med_admin_clinic_record_status",
+            "clinic_id",
+            "record_status",
+        ),
     )
 
     id = db.Column(
@@ -243,6 +278,46 @@ class MedicationAdministration(db.Model):
             .SCHEDULED
         ),
         nullable=False,
+        index=True,
+    )
+
+    record_status = db.Column(
+        db.String(16),
+        default=ClinicalRecordStatus.DRAFT.value,
+        server_default=ClinicalRecordStatus.DRAFT.value,
+        nullable=False,
+        index=True,
+    )
+
+    record_version = db.Column(
+        db.Integer,
+        default=1,
+        server_default="1",
+        nullable=False,
+    )
+
+    finalized_by_staff_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "staff.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    finalized_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=True,
+    )
+
+    latest_amendment_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "clinical_record_amendments.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
         index=True,
     )
 
@@ -409,6 +484,17 @@ class MedicationAdministration(db.Model):
         foreign_keys=[
             refused_recorded_by_staff_id
         ],
+    )
+
+    finalized_by = db.relationship(
+        "Staff",
+        foreign_keys=[finalized_by_staff_id],
+    )
+
+    latest_amendment = db.relationship(
+        "ClinicalRecordAmendment",
+        foreign_keys=[latest_amendment_id],
+        uselist=False,
     )
 
     barcode_verified_by = db.relationship(

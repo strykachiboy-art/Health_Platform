@@ -15,6 +15,9 @@ from app.core.enums.emar_enums import (
     BarcodeVerificationResult,
     MedicationAdministrationStatus,
 )
+from app.core.enums.clinical_record_enums import (
+    ClinicalRecordStatus,
+)
 
 
 DEFAULT_PAGE = 1
@@ -305,6 +308,23 @@ class MedicationAdministrationResponseSchema(
 
     status: MedicationAdministrationStatus
 
+    record_status: ClinicalRecordStatus = (
+        ClinicalRecordStatus.DRAFT
+    )
+    record_version: int = Field(
+        default=1,
+        ge=1,
+    )
+    finalized_by_staff_id: int | None = Field(
+        default=None,
+        gt=0,
+    )
+    finalized_at: datetime | None = None
+    latest_amendment_id: int | None = Field(
+        default=None,
+        gt=0,
+    )
+
     administered_at: datetime | None = None
     administered_by_staff_id: int | None = Field(
         default=None,
@@ -474,3 +494,17 @@ class MedicationAdministrationEventListResponseSchema(
     model_config = ConfigDict(
         extra="forbid",
     )
+
+class MedicationAdministrationAmendmentSchema(
+    _RequestBase
+):
+    expected_version: int = Field(
+        ...,
+        ge=1,
+    )
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=10000,
+    )
+    document: dict
