@@ -263,6 +263,337 @@ def _compare(
     )
 
 
+def _context_path_state(
+    context: Mapping[str, Any],
+    path: str,
+) -> tuple[bool, Any]:
+    current: Any = context
+
+    for part in path.split("."):
+        if isinstance(current, Mapping):
+            if part not in current:
+                return False, None
+            current = current[part]
+            continue
+
+        if isinstance(current, (list, tuple)):
+            try:
+                current = current[int(part)]
+            except (TypeError, ValueError, IndexError):
+                return False, None
+            continue
+
+        return False, None
+
+    return True, current
+
+
+def _condition_context_dependencies(
+    conditions: Mapping[str, Any],
+) -> list[tuple[str, str]]:
+    dependencies: list[tuple[str, str]] = []
+
+    def visit(value: Any) -> None:
+        if not isinstance(value, Mapping):
+            return
+
+        field_name = value.get("field")
+        operator = value.get("operator")
+
+        if (
+            isinstance(field_name, str)
+            and field_name.strip()
+            and isinstance(operator, str)
+            and operator.strip()
+        ):
+            dependencies.append(
+                (
+                    field_name.strip(),
+                    operator.strip().lower(),
+                )
+            )
+
+        for key in ("all", "any"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                for item in nested:
+                    visit(item)
+
+    visit(conditions)
+    return dependencies
+
+
+def _has_collection(
+    context: Mapping[str, Any],
+    key: str,
+) -> bool:
+    present, value = _context_path_state(context, key)
+    return present and isinstance(
+        value,
+        (list, tuple, set, frozenset),
+    )
+
+
+def _missing_context_dependencies(
+    rule: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> list[str]:
+    """
+    Detect unavailable clinical context before evaluating a rule.
+
+    Empty known collections are considered evaluated "none present".
+    Missing scalars / missing configured measures are unavailable.
+    """
+    missing: set[str] = set()
+
+    for field_name, operator in _condition_context_dependencies(
+        rule["conditions"]
+    ):
+        if operator == "exists":
+            continue
+
+        present, value = _context_path_state(
+            context,
+            field_name,
+        )
+        if not present or value is None:
+            missing.add(field_name)
+
+    rule_type = rule["rule_type"]
+    configuration = rule["configuration"]
+
+    medication_context_available = (
+        _has_collection(context, "medication_ids")
+        or _has_collection(context, "medications")
+    )
+
+    if rule_type == ClinicalRuleType.DRUG_INTERACTION.value:
+        if not medication_context_available:
+            missing.add("medication_ids")
+
+    elif rule_type == ClinicalRuleType.ALLERGY_CONFLICT.value:
+        if not _has_collection(context, "allergies"):
+            missing.add("allergies")
+
+    elif rule_type == ClinicalRuleType.CONTRAINDICATION.value:
+        if not _has_collection(
+            context,
+            "contraindication_codes",
+        ):
+            missing.add("contraindication_codes")
+
+    elif rule_type in {
+        ClinicalRuleType.MAX_DOSE.value,
+        ClinicalRuleType.MIN_DOSE.value,
+    }:
+        present, proposed = _context_path_state(
+            context,
+            "proposed_medication",
+        )
+
+        if not present or not isinstance(proposed, Mapping):
+            missing.add("proposed_medication")
+        else:
+            proposed_drug_id = proposed.get("drug_id")
+            configured_drug_id = configuration.get("drug_id")
+
+            if proposed_drug_id is None:
+                missing.add("proposed_medication.drug_id")
+            elif proposed_drug_id == configured_drug_id:
+                dose = proposed.get("dose")
+                if (
+                    not isinstance(dose, Number)
+                    or isinstance(dose, bool)
+                ):
+                    missing.add("proposed_medication.dose")
+
+    elif rule_type == ClinicalRuleType.AGE_RESTRICTION.value:
+        age = context.get("age", context.get("age_years"))
+        if not isinstance(age, Number) or isinstance(age, bool):
+            missing.add("age")
+
+    elif rule_type == ClinicalRuleType.WEIGHT_RESTRICTION.value:
+        weight = context.get(
+            "weight",
+            context.get("weight_kg"),
+        )
+        if not isinstance(weight, Number) or isinstance(weight, bool):
+            missing.add("weight")
+
+    elif rule_type == ClinicalRuleType.PREGNANCY_RESTRICTION.value:
+        status = context.get("pregnancy_status")
+        if status is None or (
+            isinstance(status, str)
+            and not status.strip()
+        ):
+            missing.add("pregnancy_status")
+
+    elif rule_type in {
+        ClinicalRuleType.DUPLICATE_THERAPY.value,
+        ClinicalRuleType.THERAPEUTIC_DUPLICATION.value,
+    }:
+        configured_drug_ids = configuration.get("drug_ids")
+
+        if isinstance(configured_drug_ids, list):
+            if not medication_context_available:
+                missing.add("medication_ids")
+        elif not _has_collection(context, "medications"):
+            missing.add("medications")
+
+    elif rule_type == ClinicalRuleType.LAB_CONFLICT.value:
+        labs = context.get("labs")
+        measure = configuration.get("measure")
+
+        if not isinstance(labs, (list, tuple)):
+            missing.add("labs")
+        elif isinstance(measure, str) and measure.strip():
+            target = measure.strip().lower()
+
+            found_measure = False
+            for lab in labs:
+                if not isinstance(lab, Mapping):
+                    continue
+
+                if (
+                    str(lab.get("measure", "")).strip().lower()
+                    == target
+                    and lab.get("value") is not None
+                ):
+                    found_measure = True
+                    break
+
+            if not found_measure:
+                missing.add(f"labs.{measure}")
+
+    elif rule_type in {
+        ClinicalRuleType.RENAL_FUNCTION.value,
+        ClinicalRuleType.HEPATIC_FUNCTION.value,
+    }:
+        context_key = (
+            "renal_function"
+            if rule_type == ClinicalRuleType.RENAL_FUNCTION.value
+            else "hepatic_function"
+        )
+        measure = configuration.get("measure")
+        function_values = context.get(context_key)
+
+        if not isinstance(function_values, Mapping):
+            missing.add(context_key)
+        elif (
+            isinstance(measure, str)
+            and measure.strip()
+            and function_values.get(measure) is None
+        ):
+            missing.add(f"{context_key}.{measure}")
+
+    elif rule_type == ClinicalRuleType.DIAGNOSIS_CONFLICT.value:
+        if not _has_collection(context, "diagnosis_codes"):
+            missing.add("diagnosis_codes")
+
+    elif rule_type == ClinicalRuleType.FREQUENCY_LIMIT.value:
+        proposed = context.get("proposed_medication")
+
+        if isinstance(proposed, Mapping):
+            occurrences = proposed.get(
+                "frequency_occurrences",
+                context.get("frequency_occurrences"),
+            )
+        else:
+            occurrences = context.get("frequency_occurrences")
+
+        if not isinstance(occurrences, int) or isinstance(
+            occurrences,
+            bool,
+        ):
+            missing.add("frequency_occurrences")
+
+    elif rule_type == ClinicalRuleType.DURATION_LIMIT.value:
+        proposed = context.get("proposed_medication")
+
+        if isinstance(proposed, Mapping):
+            duration_days = proposed.get(
+                "duration_days",
+                context.get("duration_days"),
+            )
+        else:
+            duration_days = context.get("duration_days")
+
+        if not isinstance(duration_days, Number) or isinstance(
+            duration_days,
+            bool,
+        ):
+            missing.add("duration_days")
+
+    elif (
+        rule_type
+        == ClinicalRuleType.PATIENT_SPECIFIC_RESTRICTION.value
+    ):
+        field_name = configuration.get("field")
+        operator = configuration.get("operator")
+
+        if (
+            isinstance(field_name, str)
+            and field_name.strip()
+            and str(operator).strip().lower() != "exists"
+        ):
+            present, value = _context_path_state(
+                context,
+                field_name.strip(),
+            )
+            if not present or value is None:
+                missing.add(field_name.strip())
+
+    return sorted(missing)
+
+
+def _missing_context_result(
+    rule: Mapping[str, Any],
+    missing_context: list[str],
+) -> RuleEvaluationResult:
+    if rule["is_hard_rule"]:
+        return RuleEvaluationResult(
+            rule_id=rule["id"],
+            rule_code=rule["rule_code"],
+            rule_version=rule["version"],
+            severity=rule["severity"],
+            action=rule["action"],
+            priority=rule["priority"],
+            hard_rule=True,
+            matched=True,
+            outcome=OUTCOME_BLOCKED,
+            reason=(
+                "Hard clinical safety rule could not be evaluated "
+                "because required clinical context is unavailable"
+            ),
+            evidence={
+                "evaluated": False,
+                "missing_context": list(missing_context),
+                "context_policy": "hard_fail_closed",
+            },
+        )
+
+    return RuleEvaluationResult(
+        rule_id=rule["id"],
+        rule_code=rule["rule_code"],
+        rule_version=rule["version"],
+        severity=rule["severity"],
+        action=rule["action"],
+        priority=rule["priority"],
+        hard_rule=False,
+        matched=False,
+        outcome=OUTCOME_SAFE,
+        reason=(
+            "Soft clinical safety rule was not evaluated "
+            "because required clinical context is unavailable"
+        ),
+        evidence={
+            "evaluated": False,
+            "missing_context": list(missing_context),
+            "context_policy": "soft_not_evaluated",
+        },
+    )
+
+
 def _evaluate_conditions(
     conditions: Mapping[str, Any],
     context: Mapping[str, Any],
@@ -1277,6 +1608,9 @@ def _safe_invalid_rule_result(
             "Hard clinical safety rule could not be evaluated safely"
         ),
         evidence={
+            "evaluated": False,
+            "missing_context": [],
+            "context_policy": "hard_configuration_fail_closed",
             "error": str(error),
             "configuration_error": True,
         },
@@ -1299,6 +1633,17 @@ def evaluate_rule(
     _validate_rule_identity(
         normalized_rule
     )
+
+    missing_context = _missing_context_dependencies(
+        normalized_rule,
+        context,
+    )
+
+    if missing_context:
+        return _missing_context_result(
+            normalized_rule,
+            missing_context,
+        )
 
     try:
         action = normalized_rule["action"]
@@ -1324,6 +1669,8 @@ def evaluate_rule(
                 outcome=OUTCOME_SAFE,
                 reason="Clinical rule conditions did not match",
                 evidence={
+                    "evaluated": True,
+                    "missing_context": [],
                     "conditions": condition_evidence,
                 },
             )
@@ -1347,6 +1694,8 @@ def evaluate_rule(
                 outcome=OUTCOME_SAFE,
                 reason=reason,
                 evidence={
+                    "evaluated": True,
+                    "missing_context": [],
                     "conditions": condition_evidence,
                     "evaluation": type_evidence,
                 },
@@ -1378,6 +1727,8 @@ def evaluate_rule(
             outcome=outcome,
             reason=reason,
             evidence={
+                "evaluated": True,
+                "missing_context": [],
                 "conditions": condition_evidence,
                 "evaluation": type_evidence,
             },
