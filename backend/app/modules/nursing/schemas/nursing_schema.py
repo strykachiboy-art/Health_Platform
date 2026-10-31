@@ -13,6 +13,9 @@ from app.core.enums.nursing_enums import (
     NursingNoteStatus,
     NursingNoteType,
 )
+from app.core.enums.clinical_record_enums import (
+    ClinicalRecordStatus,
+)
 
 
 class _RequestModel(BaseModel):
@@ -128,6 +131,16 @@ class NursingNoteResponseSchema(_ResponseModel):
     author_staff_id: int = Field(..., gt=0)
     note_type: NursingNoteType
     status: NursingNoteStatus
+    record_status: ClinicalRecordStatus
+    record_version: int = Field(..., ge=1)
+    finalized_by_staff_id: int | None = Field(
+        default=None,
+        gt=0,
+    )
+    latest_amendment_id: int | None = Field(
+        default=None,
+        gt=0,
+    )
     note_text: str
     observed_at: datetime
     signed_at: datetime | None = None
@@ -225,3 +238,25 @@ class NursingHandoffSummaryResponseSchema(_ResponseModel):
     recent_significant_notes: list[dict[str, Any]] = Field(
         default_factory=list
     )
+
+class NursingNoteDocumentSchema(_RequestModel):
+    note_type: NursingNoteType
+    note_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=20000,
+    )
+    observed_at: datetime
+
+
+class NursingNoteAmendmentSchema(_RequestModel):
+    expected_version: int = Field(
+        ...,
+        ge=1,
+    )
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=10000,
+    )
+    document: NursingNoteDocumentSchema

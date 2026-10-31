@@ -12,6 +12,9 @@ from app.core.enums.nursing_enums import (
     NursingNoteStatus,
     NursingNoteType,
 )
+from app.core.enums.clinical_record_enums import (
+    ClinicalRecordStatus,
+)
 
 
 def _utcnow() -> datetime:
@@ -407,6 +410,39 @@ class NursingNote(db.Model):
             "status != 'SIGNED' OR signed_at IS NOT NULL",
             name="ck_nursing_notes_signed_evidence",
         ),
+        db.CheckConstraint(
+            "record_status IN ('draft', 'final', 'amended')",
+            name="ck_nursing_notes_record_status",
+        ),
+        db.CheckConstraint(
+            "record_version >= 1",
+            name="ck_nursing_notes_record_version_positive",
+        ),
+        db.CheckConstraint(
+            "("
+            "record_status = 'draft' "
+            "AND status = 'DRAFT' "
+            "AND record_version = 1 "
+            "AND finalized_by_staff_id IS NULL "
+            "AND signed_at IS NULL "
+            "AND latest_amendment_id IS NULL"
+            ") OR ("
+            "record_status = 'final' "
+            "AND status = 'SIGNED' "
+            "AND record_version = 1 "
+            "AND finalized_by_staff_id IS NOT NULL "
+            "AND signed_at IS NOT NULL "
+            "AND latest_amendment_id IS NULL"
+            ") OR ("
+            "record_status = 'amended' "
+            "AND status = 'SIGNED' "
+            "AND record_version >= 2 "
+            "AND finalized_by_staff_id IS NOT NULL "
+            "AND signed_at IS NOT NULL "
+            "AND latest_amendment_id IS NOT NULL"
+            ")",
+            name="ck_nursing_notes_record_finalization_consistency",
+        ),
         db.Index(
             "ix_nursing_notes_clinic_admission_observed",
             "clinic_id",
@@ -418,6 +454,11 @@ class NursingNote(db.Model):
             "patient_id",
             "admission_id",
             "status",
+        ),
+        db.Index(
+            "ix_nursing_notes_clinic_record_status",
+            "clinic_id",
+            "record_status",
         ),
     )
 
@@ -474,6 +515,41 @@ class NursingNote(db.Model):
         index=True,
     )
 
+    record_status = db.Column(
+        db.String(16),
+        default=ClinicalRecordStatus.DRAFT.value,
+        server_default=ClinicalRecordStatus.DRAFT.value,
+        nullable=False,
+        index=True,
+    )
+
+    record_version = db.Column(
+        db.Integer,
+        default=1,
+        server_default="1",
+        nullable=False,
+    )
+
+    finalized_by_staff_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "staff.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    latest_amendment_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "clinical_record_amendments.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+        index=True,
+    )
+
     note_text = db.Column(
         db.Text,
         nullable=False,
@@ -527,6 +603,17 @@ class NursingNote(db.Model):
     author = db.relationship(
         "Staff",
         foreign_keys=[author_staff_id],
+    )
+
+    finalized_by = db.relationship(
+        "Staff",
+        foreign_keys=[finalized_by_staff_id],
+    )
+
+    latest_amendment = db.relationship(
+        "ClinicalRecordAmendment",
+        foreign_keys=[latest_amendment_id],
+        uselist=False,
     )
 
     def __repr__(self) -> str:

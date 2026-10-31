@@ -4,6 +4,9 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from app.extensions import db
+from app.modules.clinical_records.schemas.clinical_record_schema import (
+    ClinicalRecordAmendmentResponseSchema,
+)
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
@@ -25,6 +28,7 @@ from app.modules.nursing.schemas.nursing_schema import (
     NursingHandoffResponseSchema,
     NursingHandoffSummaryResponseSchema,
     NursingHandoffUpdateSchema,
+    NursingNoteAmendmentSchema,
     NursingNoteCreateSchema,
     NursingNoteListResponseSchema,
     NursingNoteResponseSchema,
@@ -50,10 +54,13 @@ from app.modules.nursing.services.nursing_service import (
     list_care_plans,
     list_care_tasks,
     list_handoffs,
+    get_nursing_note_amendments,
+    get_nursing_note_effective_document,
     list_nursing_notes,
     mark_handoff_ready,
     resume_care_plan,
     sign_nursing_note,
+    amend_nursing_note,
     start_care_task,
     update_handoff_draft,
     update_nursing_note_draft,
@@ -123,7 +130,46 @@ def _required_idempotency_key() -> str:
 
 
 def _serialize(schema, value):
-    return schema.model_validate(value).model_dump(mode="json")
+    if schema is NursingNoteResponseSchema:
+        document = get_nursing_note_effective_document(
+            value
+        )
+
+        payload = {
+            "id": value.id,
+            "clinic_id": value.clinic_id,
+            "patient_id": value.patient_id,
+            "admission_id": value.admission_id,
+            "author_staff_id": value.author_staff_id,
+            "note_type": document["note_type"],
+            "status": value.status,
+            "record_status": value.record_status,
+            "record_version": value.record_version,
+            "finalized_by_staff_id": (
+                value.finalized_by_staff_id
+            ),
+            "latest_amendment_id": (
+                value.latest_amendment_id
+            ),
+            "note_text": document["note_text"],
+            "observed_at": document["observed_at"],
+            "signed_at": value.signed_at,
+            "version": value.version,
+            "created_at": value.created_at,
+            "updated_at": value.updated_at,
+        }
+
+        return (
+            schema
+            .model_validate(payload)
+            .model_dump(mode="json")
+        )
+
+    return (
+        schema
+        .model_validate(value)
+        .model_dump(mode="json")
+    )
 
 
 def _serialize_list(response_schema, item_schema, items):
@@ -591,3 +637,51 @@ def cancel_handoff_route(handoff_id: int):
         "Nursing handoff cancelled",
         handoff_id,
     )
+
+@nursing_bp.post("/notes/<int:note_id>/amend")
+@role_required(*NURSING_WRITE_ROLES)
+def amend_nursing_note_route(note_id: int):
+    payload = NursingNoteAmendmentSchema.model_validate(
+        _request_json()
+    )
+
+    note, amendment = amend_nursing_note(
+        note_id,
+        clinic_id=_current_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        expected_version=payload.expected_version,
+        reason=payload.reason,
+        document=payload.document.model_dump(),
+    )
+
+    return jsonify({
+        "message": "Nursing note amended",
+        "note": _serialize(
+            NursingNoteResponseSchema,
+            note,
+        ),
+        "amendment": _serialize(
+            ClinicalRecordAmendmentResponseSchema,
+            amendment,
+        ),
+    }), 200
+
+
+@nursing_bp.get("/notes/<int:note_id>/amendments")
+@role_required(*NURSING_VIEW_ROLES)
+def get_nursing_note_amendments_route(note_id: int):
+    rows = get_nursing_note_amendments(
+        note_id,
+        clinic_id=_current_clinic_id(),
+    )
+
+    return jsonify({
+        "items": [
+            _serialize(
+                ClinicalRecordAmendmentResponseSchema,
+                row,
+            )
+            for row in rows
+        ],
+        "total": len(rows),
+    }), 200

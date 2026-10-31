@@ -13,6 +13,10 @@ from app.core.enums.clinical_safety_enums import (
     ClinicalRuleSeverity,
 )
 from app.core.enums.consultation_enums import ConsultationStatus
+from app.core.enums.clinical_record_enums import (
+    ClinicalRecordStatus,
+    ClinicalRecordType,
+)
 from app.core.enums.emar_enums import MedicationAdministrationStatus
 from app.core.enums.lab_enums import LabOrderStatus
 from app.core.enums.patient_enums import (
@@ -42,6 +46,9 @@ from app.core.idempotency.services.idempotency_service import (
 from app.core.utils.decorators import transactional
 
 from app.core.clinical_safety.models.clinical_alert_model import ClinicalAlert
+from app.modules.clinical_records.services import (
+    clinical_record_service,
+)
 from app.modules.consultation.models.consultation_model import Consultation
 from app.modules.emar.models.emar_model import MedicationAdministration
 from app.modules.lab.models.lab_model import LabOrder
@@ -1692,6 +1699,8 @@ def create_nursing_note(
         author_staff_id=actor.id,
         note_type=note_type,
         status=NursingNoteStatus.DRAFT,
+        record_status=ClinicalRecordStatus.DRAFT.value,
+        record_version=1,
         note_text=note_text,
         observed_at=observed_at,
         version=1,
@@ -1803,9 +1812,12 @@ def update_nursing_note_draft(
     if (
         note.status
         != NursingNoteStatus.DRAFT
+        or note.record_status
+        != ClinicalRecordStatus.DRAFT.value
     ):
         raise ConflictError(
-            "Signed nursing notes are immutable"
+            "Signed nursing notes are immutable; "
+            "use the amendment workflow"
         )
 
     note.note_text = _normalize_required_text(
@@ -1909,9 +1921,19 @@ def sign_nursing_note(
             "Nursing note is already signed"
         )
 
+    clinical_record_service.validate_finalization_transition(
+        note.record_status
+    )
+
     note.status = (
         NursingNoteStatus.SIGNED
     )
+    note.record_status = (
+        ClinicalRecordStatus.FINAL.value
+    )
+    note.record_version = 1
+    note.finalized_by_staff_id = actor.id
+    note.latest_amendment_id = None
     note.signed_at = _db_now()
     note.version += 1
     db.session.flush()
@@ -2994,3 +3016,303 @@ def cancel_handoff(
     )
 
     return handoff
+
+# ---------------------------------------------------------------------------
+# Gate 11 clinical record amendment support for NursingNote
+# ---------------------------------------------------------------------------
+
+_NURSING_NOTE_DOCUMENT_FIELDS = (
+    "note_type",
+    "note_text",
+    "observed_at",
+)
+
+
+def _nursing_record_status(
+    note: NursingNote,
+) -> ClinicalRecordStatus:
+    try:
+        return ClinicalRecordStatus(
+            note.record_status
+        )
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ConflictError(
+            f"Nursing note {note.id} has invalid "
+            "clinical record state"
+        ) from exc
+
+
+def _validate_nursing_record_version(
+    note: NursingNote,
+    expected_version: int,
+) -> None:
+    expected_version = _validate_positive_id(
+        expected_version,
+        "expected_version",
+    )
+
+    if note.record_version != expected_version:
+        raise ConflictError(
+            f"Nursing note {note.id} record version mismatch: "
+            f"expected {expected_version}, "
+            f"current {note.record_version}"
+        )
+
+
+def _normalize_nursing_note_document(
+    document: dict,
+) -> dict:
+    if not isinstance(
+        document,
+        dict,
+    ):
+        raise ValidationError(
+            "document must be an object"
+        )
+
+    if set(document) != set(
+        _NURSING_NOTE_DOCUMENT_FIELDS
+    ):
+        raise ValidationError(
+            "Nursing note amendment must contain "
+            "the complete clinical document"
+        )
+
+    note_type = _normalize_note_type(
+        document["note_type"]
+    )
+
+    note_text = _normalize_required_text(
+        document["note_text"],
+        "note_text",
+        20000,
+    )
+
+    raw_observed_at = document["observed_at"]
+
+    if isinstance(
+        raw_observed_at,
+        str,
+    ):
+        try:
+            raw_observed_at = datetime.fromisoformat(
+                raw_observed_at
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                "observed_at must be a datetime "
+                "or ISO-8601 datetime string"
+            ) from exc
+
+    observed_at = _normalize_datetime(
+        raw_observed_at,
+        "observed_at",
+    )
+
+    if observed_at is None:
+        raise ValidationError(
+            "observed_at is required"
+        )
+
+    return {
+        "note_type": note_type.value,
+        "note_text": note_text,
+        "observed_at": observed_at.isoformat(),
+    }
+
+
+def get_nursing_note_original_document(
+    note: NursingNote,
+) -> dict:
+    return {
+        "note_type": note.note_type.value,
+        "note_text": note.note_text,
+        "observed_at": (
+            note.observed_at.isoformat()
+        ),
+    }
+
+
+def get_nursing_note_effective_document(
+    note: NursingNote,
+) -> dict:
+    status = _nursing_record_status(
+        note
+    )
+
+    if status != ClinicalRecordStatus.AMENDED:
+        return get_nursing_note_original_document(
+            note
+        )
+
+    amendment = note.latest_amendment
+
+    if amendment is None:
+        raise ConflictError(
+            f"Nursing note {note.id} is amended "
+            "but has no latest amendment"
+        )
+
+    if (
+        amendment.clinic_id != note.clinic_id
+        or amendment.patient_id != note.patient_id
+        or amendment.source_record_type
+        != ClinicalRecordType.NURSING_NOTE.value
+        or amendment.source_record_id != note.id
+        or amendment.new_version != note.record_version
+    ):
+        raise ConflictError(
+            f"Nursing note {note.id} latest amendment "
+            "linkage is invalid"
+        )
+
+    return dict(
+        amendment.new_content
+    )
+
+
+@transactional
+def amend_nursing_note(
+    note_id: int,
+    *,
+    clinic_id: int,
+    actor_staff_id: int,
+    expected_version: int,
+    reason: str,
+    document: dict,
+):
+    actor = _get_nurse(
+        actor_staff_id,
+        clinic_id,
+    )
+
+    note = _get_note(
+        note_id,
+        clinic_id,
+        lock=True,
+    )
+
+    if note.author_staff_id != actor.id:
+        raise ConflictError(
+            "Only the note author can amend "
+            "the nursing note"
+        )
+
+    current_status = _nursing_record_status(
+        note
+    )
+
+    clinical_record_service.validate_amendment_transition(
+        current_status
+    )
+
+    if note.status != NursingNoteStatus.SIGNED:
+        raise ConflictError(
+            "Only signed nursing notes "
+            "can be amended"
+        )
+
+    _validate_nursing_record_version(
+        note,
+        expected_version,
+    )
+
+    normalized_document = (
+        _normalize_nursing_note_document(
+            document
+        )
+    )
+
+    effective_before = (
+        get_nursing_note_effective_document(
+            note
+        )
+    )
+
+    if normalized_document == effective_before:
+        raise ValidationError(
+            "Nursing note amendment must change "
+            "the effective clinical document"
+        )
+
+    amendment = (
+        clinical_record_service
+        .append_clinical_record_amendment(
+            clinic_id=note.clinic_id,
+            patient_id=note.patient_id,
+            source_record_type=(
+                ClinicalRecordType.NURSING_NOTE
+            ),
+            source_record_id=note.id,
+            current_status=current_status,
+            previous_version=note.record_version,
+            amended_by_staff_id=actor.id,
+            reason=reason,
+            new_content=normalized_document,
+        )
+    )
+
+    old_record_status = note.record_status
+    old_record_version = note.record_version
+
+    note.record_status = (
+        ClinicalRecordStatus.AMENDED.value
+    )
+    note.record_version = amendment.new_version
+    note.latest_amendment_id = amendment.id
+    note.latest_amendment = amendment
+    note.version += 1
+
+    db.session.flush()
+
+    _audit(
+        actor=actor,
+        action=AuditAction.STATUS_CHANGE,
+        entity_type="NursingNote",
+        entity_id=note.id,
+        description="Nursing note clinical record amended",
+        old_value={
+            "record_status": old_record_status,
+            "record_version": old_record_version,
+        },
+        new_value={
+            "record_status": note.record_status,
+            "record_version": note.record_version,
+            "latest_amendment_id": amendment.id,
+            "reason": amendment.reason,
+            "new_content_sha256": (
+                amendment.new_content_sha256
+            ),
+        },
+    )
+
+    return (
+        note,
+        amendment,
+    )
+
+
+def get_nursing_note_amendments(
+    note_id: int,
+    *,
+    clinic_id: int,
+):
+    note = _get_note(
+        note_id,
+        clinic_id,
+        lock=False,
+    )
+
+    return (
+        clinical_record_service
+        .get_clinical_record_amendments(
+            clinic_id=note.clinic_id,
+            source_record_type=(
+                ClinicalRecordType.NURSING_NOTE
+            ),
+            source_record_id=note.id,
+        )
+    )
