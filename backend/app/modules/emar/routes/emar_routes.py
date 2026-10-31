@@ -18,8 +18,12 @@ from app.core.idempotency.services.idempotency_service import (
     normalize_idempotency_key,
 )
 from app.core.utils.decorators import (
+    emergency_aware_role_required,
     get_current_clinic_id,
     role_required,
+)
+from app.core.emergency_access.routes.resource_access import (
+    authorize_emergency_read_if_requested,
 )
 from app.extensions import db
 from app.modules.clinical_records.schemas.clinical_record_schema import (
@@ -313,20 +317,34 @@ def verify_barcode_medication_administration_route():
 @emar_bp.get(
     "/<int:administration_id>/barcode-events"
 )
-@role_required(
+@emergency_aware_role_required(
     *EMAR_VIEW_ROLES
 )
 def list_barcode_verification_events_route(
     administration_id: int,
 ):
+    clinic_id = _current_clinic_id()
+
+    record = get_medication_administration(
+        administration_id,
+        clinic_id=clinic_id,
+    )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=record.patient_id,
+        resource_type="medication_administration",
+        resource_id=record.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
+
     events = (
         list_barcode_verification_events(
             administration_id=(
                 administration_id
             ),
-            clinic_id=(
-                _current_clinic_id()
-            ),
+            clinic_id=clinic_id,
         )
     )
 
@@ -667,7 +685,7 @@ def cancel_medication_administration_route(
 @emar_bp.get(
     "/<int:administration_id>"
 )
-@role_required(
+@emergency_aware_role_required(
     *EMAR_VIEW_ROLES
 )
 def get_medication_administration_route(
@@ -677,6 +695,15 @@ def get_medication_administration_route(
         administration_id,
         clinic_id=_current_clinic_id(),
     )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=record.patient_id,
+        resource_type="medication_administration",
+        resource_id=record.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
 
     return jsonify(
         {
@@ -768,16 +795,32 @@ def amend_medication_administration_route(
 @emar_bp.get(
     "/<int:administration_id>/amendments"
 )
-@role_required(
+@emergency_aware_role_required(
     *EMAR_VIEW_ROLES
 )
 def get_medication_administration_amendments_route(
     administration_id: int,
 ):
+    clinic_id = _current_clinic_id()
+
+    record = get_medication_administration(
+        administration_id,
+        clinic_id=clinic_id,
+    )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=record.patient_id,
+        resource_type="medication_administration",
+        resource_id=record.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
+
     rows = (
         get_medication_administration_amendments(
             administration_id,
-            clinic_id=_current_clinic_id(),
+            clinic_id=clinic_id,
         )
     )
 

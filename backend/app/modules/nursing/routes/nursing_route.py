@@ -13,7 +13,14 @@ from app.core.exceptions import ValidationError
 from app.core.idempotency.services.idempotency_service import (
     normalize_idempotency_key,
 )
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import (
+    emergency_aware_role_required,
+    get_current_clinic_id,
+    role_required,
+)
+from app.core.emergency_access.routes.resource_access import (
+    authorize_emergency_read_if_requested,
+)
 
 from app.modules.nursing.schemas.nursing_schema import (
     NursingCarePlanCreateSchema,
@@ -215,10 +222,28 @@ def list_care_plans_route(admission_id: int):
 
 
 @nursing_bp.get("/care-plans/<int:care_plan_id>")
-@role_required(*NURSING_VIEW_ROLES)
+@emergency_aware_role_required(*NURSING_VIEW_ROLES)
 def get_care_plan_route(care_plan_id: int):
-    plan = get_care_plan(care_plan_id, clinic_id=_current_clinic_id())
-    return jsonify(_serialize(NursingCarePlanResponseSchema, plan)), 200
+    plan = get_care_plan(
+        care_plan_id,
+        clinic_id=_current_clinic_id(),
+    )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=plan.patient_id,
+        resource_type="care_plan",
+        resource_id=plan.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
+
+    return jsonify(
+        _serialize(
+            NursingCarePlanResponseSchema,
+            plan,
+        )
+    ), 200
 
 
 def _plan_action(action, message, care_plan_id):
@@ -437,10 +462,28 @@ def list_nursing_notes_route(admission_id: int):
 
 
 @nursing_bp.get("/notes/<int:note_id>")
-@role_required(*NURSING_VIEW_ROLES)
+@emergency_aware_role_required(*NURSING_VIEW_ROLES)
 def get_nursing_note_route(note_id: int):
-    note = get_nursing_note(note_id, clinic_id=_current_clinic_id())
-    return jsonify(_serialize(NursingNoteResponseSchema, note)), 200
+    note = get_nursing_note(
+        note_id,
+        clinic_id=_current_clinic_id(),
+    )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=note.patient_id,
+        resource_type="nursing_note",
+        resource_id=note.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
+
+    return jsonify(
+        _serialize(
+            NursingNoteResponseSchema,
+            note,
+        )
+    ), 200
 
 
 @nursing_bp.patch("/notes/<int:note_id>")
@@ -668,11 +711,27 @@ def amend_nursing_note_route(note_id: int):
 
 
 @nursing_bp.get("/notes/<int:note_id>/amendments")
-@role_required(*NURSING_VIEW_ROLES)
+@emergency_aware_role_required(*NURSING_VIEW_ROLES)
 def get_nursing_note_amendments_route(note_id: int):
+    clinic_id = _current_clinic_id()
+
+    note = get_nursing_note(
+        note_id,
+        clinic_id=clinic_id,
+    )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=note.patient_id,
+        resource_type="nursing_note",
+        resource_id=note.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
+
     rows = get_nursing_note_amendments(
         note_id,
-        clinic_id=_current_clinic_id(),
+        clinic_id=clinic_id,
     )
 
     return jsonify({

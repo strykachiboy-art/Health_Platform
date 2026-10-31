@@ -12,8 +12,12 @@ from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
 from app.core.utils.decorators import (
     active_staff_required,
+    emergency_aware_role_required,
     get_current_clinic_id,
     role_required,
+)
+from app.core.emergency_access.routes.resource_access import (
+    authorize_emergency_read_if_requested,
 )
 
 from app.modules.ward.schemas.admission_schema import (
@@ -978,13 +982,22 @@ def _serialize_discharge_summary(summary):
     "/admissions/<int:admission_id>/discharge-summary",
     methods=["GET"],
 )
-@role_required(*CLINICAL_ROLES)
+@emergency_aware_role_required(*CLINICAL_ROLES)
 @active_staff_required
 def get_discharge_summary_route(admission_id: int):
     summary = get_discharge_summary_for_admission(
         admission_id,
         clinic_id=_current_clinic_id(),
     )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=summary.patient_id,
+        resource_type="discharge_summary",
+        resource_id=summary.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
 
     return jsonify(
         {
@@ -1044,7 +1057,7 @@ def amend_discharge_summary_route(admission_id: int):
     "/admissions/<int:admission_id>/discharge-summary/amendments",
     methods=["GET"],
 )
-@role_required(*CLINICAL_ROLES)
+@emergency_aware_role_required(*CLINICAL_ROLES)
 @active_staff_required
 def discharge_summary_amendments_route(admission_id: int):
     clinic_id = _current_clinic_id()
@@ -1053,6 +1066,15 @@ def discharge_summary_amendments_route(admission_id: int):
         admission_id,
         clinic_id=clinic_id,
     )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=summary.patient_id,
+        resource_type="discharge_summary",
+        resource_id=summary.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
 
     rows = get_discharge_summary_amendments(
         summary.id,

@@ -13,8 +13,12 @@ from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
 from app.core.utils.decorators import (
+    emergency_aware_role_required,
     get_current_clinic_id,
     role_required,
+)
+from app.core.emergency_access.routes.resource_access import (
+    authorize_emergency_read_if_requested,
 )
 from app.extensions import db
 from app.modules.clinical_records.schemas.clinical_record_schema import (
@@ -336,7 +340,7 @@ def amend_reconciliation_route(
 @medication_reconciliation_bp.get(
     "/<int:reconciliation_id>"
 )
-@role_required(
+@emergency_aware_role_required(
     *MED_RECON_VIEW_ROLES
 )
 def get_reconciliation_route(
@@ -346,6 +350,15 @@ def get_reconciliation_route(
         reconciliation_id,
         clinic_id=_clinic_id(),
     )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=record.patient_id,
+        resource_type="medication_reconciliation",
+        resource_id=record.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
 
     return jsonify({
         "reconciliation": _serialize(
@@ -357,16 +370,32 @@ def get_reconciliation_route(
 @medication_reconciliation_bp.get(
     "/<int:reconciliation_id>/amendments"
 )
-@role_required(
+@emergency_aware_role_required(
     *MED_RECON_VIEW_ROLES
 )
 def get_reconciliation_amendments_route(
     reconciliation_id: int,
 ):
+    clinic_id = _clinic_id()
+
+    record = get_medication_reconciliation(
+        reconciliation_id,
+        clinic_id=clinic_id,
+    )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=record.patient_id,
+        resource_type="medication_reconciliation",
+        resource_id=record.id,
+    )
+
+    if emergency_denial is not None:
+        return emergency_denial
+
     rows = (
         get_medication_reconciliation_amendments(
             reconciliation_id,
-            clinic_id=_clinic_id(),
+            clinic_id=clinic_id,
         )
     )
 

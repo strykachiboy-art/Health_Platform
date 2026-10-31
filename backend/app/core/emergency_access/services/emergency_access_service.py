@@ -27,6 +27,15 @@ from app.modules.lab.models.lab_model import LabOrder
 from app.modules.pharmacy.models.pharmacy_model import DispenseRecord
 from app.modules.patient.models.patient_model import Patient
 from app.modules.prescription.models.prescription_model import Prescription
+from app.modules.emar.models.emar_model import MedicationAdministration
+from app.modules.medication_reconciliation.models.medication_reconciliation_model import (
+    MedicationReconciliation,
+)
+from app.modules.nursing.models.nursing_model import (
+    NursingCarePlan,
+    NursingNote,
+)
+from app.modules.ward.models.discharge_summary_model import DischargeSummary
 from app.modules.staff.models.staff_model import Staff
 
 
@@ -54,6 +63,15 @@ EMERGENCY_REVIEWER_ROLES = frozenset(
         Role.SUPER_ADMIN,
     }
 )
+
+
+EMERGENCY_PATIENT_RESOURCE_MODELS = {
+    "nursing_note": NursingNote,
+    "care_plan": NursingCarePlan,
+    "medication_administration": MedicationAdministration,
+    "medication_reconciliation": MedicationReconciliation,
+    "discharge_summary": DischargeSummary,
+}
 
 _SCOPE_TOKEN_PATTERN = re.compile(
     r"^[a-z0-9][a-z0-9_-]{0,79}$"
@@ -1262,6 +1280,25 @@ def assert_emergency_access(
             or prescription is None
             or prescription.clinic_id != clinic_id
             or prescription.patient_id != patient_id
+        ):
+            return False
+
+    elif resource_type in EMERGENCY_PATIENT_RESOURCE_MODELS:
+        resource_model = (
+            EMERGENCY_PATIENT_RESOURCE_MODELS[
+                resource_type
+            ]
+        )
+
+        resource = db.session.get(
+            resource_model,
+            resource_id,
+        )
+
+        if (
+            resource is None
+            or resource.clinic_id != clinic_id
+            or resource.patient_id != patient_id
         ):
             return False
 
