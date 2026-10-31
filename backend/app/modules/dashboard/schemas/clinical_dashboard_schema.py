@@ -22,6 +22,69 @@ from app.modules.dashboard.schemas.dashboard_schema import (
 )
 
 
+class ClinicalHospitalAdmissionsSchema(BaseModel):
+    active_admissions: int = Field(..., ge=0)
+    total_beds: int = Field(..., ge=0)
+    occupied_beds: int = Field(..., ge=0)
+    available_beds: int = Field(..., ge=0)
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ClinicalNursingWorkloadSchema(BaseModel):
+    active_care_plans: int = Field(..., ge=0)
+    pending_tasks: int = Field(..., ge=0)
+    in_progress_tasks: int = Field(..., ge=0)
+    urgent_open_tasks: int = Field(..., ge=0)
+    overdue_open_tasks: int = Field(..., ge=0)
+    unsigned_assessments: int = Field(..., ge=0)
+    ready_handoffs: int = Field(..., ge=0)
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ClinicalEMARWorkloadSchema(BaseModel):
+    scheduled: int = Field(..., ge=0)
+    due: int = Field(..., ge=0)
+    administered: int = Field(..., ge=0)
+    held: int = Field(..., ge=0)
+    refused: int = Field(..., ge=0)
+    missed: int = Field(..., ge=0)
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ClinicalMedicationReconciliationSchema(BaseModel):
+    draft: int = Field(..., ge=0)
+    final: int = Field(..., ge=0)
+    amended: int = Field(..., ge=0)
+    draft_discharge: int = Field(..., ge=0)
+    finalized_discharge: int = Field(..., ge=0)
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ClinicalHospitalDashboardSchema(BaseModel):
+    admissions: ClinicalHospitalAdmissionsSchema | None = None
+    nursing: ClinicalNursingWorkloadSchema | None = None
+    emar: ClinicalEMARWorkloadSchema | None = None
+    medication_reconciliation: (
+        ClinicalMedicationReconciliationSchema | None
+    ) = None
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class ClinicalDashboardOverviewSchema(BaseModel):
     appointments_today: int = Field(
         ...,
@@ -165,6 +228,8 @@ class ClinicalDashboardSchema(BaseModel):
     period: DashboardPeriodSchema
 
     overview: ClinicalDashboardOverviewSchema
+
+    hospital: ClinicalHospitalDashboardSchema | None = None
 
     my_departments: list[
         ClinicalDepartmentSchema

@@ -63,6 +63,7 @@ from app.modules.dashboard.schemas.department_dashboard_schema import (
 
 from app.modules.dashboard.schemas.dashboard_schema import (
     DashboardAlertSchema,
+    DashboardMetricSchema,
     DashboardQuerySchema,
 )
 
@@ -74,6 +75,11 @@ from app.modules.dashboard.schemas.management_dashboard_schema import (
     ManagementAIRiskSummarySchema,
     ManagementDashboardOverviewSchema,
     ManagementDashboardSchema,
+    ManagementEMAROperationsSchema,
+    ManagementHospitalAdmissionsSchema,
+    ManagementHospitalOperationsSchema,
+    ManagementMedicationReconciliationSchema,
+    ManagementNursingOperationsSchema,
 )
 
 from app.modules.dashboard.services.dashboard_widget_service import (
@@ -85,6 +91,156 @@ from app.modules.dashboard.services.dashboard_widget_service import (
     period_bounds,
     resolve_dashboard_period,
 )
+from app.modules.dashboard.services.hospital_dashboard_widget_service import (
+    build_hospital_read_model,
+)
+
+
+def _build_management_hospital_operations(
+    *,
+    clinic_id: int,
+) -> ManagementHospitalOperationsSchema:
+    data = build_hospital_read_model(
+        clinic_id=clinic_id,
+    )
+
+    return ManagementHospitalOperationsSchema(
+        admissions=ManagementHospitalAdmissionsSchema(
+            **data["admissions"],
+        ),
+        nursing=ManagementNursingOperationsSchema(
+            **data["nursing"],
+        ),
+        emar=ManagementEMAROperationsSchema(
+            **data["emar"],
+        ),
+        medication_reconciliation=(
+            ManagementMedicationReconciliationSchema(
+                **data["medication_reconciliation"],
+            )
+        ),
+    )
+
+
+def _management_hospital_presentation(
+    *,
+    hospital: ManagementHospitalOperationsSchema,
+) -> tuple[
+    list[DashboardMetricSchema],
+    list[DashboardAlertSchema],
+]:
+    metrics = [
+        build_metric(
+            key="hospital_available_beds",
+            label="Available hospital beds",
+            value=hospital.admissions.available_beds,
+            unit="beds",
+        ),
+        build_metric(
+            key="urgent_nursing_tasks",
+            label="Urgent nursing tasks",
+            value=hospital.nursing.urgent_open_tasks,
+            unit="tasks",
+        ),
+        build_metric(
+            key="emar_due",
+            label="Medications due",
+            value=hospital.emar.due,
+            unit="administrations",
+        ),
+        build_metric(
+            key="draft_discharge_reconciliations",
+            label="Draft discharge reconciliations",
+            value=(
+                hospital
+                .medication_reconciliation
+                .draft_discharge
+            ),
+            unit="reconciliations",
+        ),
+    ]
+
+    alerts: list[DashboardAlertSchema] = []
+
+    if (
+        hospital.admissions.total_beds > 0
+        and hospital.admissions.available_beds == 0
+    ):
+        alerts.append(
+            DashboardAlertSchema(
+                key="hospital_bed_capacity",
+                severity="critical",
+                title="No hospital beds available",
+                count=hospital.admissions.occupied_beds,
+                description=(
+                    "All configured hospital beds are currently occupied."
+                ),
+            )
+        )
+
+    if hospital.nursing.urgent_open_tasks:
+        alerts.append(
+            DashboardAlertSchema(
+                key="urgent_nursing_tasks",
+                severity="critical",
+                title="Urgent nursing tasks",
+                count=hospital.nursing.urgent_open_tasks,
+                description=(
+                    "Urgent nursing tasks remain open across the clinic."
+                ),
+            )
+        )
+
+    if hospital.nursing.overdue_open_tasks:
+        alerts.append(
+            DashboardAlertSchema(
+                key="overdue_nursing_tasks",
+                severity="warning",
+                title="Overdue nursing tasks",
+                count=hospital.nursing.overdue_open_tasks,
+                description=(
+                    "Nursing tasks are past their due time."
+                ),
+            )
+        )
+
+    if hospital.emar.missed:
+        alerts.append(
+            DashboardAlertSchema(
+                key="missed_medication_administrations",
+                severity="critical",
+                title="Missed medication administrations",
+                count=hospital.emar.missed,
+                description=(
+                    "Missed eMAR administrations require operational "
+                    "follow-up."
+                ),
+            )
+        )
+
+    if (
+        hospital
+        .medication_reconciliation
+        .draft_discharge
+    ):
+        alerts.append(
+            DashboardAlertSchema(
+                key="draft_discharge_reconciliations",
+                severity="warning",
+                title="Draft discharge reconciliations",
+                count=(
+                    hospital
+                    .medication_reconciliation
+                    .draft_discharge
+                ),
+                description=(
+                    "Draft discharge medication reconciliations remain "
+                    "open."
+                ),
+            )
+        )
+
+    return metrics, alerts
 
 
 def _build_department_dashboard(
@@ -405,6 +561,17 @@ def get_management_dashboard(
         ),
     )
 
+    hospital = _build_management_hospital_operations(
+        clinic_id=clinic_id,
+    )
+
+    (
+        hospital_metrics,
+        hospital_alerts,
+    ) = _management_hospital_presentation(
+        hospital=hospital,
+    )
+
     ai_data = build_ai_aggregates(
         clinic_id=clinic_id,
         period=period,
@@ -553,7 +720,14 @@ def get_management_dashboard(
         ),
     ]
 
+    metrics.extend(
+        hospital_metrics,
+    )
+
     alerts = []
+    alerts.extend(
+        hospital_alerts,
+    )
 
     if low_stock_items:
         alerts.append(
@@ -643,6 +817,7 @@ def get_management_dashboard(
         ),
         period=period,
         overview=overview,
+        hospital=hospital,
         departments=department_dashboard,
         ai=ai,
         chat=chat,

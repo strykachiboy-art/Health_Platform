@@ -24,6 +24,69 @@ from app.modules.dashboard.schemas.dashboard_schema import (
 )
 
 
+class ManagementHospitalAdmissionsSchema(BaseModel):
+    active_admissions: int = Field(..., ge=0)
+    total_beds: int = Field(..., ge=0)
+    occupied_beds: int = Field(..., ge=0)
+    available_beds: int = Field(..., ge=0)
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ManagementNursingOperationsSchema(BaseModel):
+    active_care_plans: int = Field(..., ge=0)
+    pending_tasks: int = Field(..., ge=0)
+    in_progress_tasks: int = Field(..., ge=0)
+    urgent_open_tasks: int = Field(..., ge=0)
+    overdue_open_tasks: int = Field(..., ge=0)
+    unsigned_assessments: int = Field(..., ge=0)
+    ready_handoffs: int = Field(..., ge=0)
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ManagementEMAROperationsSchema(BaseModel):
+    scheduled: int = Field(..., ge=0)
+    due: int = Field(..., ge=0)
+    administered: int = Field(..., ge=0)
+    held: int = Field(..., ge=0)
+    refused: int = Field(..., ge=0)
+    missed: int = Field(..., ge=0)
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ManagementMedicationReconciliationSchema(BaseModel):
+    draft: int = Field(..., ge=0)
+    final: int = Field(..., ge=0)
+    amended: int = Field(..., ge=0)
+    draft_discharge: int = Field(..., ge=0)
+    finalized_discharge: int = Field(..., ge=0)
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ManagementHospitalOperationsSchema(BaseModel):
+    admissions: ManagementHospitalAdmissionsSchema
+    nursing: ManagementNursingOperationsSchema
+    emar: ManagementEMAROperationsSchema
+    medication_reconciliation: (
+        ManagementMedicationReconciliationSchema
+    )
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class ManagementDashboardOverviewSchema(BaseModel):
     total_patients: int = Field(
         ...,
@@ -207,6 +270,8 @@ class ManagementDashboardSchema(BaseModel):
     period: DashboardPeriodSchema
 
     overview: ManagementDashboardOverviewSchema
+
+    hospital: ManagementHospitalOperationsSchema
 
     departments: ManagementDepartmentDashboardSchema
 

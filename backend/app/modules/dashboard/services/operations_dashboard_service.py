@@ -37,12 +37,14 @@ from app.modules.staff.models.staff_model import (
 
 from app.modules.dashboard.schemas.dashboard_schema import (
     DashboardAlertSchema,
+    DashboardMetricSchema,
     DashboardQuerySchema,
 )
 
 from app.modules.dashboard.schemas.operations_dashboard_schema import (
     OperationsDashboardOverviewSchema,
     OperationsDashboardSchema,
+    OperationsHospitalCapacitySchema,
 )
 
 from app.modules.dashboard.services.dashboard_widget_service import (
@@ -53,6 +55,9 @@ from app.modules.dashboard.services.dashboard_widget_service import (
     period_bounds,
     resolve_dashboard_period,
 )
+from app.modules.dashboard.services.hospital_dashboard_widget_service import (
+    build_admission_aggregates,
+)
 
 
 OPERATIONS_ROLES = {
@@ -62,6 +67,67 @@ OPERATIONS_ROLES = {
     Role.AMBULANCE_COORDINATOR,
     Role.OTHER,
 }
+
+
+def _build_operations_hospital_capacity(
+    *,
+    role: Role,
+    clinic_id: int,
+) -> OperationsHospitalCapacitySchema | None:
+    if role is not Role.RECEPTIONIST:
+        return None
+
+    return OperationsHospitalCapacitySchema(
+        **build_admission_aggregates(
+            clinic_id=clinic_id,
+        )
+    )
+
+
+def _operations_hospital_presentation(
+    *,
+    capacity: OperationsHospitalCapacitySchema | None,
+) -> tuple[
+    list[DashboardMetricSchema],
+    list[DashboardAlertSchema],
+]:
+    if capacity is None:
+        return [], []
+
+    metrics = [
+        build_metric(
+            key="hospital_active_admissions",
+            label="Active admissions",
+            value=capacity.active_admissions,
+            unit="admissions",
+        ),
+        build_metric(
+            key="hospital_available_beds",
+            label="Available hospital beds",
+            value=capacity.available_beds,
+            unit="beds",
+        ),
+    ]
+
+    alerts: list[DashboardAlertSchema] = []
+
+    if (
+        capacity.total_beds > 0
+        and capacity.available_beds == 0
+    ):
+        alerts.append(
+            DashboardAlertSchema(
+                key="hospital_bed_capacity",
+                severity="critical",
+                title="No hospital beds available",
+                count=capacity.occupied_beds,
+                description=(
+                    "All configured hospital beds are currently occupied."
+                ),
+            )
+        )
+
+    return metrics, alerts
 
 
 def get_operations_dashboard(
@@ -327,6 +393,18 @@ def get_operations_dashboard(
         ),
     )
 
+    hospital_capacity = _build_operations_hospital_capacity(
+        role=actor.role,
+        clinic_id=clinic_id,
+    )
+
+    (
+        hospital_metrics,
+        hospital_alerts,
+    ) = _operations_hospital_presentation(
+        capacity=hospital_capacity,
+    )
+
     chat = build_chat_summary(
         user_id=actor.id,
         clinic_id=clinic_id,
@@ -382,7 +460,14 @@ def get_operations_dashboard(
         ),
     ]
 
+    metrics.extend(
+        hospital_metrics,
+    )
+
     alerts = []
+    alerts.extend(
+        hospital_alerts,
+    )
 
     if pending_ambulance_requests:
         alerts.append(
@@ -437,6 +522,7 @@ def get_operations_dashboard(
         ),
         period=period,
         overview=overview,
+        hospital_capacity=hospital_capacity,
         chat=chat,
         metrics=metrics,
         alerts=alerts,

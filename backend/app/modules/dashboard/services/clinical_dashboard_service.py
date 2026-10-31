@@ -62,6 +62,7 @@ from app.modules.dashboard.schemas.department_dashboard_schema import (
 
 from app.modules.dashboard.schemas.dashboard_schema import (
     DashboardAlertSchema,
+    DashboardMetricSchema,
     DashboardQuerySchema,
 )
 
@@ -73,6 +74,11 @@ from app.modules.dashboard.schemas.clinical_dashboard_schema import (
     ClinicalAIRiskSummarySchema,
     ClinicalDashboardOverviewSchema,
     ClinicalDashboardSchema,
+    ClinicalEMARWorkloadSchema,
+    ClinicalHospitalAdmissionsSchema,
+    ClinicalHospitalDashboardSchema,
+    ClinicalMedicationReconciliationSchema,
+    ClinicalNursingWorkloadSchema,
 )
 
 from app.modules.dashboard.services.dashboard_widget_service import (
@@ -84,6 +90,10 @@ from app.modules.dashboard.services.dashboard_widget_service import (
     period_bounds,
     resolve_dashboard_period,
 )
+from app.modules.dashboard.services.hospital_dashboard_widget_service import (
+    build_hospital_read_model,
+    build_reconciliation_aggregates,
+)
 
 
 CLINICAL_ROLES = {
@@ -94,6 +104,206 @@ CLINICAL_ROLES = {
     Role.PARAMEDIC,
     Role.EMT,
 }
+
+
+HOSPITAL_DASHBOARD_ROLES = {
+    Role.DOCTOR,
+    Role.NURSE,
+    Role.PHARMACIST,
+}
+
+
+def _build_hospital_dashboard(
+    *,
+    role: Role,
+    clinic_id: int,
+) -> ClinicalHospitalDashboardSchema | None:
+    if role not in HOSPITAL_DASHBOARD_ROLES:
+        return None
+
+    if role is Role.PHARMACIST:
+        return ClinicalHospitalDashboardSchema(
+            medication_reconciliation=(
+                ClinicalMedicationReconciliationSchema(
+                    **build_reconciliation_aggregates(
+                        clinic_id=clinic_id,
+                    )
+                )
+            ),
+        )
+
+    data = build_hospital_read_model(
+        clinic_id=clinic_id,
+    )
+
+    return ClinicalHospitalDashboardSchema(
+        admissions=ClinicalHospitalAdmissionsSchema(
+            **data["admissions"],
+        ),
+        nursing=ClinicalNursingWorkloadSchema(
+            **data["nursing"],
+        ),
+        emar=ClinicalEMARWorkloadSchema(
+            **data["emar"],
+        ),
+        medication_reconciliation=(
+            ClinicalMedicationReconciliationSchema(
+                **data["medication_reconciliation"],
+            )
+        ),
+    )
+
+
+def _hospital_workflow_presentation(
+    *,
+    role: Role,
+    hospital: ClinicalHospitalDashboardSchema | None,
+) -> tuple[
+    list[DashboardMetricSchema],
+    list[DashboardAlertSchema],
+]:
+    if hospital is None:
+        return [], []
+
+    metrics: list[DashboardMetricSchema] = []
+    alerts: list[DashboardAlertSchema] = []
+
+    if role is Role.DOCTOR:
+        if hospital.admissions is not None:
+            metrics.append(
+                build_metric(
+                    key="active_admissions",
+                    label="Active admissions",
+                    value=hospital.admissions.active_admissions,
+                    unit="admissions",
+                )
+            )
+
+        reconciliation = hospital.medication_reconciliation
+
+        if reconciliation is not None:
+            metrics.append(
+                build_metric(
+                    key="draft_discharge_reconciliations",
+                    label="Draft discharge reconciliations",
+                    value=reconciliation.draft_discharge,
+                    unit="reconciliations",
+                )
+            )
+
+            if reconciliation.draft_discharge:
+                alerts.append(
+                    DashboardAlertSchema(
+                        key="draft_discharge_reconciliations",
+                        severity="warning",
+                        title="Discharge reconciliations need finalization",
+                        count=reconciliation.draft_discharge,
+                        description=(
+                            "Draft discharge medication reconciliations "
+                            "remain open."
+                        ),
+                    )
+                )
+
+        if hospital.emar is not None and hospital.emar.missed:
+            alerts.append(
+                DashboardAlertSchema(
+                    key="missed_medication_administrations",
+                    severity="critical",
+                    title="Missed medication administrations",
+                    count=hospital.emar.missed,
+                    description=(
+                        "Missed eMAR administrations require clinical "
+                        "review."
+                    ),
+                )
+            )
+
+    elif role is Role.NURSE:
+        if hospital.nursing is not None:
+            metrics.append(
+                build_metric(
+                    key="pending_nursing_tasks",
+                    label="Pending nursing tasks",
+                    value=hospital.nursing.pending_tasks,
+                    unit="tasks",
+                )
+            )
+
+            if hospital.nursing.urgent_open_tasks:
+                alerts.append(
+                    DashboardAlertSchema(
+                        key="urgent_nursing_tasks",
+                        severity="critical",
+                        title="Urgent nursing tasks",
+                        count=hospital.nursing.urgent_open_tasks,
+                        description="Urgent nursing tasks remain open.",
+                    )
+                )
+
+            if hospital.nursing.overdue_open_tasks:
+                alerts.append(
+                    DashboardAlertSchema(
+                        key="overdue_nursing_tasks",
+                        severity="warning",
+                        title="Overdue nursing tasks",
+                        count=hospital.nursing.overdue_open_tasks,
+                        description="Nursing tasks are past their due time.",
+                    )
+                )
+
+        if hospital.emar is not None:
+            metrics.append(
+                build_metric(
+                    key="emar_due",
+                    label="Medications due",
+                    value=hospital.emar.due,
+                    unit="administrations",
+                )
+            )
+
+            if hospital.emar.missed:
+                alerts.append(
+                    DashboardAlertSchema(
+                        key="missed_medication_administrations",
+                        severity="critical",
+                        title="Missed medication administrations",
+                        count=hospital.emar.missed,
+                        description=(
+                            "Missed eMAR administrations require nursing "
+                            "follow-up."
+                        ),
+                    )
+                )
+
+    elif role is Role.PHARMACIST:
+        reconciliation = hospital.medication_reconciliation
+
+        if reconciliation is not None:
+            metrics.append(
+                build_metric(
+                    key="draft_medication_reconciliations",
+                    label="Draft medication reconciliations",
+                    value=reconciliation.draft,
+                    unit="reconciliations",
+                )
+            )
+
+            if reconciliation.draft_discharge:
+                alerts.append(
+                    DashboardAlertSchema(
+                        key="draft_discharge_reconciliations",
+                        severity="warning",
+                        title="Discharge reconciliations need finalization",
+                        count=reconciliation.draft_discharge,
+                        description=(
+                            "Draft discharge medication reconciliations "
+                            "remain open."
+                        ),
+                    )
+                )
+
+    return metrics, alerts
 
 
 def _get_my_departments(
@@ -397,6 +607,19 @@ def get_clinical_dashboard(
         ),
     )
 
+    hospital = _build_hospital_dashboard(
+        role=actor.role,
+        clinic_id=clinic_id,
+    )
+
+    (
+        hospital_metrics,
+        hospital_alerts,
+    ) = _hospital_workflow_presentation(
+        role=actor.role,
+        hospital=hospital,
+    )
+
     ai_data = build_ai_aggregates(
         clinic_id=clinic_id,
         user_id=actor.id,
@@ -502,7 +725,14 @@ def get_clinical_dashboard(
         ),
     ]
 
+    metrics.extend(
+        hospital_metrics,
+    )
+
     alerts = []
+    alerts.extend(
+        hospital_alerts,
+    )
 
     if ai_data[
         "critical_risk_results"
@@ -561,6 +791,7 @@ def get_clinical_dashboard(
         ),
         period=period,
         overview=overview,
+        hospital=hospital,
         my_departments=my_departments,
         ai=ai,
         chat=chat,

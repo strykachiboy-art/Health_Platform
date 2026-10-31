@@ -12,6 +12,17 @@ from app.modules.dashboard.schemas.dashboard_schema import (
 )
 
 
+class OperationsHospitalCapacitySchema(BaseModel):
+    active_admissions: int = Field(..., ge=0)
+    total_beds: int = Field(..., ge=0)
+    occupied_beds: int = Field(..., ge=0)
+    available_beds: int = Field(..., ge=0)
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class OperationsDashboardOverviewSchema(BaseModel):
     appointments_today: int = Field(
         ...,
@@ -69,6 +80,8 @@ class OperationsDashboardSchema(BaseModel):
     period: DashboardPeriodSchema
 
     overview: OperationsDashboardOverviewSchema
+
+    hospital_capacity: OperationsHospitalCapacitySchema | None = None
 
     chat: DashboardChatSummarySchema
 
