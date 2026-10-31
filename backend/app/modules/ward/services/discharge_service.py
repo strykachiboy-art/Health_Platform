@@ -31,6 +31,9 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.core.idempotency.services.idempotency_service import (
+    reserve_idempotency_operation,
+)
 from app.core.utils.decorators import transactional
 from app.extensions import db
 from app.modules.clinic.services.clinic_service import ensure_clinic_active
@@ -588,6 +591,60 @@ def _existing_summary(
     ).scalar_one_or_none()
 
 
+def _resolve_idempotent_discharge_replay(
+    *,
+    idempotency_record,
+    clinic_id: int,
+    admission_id: int,
+) -> tuple[Admission, DischargeSummary]:
+    if (
+        idempotency_record.entity_type
+        != "DischargeSummary"
+        or idempotency_record.entity_id is None
+    ):
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "a completed clinical discharge",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    summary = db.session.execute(
+        select(DischargeSummary).where(
+            DischargeSummary.id
+            == idempotency_record.entity_id,
+            DischargeSummary.clinic_id == clinic_id,
+            DischargeSummary.admission_id
+            == admission_id,
+        )
+    ).scalar_one_or_none()
+
+    if summary is None:
+        raise ConflictError(
+            "Idempotency record references a missing "
+            "or different discharge summary",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    admission = db.session.get(
+        Admission,
+        admission_id,
+    )
+
+    if (
+        admission is None
+        or admission.status
+        != AdmissionStatus.DISCHARGED
+        or admission.discharged_at is None
+    ):
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "a completed discharge state",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    return admission, summary
+
+
 def complete_clinical_discharge(
     *,
     admission_id: int,
@@ -601,14 +658,60 @@ def complete_clinical_discharge(
     instructions: str,
     follow_up_plan: str,
     destination: str,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> tuple[Admission, DischargeSummary]:
     ensure_clinic_active(clinic_id)
+
+    idempotency_record = None
+
+    if idempotency_key is not None:
+        if idempotency_user_id is None:
+            raise ValidationError(
+                "Idempotency user ID is required"
+            )
+
+        idempotency_record, created = (
+            reserve_idempotency_operation(
+                clinic_id=clinic_id,
+                user_id=idempotency_user_id,
+                operation="discharge.finalize",
+                idempotency_key=idempotency_key,
+                request_payload={
+                    "admission_id": admission_id,
+                    "actor_staff_id": actor_staff_id,
+                    "reason": reason,
+                    "primary_diagnosis": primary_diagnosis,
+                    "secondary_diagnoses": secondary_diagnoses,
+                    "condition_at_discharge": condition_at_discharge,
+                    "instructions": instructions,
+                    "follow_up_plan": follow_up_plan,
+                    "destination": destination,
+                },
+            )
+        )
+
+        if not created:
+            return _resolve_idempotent_discharge_replay(
+                idempotency_record=idempotency_record,
+                clinic_id=clinic_id,
+                admission_id=admission_id,
+            )
 
     actor = _active_doctor(
         staff_id=actor_staff_id,
         actor_user_id=actor_user_id,
         clinic_id=clinic_id,
     )
+
+    if (
+        idempotency_user_id is not None
+        and actor.user_id != idempotency_user_id
+    ):
+        raise ValidationError(
+            "Idempotency user does not match "
+            "the discharge actor"
+        )
 
     admission = _active_admission(
         admission_id=admission_id,
@@ -751,6 +854,10 @@ def complete_clinical_discharge(
             "cancelled_pending_emar": cancelled_emar,
         },
     )
+
+    if idempotency_record is not None:
+        idempotency_record.entity_type = "DischargeSummary"
+        idempotency_record.entity_id = summary.id
 
     return admission, summary
 

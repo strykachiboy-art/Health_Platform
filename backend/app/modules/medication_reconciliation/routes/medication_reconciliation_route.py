@@ -12,6 +12,9 @@ from flask_jwt_extended import (
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
+from app.core.idempotency.services.idempotency_service import (
+    normalize_idempotency_key,
+)
 from app.core.utils.decorators import (
     emergency_aware_role_required,
     get_current_clinic_id,
@@ -86,7 +89,23 @@ def _clinic_id() -> int:
     )
 
 
-def _staff_id() -> int:
+def _required_idempotency_key() -> str:
+    raw_key = request.headers.get(
+        "Idempotency-Key"
+    )
+
+    if raw_key is None:
+        raise ValidationError(
+            "Idempotency-Key header is required "
+            "for medication reconciliation finalization"
+        )
+
+    return normalize_idempotency_key(
+        raw_key
+    )
+
+
+def _current_user() -> User:
     identity = get_jwt_identity()
 
     try:
@@ -116,7 +135,11 @@ def _staff_id() -> int:
             "to an active staff identity"
         )
 
-    return user.staff.id
+    return user
+
+
+def _staff_id() -> int:
+    return _current_user().staff.id
 
 
 def _serialize(
@@ -280,11 +303,15 @@ def finalize_reconciliation_route(
         )
     )
 
+    current_user = _current_user()
+
     record = finalize_medication_reconciliation(
         reconciliation_id,
         clinic_id=_clinic_id(),
-        actor_staff_id=_staff_id(),
+        actor_staff_id=current_user.staff.id,
         expected_version=payload.expected_version,
+        idempotency_key=_required_idempotency_key(),
+        idempotency_user_id=current_user.id,
     )
 
     return jsonify({

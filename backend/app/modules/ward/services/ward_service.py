@@ -2616,6 +2616,8 @@ def discharge_patient(
     instructions: str | None = None,
     follow_up_plan: str | None = None,
     destination: str | None = None,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> Admission:
     from app.modules.ward.services.discharge_service import (
         complete_clinical_discharge,
@@ -2635,6 +2637,8 @@ def discharge_patient(
         instructions=instructions,
         follow_up_plan=follow_up_plan,
         destination=destination,
+        idempotency_key=idempotency_key,
+        idempotency_user_id=idempotency_user_id,
     )
 
     return admission

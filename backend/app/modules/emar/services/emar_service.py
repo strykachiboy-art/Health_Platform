@@ -1135,6 +1135,105 @@ def _resolve_idempotent_administration_replay(
 
     return existing
 
+def _resolve_idempotent_emar_terminal_replay(
+    *,
+    idempotency_record,
+    clinic_id: int,
+    expected_status: MedicationAdministrationStatus,
+    administration_id: int | None = None,
+    patient_id: int | None = None,
+    admission_id: int | None = None,
+    prescription_item_id: int | None = None,
+) -> MedicationAdministration:
+    if (
+        idempotency_record.entity_type
+        != "MedicationAdministration"
+        or idempotency_record.entity_id is None
+    ):
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "a completed medication administration",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    if (
+        administration_id is not None
+        and idempotency_record.entity_id != administration_id
+    ):
+        raise ConflictError(
+            "Idempotency record references a different "
+            "medication administration",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    existing = _load_administration(
+        idempotency_record.entity_id,
+        clinic_id=clinic_id,
+    )
+
+    if existing.status != expected_status:
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "the completed requested medication action",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    if (
+        patient_id is not None
+        and existing.patient_id != patient_id
+    ):
+        raise ConflictError(
+            "Idempotency record references another patient",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    if (
+        admission_id is not None
+        and existing.admission_id != admission_id
+    ):
+        raise ConflictError(
+            "Idempotency record references another admission",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    if (
+        prescription_item_id is not None
+        and existing.prescription_item_id
+        != prescription_item_id
+    ):
+        raise ConflictError(
+            "Idempotency record references another medication order",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    return existing
+
+
+def _validate_idempotency_actor(
+    actor: Staff,
+    idempotency_user_id: int | None,
+) -> None:
+    if (
+        idempotency_user_id is not None
+        and actor.user_id != idempotency_user_id
+    ):
+        raise ValidationError(
+            "Idempotency user does not match "
+            "the medication administration actor"
+        )
+
+
+def _bind_emar_idempotency(
+    idempotency_record,
+    record: MedicationAdministration,
+) -> None:
+    if idempotency_record is None:
+        return
+
+    idempotency_record.entity_type = "MedicationAdministration"
+    idempotency_record.entity_id = record.id
+
+
 def _validate_pending_transition(
     record: MedicationAdministration,
 ) -> None:
@@ -1666,16 +1765,55 @@ def administer_prn_medication(
     actor_staff_id: int,
     administered_at: datetime | None = None,
     notes: str | None = None,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> MedicationAdministration:
-    administered_at = _normalize_event_time(
-        administered_at,
-        field_name="administered_at",
-    )
+    requested_administered_at = administered_at
 
     notes = _normalize_text(
         notes,
         field_name="notes",
         max_length=4000,
+    )
+
+    idempotency_record = None
+
+    if idempotency_key is not None:
+        if idempotency_user_id is None:
+            raise ValidationError(
+                "Idempotency user ID is required"
+            )
+
+        idempotency_record, created = (
+            reserve_idempotency_operation(
+                clinic_id=clinic_id,
+                user_id=idempotency_user_id,
+                operation="emar.prn_administer",
+                idempotency_key=idempotency_key,
+                request_payload={
+                    "patient_id": patient_id,
+                    "admission_id": admission_id,
+                    "prescription_item_id": prescription_item_id,
+                    "actor_staff_id": actor_staff_id,
+                    "administered_at": requested_administered_at,
+                    "notes": notes,
+                },
+            )
+        )
+
+        if not created:
+            return _resolve_idempotent_emar_terminal_replay(
+                idempotency_record=idempotency_record,
+                clinic_id=clinic_id,
+                expected_status=MedicationAdministrationStatus.ADMINISTERED,
+                patient_id=patient_id,
+                admission_id=admission_id,
+                prescription_item_id=prescription_item_id,
+            )
+
+    administered_at = _normalize_event_time(
+        administered_at,
+        field_name="administered_at",
     )
 
     (
@@ -1698,6 +1836,11 @@ def administer_prn_medication(
             "PRN administration requires "
             "a PRN medication order"
         )
+
+    _validate_idempotency_actor(
+        actor,
+        idempotency_user_id,
+    )
 
     record = MedicationAdministration(
         clinic_id=clinic_id,
@@ -1737,6 +1880,11 @@ def administer_prn_medication(
         ),
     )
 
+    _bind_emar_idempotency(
+        idempotency_record,
+        record,
+    )
+
     return record
 
 
@@ -1748,17 +1896,52 @@ def hold_medication(
     actor_staff_id: int,
     reason: str,
     held_at: datetime | None = None,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> MedicationAdministration:
-    held_at = _normalize_event_time(
-        held_at,
-        field_name="held_at",
-    )
+    requested_held_at = held_at
 
     reason = _normalize_text(
         reason,
         field_name="hold_reason",
         max_length=500,
         required=True,
+    )
+
+    idempotency_record = None
+
+    if idempotency_key is not None:
+        if idempotency_user_id is None:
+            raise ValidationError(
+                "Idempotency user ID is required"
+            )
+
+        idempotency_record, created = (
+            reserve_idempotency_operation(
+                clinic_id=clinic_id,
+                user_id=idempotency_user_id,
+                operation="emar.hold",
+                idempotency_key=idempotency_key,
+                request_payload={
+                    "administration_id": administration_id,
+                    "actor_staff_id": actor_staff_id,
+                    "reason": reason,
+                    "held_at": requested_held_at,
+                },
+            )
+        )
+
+        if not created:
+            return _resolve_idempotent_emar_terminal_replay(
+                idempotency_record=idempotency_record,
+                clinic_id=clinic_id,
+                expected_status=MedicationAdministrationStatus.HELD,
+                administration_id=administration_id,
+            )
+
+    held_at = _normalize_event_time(
+        held_at,
+        field_name="held_at",
     )
 
     record = _load_administration(
@@ -1774,6 +1957,11 @@ def hold_medication(
         record,
         actor_staff_id=actor_staff_id,
         event_at=held_at,
+    )
+
+    _validate_idempotency_actor(
+        actor,
+        idempotency_user_id,
     )
 
     old_status = record.status
@@ -1802,6 +1990,11 @@ def hold_medication(
         ),
     )
 
+    _bind_emar_idempotency(
+        idempotency_record,
+        record,
+    )
+
     return record
 
 
@@ -1813,17 +2006,52 @@ def record_medication_refusal(
     actor_staff_id: int,
     reason: str,
     refused_at: datetime | None = None,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> MedicationAdministration:
-    refused_at = _normalize_event_time(
-        refused_at,
-        field_name="refused_at",
-    )
+    requested_refused_at = refused_at
 
     reason = _normalize_text(
         reason,
         field_name="refusal_reason",
         max_length=500,
         required=True,
+    )
+
+    idempotency_record = None
+
+    if idempotency_key is not None:
+        if idempotency_user_id is None:
+            raise ValidationError(
+                "Idempotency user ID is required"
+            )
+
+        idempotency_record, created = (
+            reserve_idempotency_operation(
+                clinic_id=clinic_id,
+                user_id=idempotency_user_id,
+                operation="emar.refuse",
+                idempotency_key=idempotency_key,
+                request_payload={
+                    "administration_id": administration_id,
+                    "actor_staff_id": actor_staff_id,
+                    "reason": reason,
+                    "refused_at": requested_refused_at,
+                },
+            )
+        )
+
+        if not created:
+            return _resolve_idempotent_emar_terminal_replay(
+                idempotency_record=idempotency_record,
+                clinic_id=clinic_id,
+                expected_status=MedicationAdministrationStatus.REFUSED,
+                administration_id=administration_id,
+            )
+
+    refused_at = _normalize_event_time(
+        refused_at,
+        field_name="refused_at",
     )
 
     record = _load_administration(
@@ -1839,6 +2067,11 @@ def record_medication_refusal(
         record,
         actor_staff_id=actor_staff_id,
         event_at=refused_at,
+    )
+
+    _validate_idempotency_actor(
+        actor,
+        idempotency_user_id,
     )
 
     old_status = record.status
@@ -1869,6 +2102,11 @@ def record_medication_refusal(
         ),
     )
 
+    _bind_emar_idempotency(
+        idempotency_record,
+        record,
+    )
+
     return record
 
 
@@ -1880,17 +2118,52 @@ def mark_medication_missed(
     actor_staff_id: int,
     reason: str,
     missed_at: datetime | None = None,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> MedicationAdministration:
-    missed_at = _normalize_event_time(
-        missed_at,
-        field_name="missed_at",
-    )
+    requested_missed_at = missed_at
 
     reason = _normalize_text(
         reason,
         field_name="missed_reason",
         max_length=500,
         required=True,
+    )
+
+    idempotency_record = None
+
+    if idempotency_key is not None:
+        if idempotency_user_id is None:
+            raise ValidationError(
+                "Idempotency user ID is required"
+            )
+
+        idempotency_record, created = (
+            reserve_idempotency_operation(
+                clinic_id=clinic_id,
+                user_id=idempotency_user_id,
+                operation="emar.miss",
+                idempotency_key=idempotency_key,
+                request_payload={
+                    "administration_id": administration_id,
+                    "actor_staff_id": actor_staff_id,
+                    "reason": reason,
+                    "missed_at": requested_missed_at,
+                },
+            )
+        )
+
+        if not created:
+            return _resolve_idempotent_emar_terminal_replay(
+                idempotency_record=idempotency_record,
+                clinic_id=clinic_id,
+                expected_status=MedicationAdministrationStatus.MISSED,
+                administration_id=administration_id,
+            )
+
+    missed_at = _normalize_event_time(
+        missed_at,
+        field_name="missed_at",
     )
 
     record = _load_administration(
@@ -1906,6 +2179,11 @@ def mark_medication_missed(
         record,
         actor_staff_id=actor_staff_id,
         event_at=missed_at,
+    )
+
+    _validate_idempotency_actor(
+        actor,
+        idempotency_user_id,
     )
 
     old_status = record.status
@@ -1931,6 +2209,11 @@ def mark_medication_missed(
             "Medication administration "
             f"{record.id} marked missed"
         ),
+    )
+
+    _bind_emar_idempotency(
+        idempotency_record,
+        record,
     )
 
     return record

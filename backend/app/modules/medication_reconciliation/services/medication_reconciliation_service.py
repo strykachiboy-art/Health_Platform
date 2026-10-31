@@ -25,6 +25,9 @@ from app.core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from app.core.idempotency.services.idempotency_service import (
+    reserve_idempotency_operation,
+)
 from app.core.utils.decorators import transactional
 from app.extensions import db
 from app.modules.clinic.services.clinic_service import (
@@ -900,6 +903,43 @@ def update_medication_reconciliation_draft(
     return record
 
 
+def _resolve_idempotent_finalization_replay(
+    *,
+    idempotency_record,
+    clinic_id: int,
+    reconciliation_id: int,
+) -> MedicationReconciliation:
+    if (
+        idempotency_record.entity_type
+        != "MedicationReconciliation"
+        or idempotency_record.entity_id is None
+        or idempotency_record.entity_id
+        != reconciliation_id
+    ):
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "the completed medication reconciliation",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    record = _get_record(
+        reconciliation_id,
+        clinic_id=clinic_id,
+    )
+
+    if (
+        _record_status(record)
+        == ClinicalRecordStatus.DRAFT
+    ):
+        raise ConflictError(
+            "Idempotency record does not reference "
+            "a finalized medication reconciliation",
+            code="IDEMPOTENCY_RECORD_UNRESOLVED",
+        )
+
+    return record
+
+
 @transactional
 def finalize_medication_reconciliation(
     reconciliation_id: int,
@@ -907,7 +947,40 @@ def finalize_medication_reconciliation(
     clinic_id: int,
     actor_staff_id: int,
     expected_version: int,
+    idempotency_key: str | None = None,
+    idempotency_user_id: int | None = None,
 ) -> MedicationReconciliation:
+    idempotency_record = None
+
+    if idempotency_key is not None:
+        if idempotency_user_id is None:
+            raise ValidationError(
+                "Idempotency user ID is required"
+            )
+
+        idempotency_record, created = (
+            reserve_idempotency_operation(
+                clinic_id=clinic_id,
+                user_id=idempotency_user_id,
+                operation=(
+                    "medication_reconciliation.finalize"
+                ),
+                idempotency_key=idempotency_key,
+                request_payload={
+                    "reconciliation_id": reconciliation_id,
+                    "actor_staff_id": actor_staff_id,
+                    "expected_version": expected_version,
+                },
+            )
+        )
+
+        if not created:
+            return _resolve_idempotent_finalization_replay(
+                idempotency_record=idempotency_record,
+                clinic_id=clinic_id,
+                reconciliation_id=reconciliation_id,
+            )
+
     record = _get_record(
         reconciliation_id,
         clinic_id=clinic_id,
@@ -918,6 +991,15 @@ def finalize_medication_reconciliation(
         actor_staff_id,
         clinic_id,
     )
+
+    if (
+        idempotency_user_id is not None
+        and actor.user_id != idempotency_user_id
+    ):
+        raise ValidationError(
+            "Idempotency user does not match "
+            "the medication reconciliation actor"
+        )
 
     if record.created_by_staff_id != actor.id:
         raise ConflictError(
@@ -989,6 +1071,12 @@ def finalize_medication_reconciliation(
             "document": document,
         },
     )
+
+    if idempotency_record is not None:
+        idempotency_record.entity_type = (
+            "MedicationReconciliation"
+        )
+        idempotency_record.entity_id = record.id
 
     return record
 

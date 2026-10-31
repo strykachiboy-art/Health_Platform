@@ -77,7 +77,7 @@ def _setup_gate3_flow(
         },
         headers={
             "Authorization": (
-                f"Bearer {admin_login['access_token']}"
+                f"Bearer {pharmacist_login['access_token']}"
             ),
         },
     )
@@ -99,7 +99,7 @@ def _setup_gate3_flow(
         },
         headers={
             "Authorization": (
-                f"Bearer {admin_login['access_token']}"
+                f"Bearer {pharmacist_login['access_token']}"
             ),
         },
     )

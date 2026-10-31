@@ -288,6 +288,9 @@ def test_prn_route_passes_request_to_service(
             "prescription_item_id": 13,
             "notes": "PRN dose",
         },
+        headers={
+            "Idempotency-Key": "gate18-prn-route",
+        },
     ):
         response, status = _raw(
             emar_routes
@@ -301,6 +304,12 @@ def test_prn_route_passes_request_to_service(
     assert captured[
         "notes"
     ] == "PRN dose"
+    assert captured[
+        "idempotency_key"
+    ] == "gate18-prn-route"
+    assert captured[
+        "idempotency_user_id"
+    ] == 23
 
     assert (
         response.get_json()[
@@ -457,6 +466,19 @@ def test_transition_routes_are_wired(
     assert captured[
         expected_kwarg
     ] == expected_value
+
+    if handler_name in {
+        "administer_medication_route",
+        "hold_medication_route",
+        "record_medication_refusal_route",
+        "mark_medication_missed_route",
+    }:
+        assert captured[
+            "idempotency_key"
+        ] == "gate6-route-test"
+        assert captured[
+            "idempotency_user_id"
+        ] == 23
 
     assert (
         response.get_json()[

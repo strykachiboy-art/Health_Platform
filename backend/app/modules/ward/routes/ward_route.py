@@ -10,6 +10,9 @@ from app.modules.clinical_records.schemas.clinical_record_schema import (
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
+from app.core.idempotency.services.idempotency_service import (
+    normalize_idempotency_key,
+)
 from app.core.utils.decorators import (
     active_staff_required,
     emergency_aware_role_required,
@@ -223,6 +226,22 @@ def _request_json() -> dict:
 def _query_params() -> dict:
     return request.args.to_dict(
         flat=True
+    )
+
+
+def _required_idempotency_key() -> str:
+    raw_key = request.headers.get(
+        "Idempotency-Key"
+    )
+
+    if raw_key is None:
+        raise ValidationError(
+            "Idempotency-Key header is required "
+            "for clinical discharge"
+        )
+
+    return normalize_idempotency_key(
+        raw_key
     )
 
 
@@ -919,6 +938,8 @@ def discharge_patient_route(admission_id: int):
         instructions=payload.instructions,
         follow_up_plan=payload.follow_up_plan,
         destination=payload.destination,
+        idempotency_key=_required_idempotency_key(),
+        idempotency_user_id=user.id,
     )
 
     summary = get_discharge_summary_for_admission(

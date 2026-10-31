@@ -559,10 +559,13 @@ def test_discharge_route_returns_summary(
             "/api/v1/wards/admissions/"
             f"{ctx['admission'].id}/discharge"
         ),
-        headers=auth_headers_for(
-            ctx["doctor"].user,
-            role=Role.DOCTOR,
-        ),
+        headers={
+            **auth_headers_for(
+                ctx["doctor"].user,
+                role=Role.DOCTOR,
+            ),
+            "Idempotency-Key": "gate18-discharge-route",
+        },
         json=_payload(),
     )
 

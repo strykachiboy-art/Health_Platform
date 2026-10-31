@@ -410,7 +410,13 @@ def schedule_medication_administration_route():
 )
 def administer_prn_medication_route():
     clinic_id = _current_clinic_id()
-    staff_id = _current_staff_id()
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
 
     payload = (
         MedicationAdministrationPrnSchema
@@ -426,11 +432,15 @@ def administer_prn_medication_route():
         prescription_item_id=(
             payload.prescription_item_id
         ),
-        actor_staff_id=staff_id,
+        actor_staff_id=current_user.staff.id,
         administered_at=(
             payload.administered_at
         ),
         notes=payload.notes,
+        idempotency_key=(
+            _required_idempotency_key()
+        ),
+        idempotency_user_id=current_user.id,
     )
 
     return jsonify(
@@ -545,6 +555,14 @@ def administer_medication_route(
 def hold_medication_route(
     administration_id: int,
 ):
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
+
     payload = (
         MedicationAdministrationHoldSchema
         .model_validate(
@@ -555,9 +573,11 @@ def hold_medication_route(
     record = hold_medication(
         administration_id=administration_id,
         clinic_id=_current_clinic_id(),
-        actor_staff_id=_current_staff_id(),
+        actor_staff_id=current_user.staff.id,
         reason=payload.reason,
         held_at=payload.held_at,
+        idempotency_key=_required_idempotency_key(),
+        idempotency_user_id=current_user.id,
     )
 
     return jsonify(
@@ -579,6 +599,14 @@ def hold_medication_route(
 def record_medication_refusal_route(
     administration_id: int,
 ):
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
+
     payload = (
         MedicationAdministrationRefusalSchema
         .model_validate(
@@ -589,9 +617,11 @@ def record_medication_refusal_route(
     record = record_medication_refusal(
         administration_id=administration_id,
         clinic_id=_current_clinic_id(),
-        actor_staff_id=_current_staff_id(),
+        actor_staff_id=current_user.staff.id,
         reason=payload.reason,
         refused_at=payload.refused_at,
+        idempotency_key=_required_idempotency_key(),
+        idempotency_user_id=current_user.id,
     )
 
     return jsonify(
@@ -615,6 +645,14 @@ def record_medication_refusal_route(
 def mark_medication_missed_route(
     administration_id: int,
 ):
+    current_user = _current_user()
+
+    if current_user.staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
+
     payload = (
         MedicationAdministrationMissedSchema
         .model_validate(
@@ -625,9 +663,11 @@ def mark_medication_missed_route(
     record = mark_medication_missed(
         administration_id=administration_id,
         clinic_id=_current_clinic_id(),
-        actor_staff_id=_current_staff_id(),
+        actor_staff_id=current_user.staff.id,
         reason=payload.reason,
         missed_at=payload.missed_at,
+        idempotency_key=_required_idempotency_key(),
+        idempotency_user_id=current_user.id,
     )
 
     return jsonify(
