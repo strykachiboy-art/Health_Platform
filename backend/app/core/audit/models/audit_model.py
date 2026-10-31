@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.extensions import db
+from sqlalchemy import event
 
+from app.core.audit.integrity import (
+    calculate_audit_evidence_sha256,
+)
 from app.core.enums.audit_enums import AuditAction
+from app.core.exceptions import ConflictError
+from app.extensions import db
 
 
 def _utcnow() -> datetime:
@@ -35,6 +40,17 @@ class AuditLog(db.Model):
             "entity_id",
             "created_at",
             "id",
+        ),
+        db.Index(
+            "ix_audit_logs_clinic_operation_created_id",
+            "clinic_id",
+            "operation_id",
+            "created_at",
+            "id",
+        ),
+        db.CheckConstraint(
+            "length(evidence_sha256) = 64",
+            name="ck_audit_logs_evidence_sha256_length",
         ),
     )
 
@@ -79,6 +95,17 @@ class AuditLog(db.Model):
         nullable=True,
     )
 
+    reason = db.Column(
+        db.String(1000),
+        nullable=True,
+    )
+
+    operation_id = db.Column(
+        db.String(255),
+        nullable=True,
+        index=True,
+    )
+
     old_value = db.Column(
         db.JSON,
         nullable=True,
@@ -102,6 +129,12 @@ class AuditLog(db.Model):
         index=True,
     )
 
+    evidence_sha256 = db.Column(
+        db.String(64),
+        nullable=False,
+        index=True,
+    )
+
     clinic = db.relationship(
         "Clinic",
     )
@@ -117,3 +150,50 @@ class AuditLog(db.Model):
             f"{self.action.value} "
             f"{self.entity_type}#{self.entity_id}>"
         )
+
+
+@event.listens_for(
+    AuditLog,
+    "before_insert",
+)
+def _seal_audit_record(
+    _mapper,
+    _connection,
+    target: AuditLog,
+) -> None:
+    if target.created_at is None:
+        target.created_at = _utcnow()
+
+    target.evidence_sha256 = (
+        calculate_audit_evidence_sha256(
+            target
+        )
+    )
+
+
+@event.listens_for(
+    AuditLog,
+    "before_update",
+)
+def _reject_audit_update(
+    _mapper,
+    _connection,
+    _target: AuditLog,
+) -> None:
+    raise ConflictError(
+        "Audit records are immutable and cannot be updated"
+    )
+
+
+@event.listens_for(
+    AuditLog,
+    "before_delete",
+)
+def _reject_audit_delete(
+    _mapper,
+    _connection,
+    _target: AuditLog,
+) -> None:
+    raise ConflictError(
+        "Audit records are immutable and cannot be deleted"
+    )

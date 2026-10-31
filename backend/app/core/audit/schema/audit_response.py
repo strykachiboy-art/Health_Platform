@@ -24,12 +24,15 @@ class AuditLogResponseSchema(BaseModel):
     entity_id: StrictInt
 
     description: StrictStr | None
+    reason: StrictStr | None
+    operation_id: StrictStr | None
 
     old_value: dict[str, Any] | None
     new_value: dict[str, Any] | None
 
     ip_address: StrictStr | None
     created_at: datetime
+    evidence_sha256: StrictStr
 
     model_config = ConfigDict(
         from_attributes=True,

@@ -6,7 +6,10 @@ from app.core.audit.models.audit_model import AuditLog
 from app.core.audit.services.audit_writer import write_audit_log
 from app.core.enums.audit_enums import AuditAction
 from app.core.enums.role_enums import Role
-from app.core.exceptions import ValidationError
+from app.core.exceptions import (
+    ConflictError,
+    ValidationError,
+)
 from app.extensions import db
 from app.modules.access_control.services import (
     access_control_service,
@@ -172,7 +175,7 @@ def test_privileged_change_records_authenticated_actor(
     assert audit.new_value["role"] == Role.NURSE.value
 
 
-def test_audit_record_remains_after_actor_relationship_is_removed(
+def test_audit_actor_relationship_mutation_is_rejected(
     db_session,
     user,
     clinic,
@@ -187,21 +190,17 @@ def test_audit_record_remains_after_actor_relationship_is_removed(
 
     db_session.flush()
 
-    audit_id = log.id
-
-    user.audit_logs.remove(log)
-
-    db_session.flush()
-    db_session.expire_all()
-
-    persisted = db_session.get(
-        AuditLog,
-        audit_id,
+    user.audit_logs.remove(
+        log
     )
 
-    assert persisted is not None
-    assert persisted.id == audit_id
-    assert persisted.clinic_id == clinic.id
+    with pytest.raises(
+        ConflictError,
+        match="immutable",
+    ):
+        db_session.flush()
+
+    db_session.rollback()
 
 
 def test_audit_write_does_not_commit_before_caller_transaction(
