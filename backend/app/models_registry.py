@@ -111,6 +111,12 @@ from app.modules.clinical_orders.models.nursing_order_model import (
     NursingOrderExecution,
 )
 
+# Medication Reconciliation
+from app.modules.medication_reconciliation.models.medication_reconciliation_model import (
+    MedicationReconciliation,
+    MedicationReconciliationItem,
+)
+
 # Clinical Records
 from app.modules.clinical_records.models.clinical_record_amendment_model import (
     ClinicalRecordAmendment,
@@ -282,6 +288,10 @@ __all__ = [
     "DietOrder",
     "NursingOrder",
     "NursingOrderExecution",
+
+    # Medication Reconciliation
+    "MedicationReconciliation",
+    "MedicationReconciliationItem",
 
     # Clinical Records
     "ClinicalRecordAmendment",
