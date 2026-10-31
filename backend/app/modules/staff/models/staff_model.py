@@ -171,6 +171,7 @@ class Staff(db.Model):
 
     consultations = db.relationship(
         "Consultation",
+        foreign_keys="Consultation.staff_id",
         back_populates="staff",
     )
 

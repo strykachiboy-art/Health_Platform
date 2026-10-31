@@ -263,3 +263,136 @@ class PatientsSeenByStaffQuerySchema(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+
+class ConsultationFinalizeSchema(BaseModel):
+    expected_version: int = Field(
+        ...,
+        ge=1,
+    )
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ConsultationDocumentSchema(BaseModel):
+    icd10_code: Optional[str] = Field(
+        ...,
+        max_length=10,
+    )
+
+    chief_complaint: Optional[str] = Field(
+        ...,
+        max_length=2000,
+    )
+
+    symptoms: Optional[str] = Field(
+        ...,
+        max_length=5000,
+    )
+
+    diagnosis: Optional[str] = Field(
+        ...,
+        max_length=5000,
+    )
+
+    treatment_plan: Optional[str] = Field(
+        ...,
+        max_length=5000,
+    )
+
+    notes: Optional[str] = Field(
+        ...,
+        max_length=10000,
+    )
+
+    voice_note_url: Optional[str] = Field(
+        ...,
+        max_length=255,
+    )
+
+    transcribed_text: Optional[str] = Field(
+        ...,
+        max_length=20000,
+    )
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    _validate_icd10_code = field_validator(
+        "icd10_code",
+        mode="after",
+    )(_reject_blank)
+
+    _validate_chief_complaint = field_validator(
+        "chief_complaint",
+        mode="after",
+    )(_reject_blank)
+
+    _validate_symptoms = field_validator(
+        "symptoms",
+        mode="after",
+    )(_reject_blank)
+
+    _validate_diagnosis = field_validator(
+        "diagnosis",
+        mode="after",
+    )(_reject_blank)
+
+    _validate_treatment_plan = field_validator(
+        "treatment_plan",
+        mode="after",
+    )(_reject_blank)
+
+    _validate_notes = field_validator(
+        "notes",
+        mode="after",
+    )(_reject_blank)
+
+    _validate_voice_note_url = field_validator(
+        "voice_note_url",
+        mode="after",
+    )(_reject_blank)
+
+    _validate_transcribed_text = field_validator(
+        "transcribed_text",
+        mode="after",
+    )(_reject_blank)
+
+
+class ConsultationAmendmentSchema(BaseModel):
+    expected_version: int = Field(
+        ...,
+        ge=1,
+    )
+
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=10000,
+    )
+
+    document: ConsultationDocumentSchema
+
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
+
+    @field_validator(
+        "reason",
+        mode="after",
+    )
+    @classmethod
+    def validate_reason(
+        cls,
+        value: str,
+    ) -> str:
+        if not value.strip():
+            raise ValueError(
+                "Amendment reason cannot be blank"
+            )
+
+        return value

@@ -14,6 +14,11 @@ from app.core.enums.consultation_enums import (
     ConsultationStatus,
     ConsultationType,
 )
+from app.core.enums.clinical_record_enums import (
+    ClinicalRecordStatus,
+    ClinicalRecordType,
+)
+from app.core.enums.staff_enums import StaffStatus
 from app.core.exceptions import (
     ConflictError,
     NotFoundError,
@@ -22,6 +27,9 @@ from app.core.exceptions import (
 from app.core.utils.decorators import transactional
 
 from app.modules.clinic.services.clinic_service import ensure_clinic_active
+from app.modules.clinical_records.services import (
+    clinical_record_service,
+)
 
 from app.modules.consultation.models.consultation_model import (
     Consultation,
@@ -432,6 +440,8 @@ def start_consultation(
         chief_complaint=chief_complaint,
         symptoms=symptoms,
         status=ConsultationStatus.IN_PROGRESS,
+        record_status=ClinicalRecordStatus.DRAFT.value,
+        record_version=1,
         started_at=_utcnow(),
     )
 
@@ -467,6 +477,542 @@ def start_consultation(
     return consultation
 
 
+
+
+# ---------------------------------------------------------------------------
+# Clinical record finalization / amendment
+# ---------------------------------------------------------------------------
+
+_CONSULTATION_DOCUMENT_FIELDS = (
+    "icd10_code",
+    "chief_complaint",
+    "symptoms",
+    "diagnosis",
+    "treatment_plan",
+    "notes",
+    "voice_note_url",
+    "transcribed_text",
+)
+
+_CONSULTATION_DOCUMENT_LIMITS = {
+    "icd10_code": 10,
+    "chief_complaint": 2000,
+    "symptoms": 5000,
+    "diagnosis": 5000,
+    "treatment_plan": 5000,
+    "notes": 10000,
+    "voice_note_url": 255,
+    "transcribed_text": 20000,
+}
+
+
+def _clinical_record_status(
+    consultation: Consultation,
+) -> ClinicalRecordStatus:
+    try:
+        return ClinicalRecordStatus(
+            consultation.record_status
+        )
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise ConflictError(
+            f"Consultation {consultation.id} has invalid "
+            "clinical record state"
+        ) from exc
+
+
+def _validate_expected_record_version(
+    consultation: Consultation,
+    expected_version: int,
+) -> int:
+    if (
+        isinstance(
+            expected_version,
+            bool,
+        )
+        or not isinstance(
+            expected_version,
+            int,
+        )
+        or expected_version <= 0
+    ):
+        raise ValidationError(
+            "expected_version must be a positive integer"
+        )
+
+    if consultation.record_version != expected_version:
+        raise ConflictError(
+            f"Consultation {consultation.id} record version mismatch: "
+            f"expected {expected_version}, "
+            f"current {consultation.record_version}"
+        )
+
+    return expected_version
+
+
+def _validate_consultation_record_actor(
+    consultation: Consultation,
+    actor_staff_id: int,
+):
+    actor = get_staff(
+        actor_staff_id,
+        clinic_id=consultation.clinic_id,
+    )
+
+    if actor.status != StaffStatus.ACTIVE:
+        raise ValidationError(
+            "Consultation record actor must be active"
+        )
+
+    if (
+        actor.user is None
+        or not actor.user.is_active
+    ):
+        raise ValidationError(
+            "Consultation record actor user must be active"
+        )
+
+    if actor.id != consultation.staff_id:
+        raise ConflictError(
+            "Only the assigned consultation author "
+            "can finalize or amend this clinical record"
+        )
+
+    return actor
+
+
+def _normalize_consultation_document(
+    document: dict,
+) -> dict:
+    if not isinstance(
+        document,
+        dict,
+    ):
+        raise ValidationError(
+            "document must be an object"
+        )
+
+    keys = set(
+        document
+    )
+    expected = set(
+        _CONSULTATION_DOCUMENT_FIELDS
+    )
+
+    if keys != expected:
+        missing = sorted(
+            expected - keys
+        )
+        extra = sorted(
+            keys - expected
+        )
+
+        detail = []
+
+        if missing:
+            detail.append(
+                "missing: "
+                + ", ".join(
+                    missing
+                )
+            )
+
+        if extra:
+            detail.append(
+                "unknown: "
+                + ", ".join(
+                    extra
+                )
+            )
+
+        raise ValidationError(
+            "Consultation amendment must contain "
+            "the complete clinical document"
+            + (
+                " ("
+                + "; ".join(
+                    detail
+                )
+                + ")"
+                if detail
+                else ""
+            )
+        )
+
+    normalized = {}
+
+    for field_name in _CONSULTATION_DOCUMENT_FIELDS:
+        value = document[
+            field_name
+        ]
+
+        if value is None:
+            normalized[
+                field_name
+            ] = None
+            continue
+
+        if not isinstance(
+            value,
+            str,
+        ):
+            raise ValidationError(
+                f"{field_name} must be a string or null"
+            )
+
+        value = value.strip()
+
+        if not value:
+            raise ValidationError(
+                f"{field_name} cannot be blank"
+            )
+
+        maximum = _CONSULTATION_DOCUMENT_LIMITS[
+            field_name
+        ]
+
+        if len(value) > maximum:
+            raise ValidationError(
+                f"{field_name} cannot exceed "
+                f"{maximum} characters"
+            )
+
+        normalized[
+            field_name
+        ] = value
+
+    return normalized
+
+
+def get_consultation_original_document(
+    consultation: Consultation,
+) -> dict:
+    return {
+        field_name: getattr(
+            consultation,
+            field_name,
+        )
+        for field_name in (
+            _CONSULTATION_DOCUMENT_FIELDS
+        )
+    }
+
+
+def get_consultation_effective_document(
+    consultation: Consultation,
+) -> dict:
+    status = _clinical_record_status(
+        consultation
+    )
+
+    if status != ClinicalRecordStatus.AMENDED:
+        return (
+            get_consultation_original_document(
+                consultation
+            )
+        )
+
+    amendment = (
+        consultation.latest_amendment
+    )
+
+    if amendment is None:
+        raise ConflictError(
+            f"Consultation {consultation.id} "
+            "is amended but has no latest amendment"
+        )
+
+    if (
+        amendment.clinic_id
+        != consultation.clinic_id
+        or amendment.patient_id
+        != consultation.patient_id
+        or amendment.source_record_type
+        != ClinicalRecordType.CONSULTATION_NOTE.value
+        or amendment.source_record_id
+        != consultation.id
+        or amendment.new_version
+        != consultation.record_version
+    ):
+        raise ConflictError(
+            f"Consultation {consultation.id} "
+            "latest amendment linkage is invalid"
+        )
+
+    return dict(
+        amendment.new_content
+    )
+
+
+@transactional
+def finalize_consultation_note(
+    *,
+    consultation_id: int,
+    clinic_id: int,
+    finalized_by_staff_id: int,
+    expected_version: int,
+) -> Consultation:
+    consultation = get_consultation(
+        consultation_id=consultation_id,
+        clinic_id=clinic_id,
+        for_update=True,
+    )
+
+    ensure_clinic_active(
+        consultation.clinic_id
+    )
+
+    if (
+        consultation.status
+        != ConsultationStatus.COMPLETED
+    ):
+        raise ConflictError(
+            f"Consultation {consultation.id} "
+            "must be completed before finalization"
+        )
+
+    actor = (
+        _validate_consultation_record_actor(
+            consultation,
+            finalized_by_staff_id,
+        )
+    )
+
+    _validate_expected_record_version(
+        consultation,
+        expected_version,
+    )
+
+    current_status = (
+        _clinical_record_status(
+            consultation
+        )
+    )
+
+    clinical_record_service.validate_finalization_transition(
+        current_status
+    )
+
+    original = (
+        get_consultation_original_document(
+            consultation
+        )
+    )
+
+    consultation.record_status = (
+        ClinicalRecordStatus.FINAL.value
+    )
+    consultation.record_version = 1
+    consultation.finalized_by_staff_id = (
+        actor.id
+    )
+    consultation.finalized_at = _utcnow()
+    consultation.latest_amendment_id = None
+
+    create_audit_log(
+        action=AuditAction.STATUS_CHANGE,
+        entity_type="Consultation",
+        entity_id=consultation.id,
+        description=(
+            "Consultation clinical record finalized"
+        ),
+        old_value={
+            "record_status": (
+                ClinicalRecordStatus.DRAFT.value
+            ),
+            "record_version": 1,
+        },
+        new_value={
+            "record_status": (
+                ClinicalRecordStatus.FINAL.value
+            ),
+            "record_version": 1,
+            "finalized_by_staff_id": (
+                actor.id
+            ),
+            "finalized_at": (
+                consultation.finalized_at.isoformat()
+            ),
+            "document": original,
+        },
+        user_id=actor.user_id,
+        clinic_id=consultation.clinic_id,
+    )
+
+    return consultation
+
+
+@transactional
+def amend_consultation_note(
+    *,
+    consultation_id: int,
+    clinic_id: int,
+    amended_by_staff_id: int,
+    expected_version: int,
+    reason: str,
+    document: dict,
+):
+    consultation = get_consultation(
+        consultation_id=consultation_id,
+        clinic_id=clinic_id,
+        for_update=True,
+    )
+
+    ensure_clinic_active(
+        consultation.clinic_id
+    )
+
+    if (
+        consultation.status
+        != ConsultationStatus.COMPLETED
+    ):
+        raise ConflictError(
+            f"Consultation {consultation.id} "
+            "must be completed before amendment"
+        )
+
+    actor = (
+        _validate_consultation_record_actor(
+            consultation,
+            amended_by_staff_id,
+        )
+    )
+
+    _validate_expected_record_version(
+        consultation,
+        expected_version,
+    )
+
+    current_status = (
+        _clinical_record_status(
+            consultation
+        )
+    )
+
+    clinical_record_service.validate_amendment_transition(
+        current_status
+    )
+
+    normalized_document = (
+        _normalize_consultation_document(
+            document
+        )
+    )
+
+    effective_before = (
+        get_consultation_effective_document(
+            consultation
+        )
+    )
+
+    if normalized_document == effective_before:
+        raise ValidationError(
+            "Consultation amendment must change "
+            "the effective clinical document"
+        )
+
+    amendment = (
+        clinical_record_service
+        .append_clinical_record_amendment(
+            clinic_id=consultation.clinic_id,
+            patient_id=consultation.patient_id,
+            source_record_type=(
+                ClinicalRecordType.CONSULTATION_NOTE
+            ),
+            source_record_id=consultation.id,
+            current_status=current_status,
+            previous_version=(
+                consultation.record_version
+            ),
+            amended_by_staff_id=actor.id,
+            reason=reason,
+            new_content=normalized_document,
+        )
+    )
+
+    old_record_status = (
+        consultation.record_status
+    )
+    old_record_version = (
+        consultation.record_version
+    )
+
+    consultation.record_status = (
+        ClinicalRecordStatus.AMENDED.value
+    )
+    consultation.record_version = (
+        amendment.new_version
+    )
+    consultation.latest_amendment_id = (
+        amendment.id
+    )
+    consultation.latest_amendment = (
+        amendment
+    )
+
+    create_audit_log(
+        action=AuditAction.STATUS_CHANGE,
+        entity_type="Consultation",
+        entity_id=consultation.id,
+        description=(
+            "Consultation clinical record amended"
+        ),
+        old_value={
+            "record_status": (
+                old_record_status
+            ),
+            "record_version": (
+                old_record_version
+            ),
+        },
+        new_value={
+            "record_status": (
+                consultation.record_status
+            ),
+            "record_version": (
+                consultation.record_version
+            ),
+            "latest_amendment_id": (
+                amendment.id
+            ),
+            "reason": amendment.reason,
+            "new_content_sha256": (
+                amendment.new_content_sha256
+            ),
+        },
+        user_id=actor.user_id,
+        clinic_id=consultation.clinic_id,
+    )
+
+    return (
+        consultation,
+        amendment,
+    )
+
+
+def get_consultation_amendments(
+    *,
+    consultation_id: int,
+    clinic_id: int,
+):
+    consultation = get_consultation(
+        consultation_id=consultation_id,
+        clinic_id=clinic_id,
+    )
+
+    return (
+        clinical_record_service
+        .get_clinical_record_amendments(
+            clinic_id=consultation.clinic_id,
+            source_record_type=(
+                ClinicalRecordType.CONSULTATION_NOTE
+            ),
+            source_record_id=consultation.id,
+        )
+    )
+
 # ---------------------------------------------------------------------------
 # Update notes
 # ---------------------------------------------------------------------------
@@ -491,6 +1037,15 @@ def update_consultation_note(
         raise ConflictError(
             f"Consultation {consultation.id} is cancelled "
             "and cannot be updated"
+        )
+
+    if (
+        consultation.record_status
+        != ClinicalRecordStatus.DRAFT.value
+    ):
+        raise ConflictError(
+            f"Consultation {consultation.id} clinical record "
+            "is finalized and immutable; use the amendment workflow"
         )
 
     updatable = {
@@ -542,12 +1097,7 @@ def update_consultation_note(
     if not new_value:
         return consultation
 
-    if consultation.status == ConsultationStatus.COMPLETED:
-        description = (
-            "Completed consultation documentation amended"
-        )
-    else:
-        description = "Consultation note updated"
+    description = "Consultation draft note updated"
 
     create_audit_log(
         action=AuditAction.UPDATE,

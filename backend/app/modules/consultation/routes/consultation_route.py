@@ -22,8 +22,10 @@ from app.core.utils.decorators import (
 from app.extensions import db
 
 from app.modules.consultation.schemas.consultation_schema import (
+    ConsultationAmendmentSchema,
     ConsultationCancelSchema,
     ConsultationCompleteSchema,
+    ConsultationFinalizeSchema,
     ConsultationStartSchema,
     ConsultationTemplateCreateSchema,
     ConsultationUpdateSchema,
@@ -31,11 +33,14 @@ from app.modules.consultation.schemas.consultation_schema import (
 )
 
 from app.modules.consultation.services.consultation_service import (
+    amend_consultation_note,
     cancel_consultation,
     complete_consultation,
     create_consultation_template,
+    finalize_consultation_note,
     get_active_templates,
     get_consultation,
+    get_consultation_amendments,
     get_consultations_for_patient,
     get_consultations_for_staff,
     get_patients_seen_by_staff,
@@ -64,6 +69,10 @@ CONSULTATION_WRITE_ROLES = (
 
 CONSULTATION_TEMPLATE_ROLES = (
     Role.ADMIN,
+    Role.DOCTOR,
+)
+
+CONSULTATION_SIGN_ROLES = (
     Role.DOCTOR,
 )
 
@@ -113,6 +122,24 @@ def _get_current_user():
 
     return user
 
+
+
+
+def _get_current_staff():
+    user = _get_current_user()
+    staff = getattr(
+        user,
+        "staff",
+        None,
+    )
+
+    if staff is None:
+        raise ValidationError(
+            "Authenticated user is not linked "
+            "to a staff record"
+        )
+
+    return staff
 
 def _get_authenticated_clinic_id():
     user = _get_current_user()
@@ -281,15 +308,26 @@ def _parse_optional_clinic_id():
 
 
 def _serialize_consultation(consultation):
-    return {
-        "id": consultation.id,
-        "clinic_id": consultation.clinic_id,
-        "patient_id": consultation.patient_id,
-        "staff_id": consultation.staff_id,
-        "appointment_id": consultation.appointment_id,
+    record_status = getattr(
+        consultation,
+        "record_status",
+        "draft",
+    )
+
+    record_status = getattr(
+        record_status,
+        "value",
+        record_status,
+    )
+
+    latest_amendment = getattr(
+        consultation,
+        "latest_amendment",
+        None,
+    )
+
+    document = {
         "icd10_code": consultation.icd10_code,
-        "consultation_type": consultation.consultation_type.value,
-        "status": consultation.status.value,
         "chief_complaint": consultation.chief_complaint,
         "symptoms": consultation.symptoms,
         "diagnosis": consultation.diagnosis,
@@ -297,6 +335,59 @@ def _serialize_consultation(consultation):
         "notes": consultation.notes,
         "voice_note_url": consultation.voice_note_url,
         "transcribed_text": consultation.transcribed_text,
+    }
+
+    if (
+        record_status == "amended"
+        and latest_amendment is not None
+    ):
+        document = dict(
+            latest_amendment.new_content
+        )
+
+    finalized_at = getattr(
+        consultation,
+        "finalized_at",
+        None,
+    )
+
+    return {
+        "id": consultation.id,
+        "clinic_id": consultation.clinic_id,
+        "patient_id": consultation.patient_id,
+        "staff_id": consultation.staff_id,
+        "appointment_id": consultation.appointment_id,
+        "icd10_code": document["icd10_code"],
+        "consultation_type": consultation.consultation_type.value,
+        "status": consultation.status.value,
+        "record_status": record_status,
+        "record_version": getattr(
+            consultation,
+            "record_version",
+            1,
+        ),
+        "finalized_by_staff_id": getattr(
+            consultation,
+            "finalized_by_staff_id",
+            None,
+        ),
+        "finalized_at": (
+            finalized_at.isoformat()
+            if finalized_at
+            else None
+        ),
+        "latest_amendment_id": getattr(
+            consultation,
+            "latest_amendment_id",
+            None,
+        ),
+        "chief_complaint": document["chief_complaint"],
+        "symptoms": document["symptoms"],
+        "diagnosis": document["diagnosis"],
+        "treatment_plan": document["treatment_plan"],
+        "notes": document["notes"],
+        "voice_note_url": document["voice_note_url"],
+        "transcribed_text": document["transcribed_text"],
         "template_id": consultation.template_id,
         "started_at": (
             consultation.started_at.isoformat()
@@ -320,6 +411,34 @@ def _serialize_consultation(consultation):
         ),
     }
 
+
+def _serialize_clinical_record_amendment(amendment):
+    return {
+        "id": amendment.id,
+        "clinic_id": amendment.clinic_id,
+        "patient_id": amendment.patient_id,
+        "source_record_type": amendment.source_record_type,
+        "source_record_id": amendment.source_record_id,
+        "previous_version": amendment.previous_version,
+        "new_version": amendment.new_version,
+        "previous_amendment_id": (
+            amendment.previous_amendment_id
+        ),
+        "amended_by_staff_id": amendment.amended_by_staff_id,
+        "reason": amendment.reason,
+        "new_content": amendment.new_content,
+        "new_content_sha256": amendment.new_content_sha256,
+        "amended_at": (
+            amendment.amended_at.isoformat()
+            if amendment.amended_at
+            else None
+        ),
+        "created_at": (
+            amendment.created_at.isoformat()
+            if amendment.created_at
+            else None
+        ),
+    }
 
 def _serialize_patient_summary(patient):
     return {
@@ -507,6 +626,110 @@ def update(consultation_id: int):
         "data": _serialize_consultation(consultation),
     }), 200
 
+
+
+
+@consultation_bp.post("/<int:consultation_id>/finalize")
+@role_required(*CONSULTATION_SIGN_ROLES)
+@active_staff_required
+def finalize_record(consultation_id: int):
+    payload = _payload(
+        ConsultationFinalizeSchema
+    )
+
+    if isinstance(payload, tuple):
+        return payload
+
+    clinic_id, error = _get_authenticated_clinic_id()
+
+    if error is not None:
+        return error
+
+    staff = _get_current_staff()
+
+    consultation = finalize_consultation_note(
+        consultation_id=consultation_id,
+        clinic_id=clinic_id,
+        finalized_by_staff_id=staff.id,
+        expected_version=payload.expected_version,
+    )
+
+    return jsonify({
+        "success": True,
+        "data": _serialize_consultation(
+            consultation
+        ),
+    }), 200
+
+
+@consultation_bp.post("/<int:consultation_id>/amend")
+@role_required(*CONSULTATION_SIGN_ROLES)
+@active_staff_required
+def amend_record(consultation_id: int):
+    payload = _payload(
+        ConsultationAmendmentSchema
+    )
+
+    if isinstance(payload, tuple):
+        return payload
+
+    clinic_id, error = _get_authenticated_clinic_id()
+
+    if error is not None:
+        return error
+
+    staff = _get_current_staff()
+
+    (
+        consultation,
+        amendment,
+    ) = amend_consultation_note(
+        consultation_id=consultation_id,
+        clinic_id=clinic_id,
+        amended_by_staff_id=staff.id,
+        expected_version=payload.expected_version,
+        reason=payload.reason,
+        document=payload.document.model_dump(),
+    )
+
+    return jsonify({
+        "success": True,
+        "data": {
+            "consultation": _serialize_consultation(
+                consultation
+            ),
+            "amendment": (
+                _serialize_clinical_record_amendment(
+                    amendment
+                )
+            ),
+        },
+    }), 200
+
+
+@consultation_bp.get("/<int:consultation_id>/amendments")
+@role_required(*CONSULTATION_READ_ROLES)
+@active_staff_required
+def amendments(consultation_id: int):
+    clinic_id, error = _get_authenticated_clinic_id()
+
+    if error is not None:
+        return error
+
+    rows = get_consultation_amendments(
+        consultation_id=consultation_id,
+        clinic_id=clinic_id,
+    )
+
+    return jsonify({
+        "success": True,
+        "data": [
+            _serialize_clinical_record_amendment(
+                row
+            )
+            for row in rows
+        ],
+    }), 200
 
 @consultation_bp.post("/<int:consultation_id>/complete")
 @role_required(*CONSULTATION_WRITE_ROLES)

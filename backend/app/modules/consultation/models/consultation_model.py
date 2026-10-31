@@ -5,6 +5,7 @@ from app.core.enums.consultation_enums import (
     ConsultationStatus,
     ConsultationType,
 )
+from app.core.enums.clinical_record_enums import ClinicalRecordStatus
 
 
 def _utcnow():
@@ -38,6 +39,41 @@ class Consultation(db.Model):
             "ix_consultations_clinic_started_at",
             "clinic_id",
             "started_at",
+        ),
+        db.CheckConstraint(
+            "record_status IN ('draft', 'final', 'amended')",
+            name="ck_consultations_record_status",
+        ),
+        db.CheckConstraint(
+            "record_version >= 1",
+            name="ck_consultations_record_version_positive",
+        ),
+        db.CheckConstraint(
+            "("
+            "record_status = 'draft' "
+            "AND record_version = 1 "
+            "AND finalized_by_staff_id IS NULL "
+            "AND finalized_at IS NULL "
+            "AND latest_amendment_id IS NULL"
+            ") OR ("
+            "record_status = 'final' "
+            "AND record_version = 1 "
+            "AND finalized_by_staff_id IS NOT NULL "
+            "AND finalized_at IS NOT NULL "
+            "AND latest_amendment_id IS NULL"
+            ") OR ("
+            "record_status = 'amended' "
+            "AND record_version >= 2 "
+            "AND finalized_by_staff_id IS NOT NULL "
+            "AND finalized_at IS NOT NULL "
+            "AND latest_amendment_id IS NOT NULL"
+            ")",
+            name="ck_consultations_record_finalization_consistency",
+        ),
+        db.Index(
+            "ix_consultations_clinic_record_status",
+            "clinic_id",
+            "record_status",
         ),
     )
 
@@ -90,6 +126,46 @@ class Consultation(db.Model):
         db.Enum(ConsultationStatus),
         default=ConsultationStatus.IN_PROGRESS,
         nullable=False,
+        index=True,
+    )
+
+    record_status = db.Column(
+        db.String(16),
+        default=ClinicalRecordStatus.DRAFT.value,
+        server_default=ClinicalRecordStatus.DRAFT.value,
+        nullable=False,
+        index=True,
+    )
+
+    record_version = db.Column(
+        db.Integer,
+        default=1,
+        server_default="1",
+        nullable=False,
+    )
+
+    finalized_by_staff_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "staff.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    finalized_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=True,
+    )
+
+    latest_amendment_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "clinical_record_amendments.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
         index=True,
     )
 
@@ -171,7 +247,19 @@ class Consultation(db.Model):
 
     staff = db.relationship(
         "Staff",
+        foreign_keys=[staff_id],
         back_populates="consultations",
+    )
+
+    finalized_by = db.relationship(
+        "Staff",
+        foreign_keys=[finalized_by_staff_id],
+    )
+
+    latest_amendment = db.relationship(
+        "ClinicalRecordAmendment",
+        foreign_keys=[latest_amendment_id],
+        uselist=False,
     )
 
     appointment = db.relationship(
