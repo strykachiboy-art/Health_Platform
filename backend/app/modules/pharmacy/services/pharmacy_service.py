@@ -397,7 +397,6 @@ def _validate_staff_for_pharmacy(
 
     allowed_roles = {
         Role.PHARMACIST,
-        Role.ADMIN,
     }
 
     if staff.user.role not in allowed_roles:

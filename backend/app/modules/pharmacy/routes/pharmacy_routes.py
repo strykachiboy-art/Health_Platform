@@ -65,6 +65,10 @@ pharmacy_bp = Blueprint(
     url_prefix="/pharmacy",
 )
 
+PHARMACY_OPERATION_ROLES = (
+    Role.PHARMACIST,
+)
+
 
 # ============================================================================
 # ROUTE HELPERS
@@ -231,8 +235,7 @@ def get_drug_route(
 
 @pharmacy_bp.post("/drugs")
 @role_required(
-    Role.ADMIN,
-    Role.PHARMACIST,
+    *PHARMACY_OPERATION_ROLES
 )
 @active_staff_required
 def create_drug_route():
@@ -264,8 +267,7 @@ def create_drug_route():
     "/drugs/<int:drug_id>"
 )
 @role_required(
-    Role.ADMIN,
-    Role.PHARMACIST,
+    *PHARMACY_OPERATION_ROLES
 )
 @active_staff_required
 def update_drug_route(
@@ -459,8 +461,7 @@ def get_batch_route(
 
 @pharmacy_bp.post("/batches")
 @role_required(
-    Role.ADMIN,
-    Role.PHARMACIST,
+    *PHARMACY_OPERATION_ROLES
 )
 @active_staff_required
 def create_batch_route():
@@ -524,8 +525,7 @@ def get_stock_summary_route(
 
 @pharmacy_bp.post("/dispense")
 @role_required(
-    Role.ADMIN,
-    Role.PHARMACIST,
+    *PHARMACY_OPERATION_ROLES
 )
 @active_staff_required
 def create_dispense_record_route():
@@ -793,8 +793,7 @@ def list_dispense_records_route(
     "/dispense/<int:dispense_record_id>/cancel"
 )
 @role_required(
-    Role.ADMIN,
-    Role.PHARMACIST,
+    *PHARMACY_OPERATION_ROLES
 )
 @active_staff_required
 def cancel_dispense_record_route(

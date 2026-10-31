@@ -71,7 +71,11 @@ emar_bp = Blueprint(
 )
 
 
-EMAR_ROLES = (
+EMAR_WRITE_ROLES = (
+    Role.NURSE,
+)
+
+EMAR_VIEW_ROLES = (
     Role.DOCTOR,
     Role.NURSE,
 )
@@ -274,7 +278,7 @@ def _serialize_page(
 
 
 @emar_bp.post("/barcode/verify")
-@role_required(*EMAR_ROLES)
+@role_required(*EMAR_WRITE_ROLES)
 def verify_barcode_medication_administration_route():
     clinic_id = _current_clinic_id()
     current_user = _current_user()
@@ -310,7 +314,7 @@ def verify_barcode_medication_administration_route():
     "/<int:administration_id>/barcode-events"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_VIEW_ROLES
 )
 def list_barcode_verification_events_route(
     administration_id: int,
@@ -341,7 +345,7 @@ def list_barcode_verification_events_route(
     "/scheduled"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_WRITE_ROLES
 )
 def schedule_medication_administration_route():
     clinic_id = _current_clinic_id()
@@ -384,7 +388,7 @@ def schedule_medication_administration_route():
     "/prn"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_WRITE_ROLES
 )
 def administer_prn_medication_route():
     clinic_id = _current_clinic_id()
@@ -428,7 +432,7 @@ def administer_prn_medication_route():
     "/<int:administration_id>/due"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_WRITE_ROLES
 )
 def mark_medication_administration_due_route(
     administration_id: int,
@@ -465,7 +469,7 @@ def mark_medication_administration_due_route(
     "/<int:administration_id>/administer"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_WRITE_ROLES
 )
 def administer_medication_route(
     administration_id: int,
@@ -518,7 +522,7 @@ def administer_medication_route(
     "/<int:administration_id>/hold"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_WRITE_ROLES
 )
 def hold_medication_route(
     administration_id: int,
@@ -552,7 +556,7 @@ def hold_medication_route(
     "/<int:administration_id>/refuse"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_WRITE_ROLES
 )
 def record_medication_refusal_route(
     administration_id: int,
@@ -588,7 +592,7 @@ def record_medication_refusal_route(
     "/<int:administration_id>/miss"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_WRITE_ROLES
 )
 def mark_medication_missed_route(
     administration_id: int,
@@ -624,7 +628,7 @@ def mark_medication_missed_route(
     "/<int:administration_id>/cancel"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_WRITE_ROLES
 )
 def cancel_medication_administration_route(
     administration_id: int,
@@ -664,7 +668,7 @@ def cancel_medication_administration_route(
     "/<int:administration_id>"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_VIEW_ROLES
 )
 def get_medication_administration_route(
     administration_id: int,
@@ -687,7 +691,7 @@ def get_medication_administration_route(
     "/admissions/<int:admission_id>"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_VIEW_ROLES
 )
 def list_admission_emar_route(
     admission_id: int,
@@ -719,7 +723,7 @@ def list_admission_emar_route(
     "/<int:administration_id>/amend"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_WRITE_ROLES
 )
 def amend_medication_administration_route(
     administration_id: int,
@@ -765,7 +769,7 @@ def amend_medication_administration_route(
     "/<int:administration_id>/amendments"
 )
 @role_required(
-    *EMAR_ROLES
+    *EMAR_VIEW_ROLES
 )
 def get_medication_administration_amendments_route(
     administration_id: int,

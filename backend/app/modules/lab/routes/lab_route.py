@@ -73,13 +73,11 @@ LAB_MANAGEMENT_ROLES = (
 )
 
 LAB_CLINICAL_ROLES = (
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
 )
 
 LAB_TECHNICIAN_ROLES = (
-    Role.ADMIN,
     Role.LAB_TECHNICIAN,
 )
 

@@ -52,7 +52,6 @@ from app.modules.ward.models.ward_model import Admission
 
 
 AUTHORIZED_EMAR_ROLES = (
-    Role.DOCTOR,
     Role.NURSE,
 )
 

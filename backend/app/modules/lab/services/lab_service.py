@@ -19,6 +19,7 @@ from app.core.exceptions import (
 from app.core.audit.services.audit_service import create_audit_log
 from app.core.enums.audit_enums import AuditAction
 from app.core.enums.lab_enums import LabOrderStatus, LabResultFlag
+from app.core.enums.role_enums import Role
 
 from app.modules.lab.models.lab_model import (
     LabTest,
@@ -545,13 +546,17 @@ def _get_lab_order_item(
 def _validate_actor_for_order(
     actor_id: int,
     order: LabOrder,
+    *,
+    allowed_roles: tuple[Role, ...] = (
+        Role.LAB_TECHNICIAN,
+    ),
 ) -> Staff:
     """
-    Validate that an operational actor:
+    Validate an operational lab actor at the service boundary.
 
-    - exists
-    - belongs to the order's clinic
-    - is active
+    Route decorators remain the first authorization gate, while
+    this check prevents direct service calls from bypassing the
+    clinical role policy.
     """
     actor = _get_staff(
         actor_id,
@@ -563,6 +568,25 @@ def _validate_actor_for_order(
         actor,
         order.clinic_id,
     )
+
+    if (
+        actor.user is None
+        or not actor.user.is_active
+    ):
+        raise ValidationError(
+            "Lab actor must be linked to an active user"
+        )
+
+    if actor.user.role not in allowed_roles:
+        allowed = ", ".join(
+            role.value
+            for role in allowed_roles
+        )
+
+        raise ValidationError(
+            "Lab actor must have an authorized lab role: "
+            f"{allowed}"
+        )
 
     return actor
 
@@ -1589,6 +1613,10 @@ def cancel_order(
     actor = _validate_actor_for_order(
         cancelled_by_id,
         order,
+        allowed_roles=(
+            Role.DOCTOR,
+            Role.NURSE,
+        ),
     )
 
     if order.status in (
