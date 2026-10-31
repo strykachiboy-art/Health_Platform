@@ -2603,89 +2603,38 @@ def transfer_bed(
 
     return transfer
 
-
 @transactional
 def discharge_patient(
     admission_id: int,
     clinic_id: int,
     reason: str | None = None,
     actor_user_id: int | None = None,
+    actor_staff_id: int | None = None,
+    primary_diagnosis: str | None = None,
+    secondary_diagnoses: list[str] | None = None,
+    condition_at_discharge: str | None = None,
+    instructions: str | None = None,
+    follow_up_plan: str | None = None,
+    destination: str | None = None,
 ) -> Admission:
-    clinic_id = _validate_clinic_id(
-        clinic_id
+    from app.modules.ward.services.discharge_service import (
+        complete_clinical_discharge,
     )
 
-    if actor_user_id is not None:
-        actor_user_id = _validate_actor_id(
-            actor_user_id
-        )
-
-    _ensure_ward_active(
-        clinic_id
-    )
-
-    admission = _get_admission(
-        admission_id,
+    admission, _summary = complete_clinical_discharge(
+        admission_id=admission_id,
         clinic_id=clinic_id,
-        lock=True,
-    )
-
-    _ensure_admission_active(
-        admission
-    )
-
-    bed = _get_bed(
-        admission.bed_id,
-        clinic_id=clinic_id,
-        lock=True,
-    )
-
-    _validate_bed_for_clinic(
-        bed,
-        clinic_id,
-    )
-
-    _ensure_bed_occupied(
-        bed
-    )
-
-    reason = _validate_reason(
-        reason
-    )
-
-    now = _db_now()
-
-    admission.status = (
-        AdmissionStatus.DISCHARGED
-    )
-    admission.discharged_at = now
-
-    if reason:
-        admission.reason = reason
-
-    bed.status = BedStatus.AVAILABLE
-
-    db.session.flush()
-
-    create_audit_log(
-        user_id=actor_user_id,
-        action=AuditAction.UPDATE,
-        entity_type="admission",
-        entity_id=admission.id,
-        clinic_id=clinic_id,
-        description=(
-            f"Discharged patient "
-            f"{admission.patient_id} "
-            f"from admission {admission.id}"
+        actor_staff_id=actor_staff_id,
+        actor_user_id=actor_user_id,
+        reason=reason,
+        primary_diagnosis=primary_diagnosis,
+        secondary_diagnoses=list(
+            secondary_diagnoses or []
         ),
-        new_value={
-            "status": admission.status.value,
-            "discharged_at": (
-                admission.discharged_at.isoformat()
-                if admission.discharged_at
-                else None
-            ),
-        },
+        condition_at_discharge=condition_at_discharge,
+        instructions=instructions,
+        follow_up_plan=follow_up_plan,
+        destination=destination,
     )
 
     return admission

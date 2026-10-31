@@ -4,6 +4,9 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app.extensions import db
+from app.modules.clinical_records.schemas.clinical_record_schema import (
+    ClinicalRecordAmendmentResponseSchema,
+)
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
@@ -45,6 +48,11 @@ from app.modules.ward.schemas.ward_schema import (
     WardUpdateSchema,
 )
 
+from app.modules.ward.schemas.discharge_summary_schema import (
+    DischargeSummaryAmendmentSchema,
+    DischargeSummaryResponseSchema,
+)
+
 from app.modules.ward.services.ward_service import (
     add_bed,
     admit_patient,
@@ -70,6 +78,13 @@ from app.modules.ward.services.ward_service import (
     update_ward,
 )
 
+from app.modules.ward.services.discharge_service import (
+    amend_discharge_summary,
+    get_discharge_summary_amendments,
+    get_discharge_summary_effective_document,
+    get_discharge_summary_for_admission,
+)
+
 
 ward_bp = Blueprint(
     "ward",
@@ -88,6 +103,10 @@ CLINICAL_ROLES = (
     Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
+)
+
+DISCHARGE_ROLES = (
+    Role.DOCTOR,
 )
 
 VIEW_ROLES = (
@@ -869,16 +888,16 @@ def transfer_bed_route(admission_id: int):
         }
     ), 201
 
-
 @ward_bp.route(
     "/admissions/<int:admission_id>/discharge",
     methods=["POST"],
 )
-@role_required(*CLINICAL_ROLES)
+@role_required(*DISCHARGE_ROLES)
 @active_staff_required
 def discharge_patient_route(admission_id: int):
     user = _current_user()
     clinic_id = _current_clinic_id()
+    staff_id = _current_staff_id()
 
     payload = AdmissionDischargeSchema.model_validate(
         _request_json()
@@ -889,6 +908,18 @@ def discharge_patient_route(admission_id: int):
         clinic_id=clinic_id,
         reason=payload.reason,
         actor_user_id=user.id,
+        actor_staff_id=staff_id,
+        primary_diagnosis=payload.primary_diagnosis,
+        secondary_diagnoses=payload.secondary_diagnoses,
+        condition_at_discharge=payload.condition_at_discharge,
+        instructions=payload.instructions,
+        follow_up_plan=payload.follow_up_plan,
+        destination=payload.destination,
+    )
+
+    summary = get_discharge_summary_for_admission(
+        admission.id,
+        clinic_id=clinic_id,
     )
 
     return jsonify(
@@ -898,5 +929,146 @@ def discharge_patient_route(admission_id: int):
                 AdmissionResponseSchema,
                 admission,
             ),
+            "discharge_summary": _serialize_discharge_summary(
+                summary
+            ),
+        }
+    ), 200
+
+
+def _serialize_discharge_summary(summary):
+    document = get_discharge_summary_effective_document(
+        summary
+    )
+
+    payload = {
+        "id": summary.id,
+        "clinic_id": summary.clinic_id,
+        "patient_id": summary.patient_id,
+        "admission_id": summary.admission_id,
+        "medication_reconciliation_id": (
+            summary.medication_reconciliation_id
+        ),
+        "discharged_by_staff_id": summary.discharged_by_staff_id,
+        "primary_diagnosis": document["primary_diagnosis"],
+        "secondary_diagnoses": document["secondary_diagnoses"],
+        "condition_at_discharge": document["condition_at_discharge"],
+        "instructions": document["instructions"],
+        "follow_up_plan": document["follow_up_plan"],
+        "final_medication_list": document["final_medication_list"],
+        "destination": document["destination"],
+        "discharged_at": summary.discharged_at,
+        "record_status": summary.record_status,
+        "record_version": summary.record_version,
+        "finalized_by_staff_id": summary.finalized_by_staff_id,
+        "finalized_at": summary.finalized_at,
+        "latest_amendment_id": summary.latest_amendment_id,
+        "created_at": summary.created_at,
+        "updated_at": summary.updated_at,
+    }
+
+    return (
+        DischargeSummaryResponseSchema
+        .model_validate(payload)
+        .model_dump(mode="json")
+    )
+
+
+@ward_bp.route(
+    "/admissions/<int:admission_id>/discharge-summary",
+    methods=["GET"],
+)
+@role_required(*CLINICAL_ROLES)
+@active_staff_required
+def get_discharge_summary_route(admission_id: int):
+    summary = get_discharge_summary_for_admission(
+        admission_id,
+        clinic_id=_current_clinic_id(),
+    )
+
+    return jsonify(
+        {
+            "discharge_summary": _serialize_discharge_summary(
+                summary
+            )
+        }
+    ), 200
+
+
+@ward_bp.route(
+    "/admissions/<int:admission_id>/discharge-summary/amend",
+    methods=["POST"],
+)
+@role_required(*DISCHARGE_ROLES)
+@active_staff_required
+def amend_discharge_summary_route(admission_id: int):
+    user = _current_user()
+    clinic_id = _current_clinic_id()
+    staff_id = _current_staff_id()
+
+    summary = get_discharge_summary_for_admission(
+        admission_id,
+        clinic_id=clinic_id,
+    )
+
+    payload = DischargeSummaryAmendmentSchema.model_validate(
+        _request_json()
+    )
+
+    summary, amendment = amend_discharge_summary(
+        summary.id,
+        clinic_id=clinic_id,
+        actor_staff_id=staff_id,
+        actor_user_id=user.id,
+        expected_version=payload.expected_version,
+        reason=payload.reason,
+        document=payload.document.model_dump(),
+    )
+
+    return jsonify(
+        {
+            "message": "Discharge summary amended",
+            "discharge_summary": _serialize_discharge_summary(
+                summary
+            ),
+            "amendment": (
+                ClinicalRecordAmendmentResponseSchema
+                .model_validate(amendment)
+                .model_dump(mode="json")
+            ),
+        }
+    ), 200
+
+
+@ward_bp.route(
+    "/admissions/<int:admission_id>/discharge-summary/amendments",
+    methods=["GET"],
+)
+@role_required(*CLINICAL_ROLES)
+@active_staff_required
+def discharge_summary_amendments_route(admission_id: int):
+    clinic_id = _current_clinic_id()
+
+    summary = get_discharge_summary_for_admission(
+        admission_id,
+        clinic_id=clinic_id,
+    )
+
+    rows = get_discharge_summary_amendments(
+        summary.id,
+        clinic_id=clinic_id,
+    )
+
+    return jsonify(
+        {
+            "items": [
+                (
+                    ClinicalRecordAmendmentResponseSchema
+                    .model_validate(row)
+                    .model_dump(mode="json")
+                )
+                for row in rows
+            ],
+            "total": len(rows),
         }
     ), 200

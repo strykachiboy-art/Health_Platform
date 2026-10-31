@@ -123,6 +123,35 @@ class AdmissionDischargeSchema(BaseModel):
         default=None,
         max_length=255,
     )
+    primary_diagnosis: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+    )
+    secondary_diagnoses: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+    condition_at_discharge: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+    )
+    instructions: str = Field(
+        ...,
+        min_length=1,
+        max_length=20000,
+    )
+    follow_up_plan: str = Field(
+        ...,
+        min_length=1,
+        max_length=20000,
+    )
+    destination: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+    )
 
     model_config = ConfigDict(
         extra="forbid",
