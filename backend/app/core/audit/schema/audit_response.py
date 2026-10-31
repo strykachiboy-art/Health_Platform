@@ -17,6 +17,7 @@ class AuditLogResponseSchema(BaseModel):
     id: StrictInt
     user_id: StrictInt | None
     clinic_id: StrictInt | None
+    patient_id: StrictInt | None
 
     action: AuditAction
 

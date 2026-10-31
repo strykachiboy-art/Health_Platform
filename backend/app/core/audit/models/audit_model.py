@@ -34,6 +34,13 @@ class AuditLog(db.Model):
             "id",
         ),
         db.Index(
+            "ix_audit_logs_clinic_patient_created_id",
+            "clinic_id",
+            "patient_id",
+            "created_at",
+            "id",
+        ),
+        db.Index(
             "ix_audit_logs_clinic_entity_created_id",
             "clinic_id",
             "entity_type",
@@ -63,6 +70,16 @@ class AuditLog(db.Model):
         db.Integer,
         db.ForeignKey("clinics.id"),
         nullable=True,
+    )
+
+    patient_id = db.Column(
+        db.Integer,
+        db.ForeignKey(
+            "patients.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+        index=True,
     )
 
     user_id = db.Column(
@@ -137,6 +154,11 @@ class AuditLog(db.Model):
 
     clinic = db.relationship(
         "Clinic",
+    )
+
+    patient = db.relationship(
+        "Patient",
+        foreign_keys=[patient_id],
     )
 
     user = db.relationship(

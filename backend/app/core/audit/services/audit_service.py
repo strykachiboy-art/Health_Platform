@@ -89,13 +89,6 @@ def _normalize_optional_id(
 def _normalize_ip_address(
     value,
 ):
-    """
-    Normalize an optional client IP address.
-
-    IP addresses may be absent for background jobs,
-    scheduled tasks, system operations, or internal
-    service calls.
-    """
     return _normalize_optional_string(
         value,
         "IP address",
@@ -208,6 +201,7 @@ def create_audit_log(
     new_value=None,
     user_id: Optional[int] = None,
     clinic_id: Optional[int] = None,
+    patient_id: Optional[int] = None,
     ip_address: Optional[str] = None,
 ) -> AuditLog:
     action = _normalize_action(action)
@@ -236,6 +230,11 @@ def create_audit_log(
     clinic_id = _normalize_optional_id(
         clinic_id,
         "Clinic ID",
+    )
+
+    patient_id = _normalize_optional_id(
+        patient_id,
+        "Patient ID",
     )
 
     description = _normalize_optional_string(
@@ -272,5 +271,6 @@ def create_audit_log(
         new_value=new_value,
         user_id=user_id,
         clinic_id=clinic_id,
+        patient_id=patient_id,
         ip_address=ip_address,
     )

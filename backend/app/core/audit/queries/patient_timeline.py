@@ -4,19 +4,10 @@ from typing import Optional
 
 from app.extensions import db
 
-from app.core.audit.models.audit_model import AuditLog
 from app.core.audit.queries.audit_queries import (
     build_audit_query,
 )
 from app.core.enums.audit_enums import AuditAction
-
-
-PATIENT_ENTITY_TYPES = frozenset(
-    {
-        "Patient",
-        "patient",
-    }
-)
 
 
 def _build_patient_timeline_query(
@@ -27,18 +18,12 @@ def _build_patient_timeline_query(
     target_clinic_id: Optional[int] = None,
     action: Optional[AuditAction] = None,
 ):
-    statement = build_audit_query(
+    return build_audit_query(
         actor_role=actor_role,
         actor_clinic_id=actor_clinic_id,
         target_clinic_id=target_clinic_id,
         action=action,
-        entity_id=patient_id,
-    )
-
-    return statement.where(
-        AuditLog.entity_type.in_(
-            PATIENT_ENTITY_TYPES
-        )
+        patient_id=patient_id,
     )
 
 

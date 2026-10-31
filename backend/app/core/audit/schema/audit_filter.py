@@ -18,6 +18,11 @@ class AuditLogFilterSchema(BaseModel):
         gt=0,
     )
 
+    patient_id: StrictInt | None = Field(
+        default=None,
+        gt=0,
+    )
+
     action: AuditAction | None = None
 
     entity_type: StrictStr | None = Field(

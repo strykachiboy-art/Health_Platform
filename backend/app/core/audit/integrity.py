@@ -58,6 +58,7 @@ def build_audit_evidence_payload(audit_log) -> dict[str, Any]:
     return {
         "user_id": audit_log.user_id,
         "clinic_id": audit_log.clinic_id,
+        "patient_id": audit_log.patient_id,
         "action": _action_value(audit_log.action),
         "entity_type": audit_log.entity_type,
         "entity_id": audit_log.entity_id,

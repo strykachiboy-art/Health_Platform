@@ -15,6 +15,9 @@ from app.extensions import (
 from app.core.api import register_api_blueprint
 from app.core.api.versioning import validate_api_version
 from app.core.error_handlers import register_error_handlers
+from app.core.logging_safety import (
+    install_phi_safe_logging,
+)
 from app.core.observability.health_routes import (
     health_bp,
 )
@@ -60,6 +63,10 @@ def create_app(config_name=None):
         )
 
     app = Flask(__name__)
+
+    install_phi_safe_logging(
+        app
+    )
 
     app.config.from_object(
         config_by_name[config_name]

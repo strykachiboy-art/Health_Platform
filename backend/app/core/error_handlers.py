@@ -96,9 +96,12 @@ def register_error_handlers(app: Flask) -> None:
             if request.url_rule is not None:
                 route = request.url_rule.rule
 
-        logger.exception(
+        # Never emit the raw exception text here. Exception
+        # messages can contain patient data or secrets from
+        # downstream libraries. Request/trace IDs plus the safe
+        # exception type preserve operational correlation.
+        logger.error(
             "application.error",
-            exc_info=error,
             extra={
                 "operational_event": True,
                 "event": "application.error",

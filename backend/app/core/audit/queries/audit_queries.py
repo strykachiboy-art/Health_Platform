@@ -42,6 +42,7 @@ def build_audit_query(
     actor_clinic_id: Optional[int],
     target_clinic_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    patient_id: Optional[int] = None,
     action: Optional[AuditAction] = None,
     entity_type: Optional[str] = None,
     entity_id: Optional[int] = None,
@@ -72,6 +73,12 @@ def build_audit_query(
         _validate_positive_id(
             user_id,
             "User ID",
+        )
+
+    if patient_id is not None:
+        _validate_positive_id(
+            patient_id,
+            "Patient ID",
         )
 
     if entity_id is not None:
@@ -111,6 +118,11 @@ def build_audit_query(
             AuditLog.user_id == user_id
         )
 
+    if patient_id is not None:
+        statement = statement.where(
+            AuditLog.patient_id == patient_id
+        )
+
     if action is not None:
         statement = statement.where(
             AuditLog.action == action
@@ -138,6 +150,7 @@ def list_audit_logs(
     actor_clinic_id: Optional[int],
     target_clinic_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    patient_id: Optional[int] = None,
     action: Optional[AuditAction] = None,
     entity_type: Optional[str] = None,
     entity_id: Optional[int] = None,
@@ -149,6 +162,7 @@ def list_audit_logs(
         actor_clinic_id=actor_clinic_id,
         target_clinic_id=target_clinic_id,
         user_id=user_id,
+        patient_id=patient_id,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
@@ -191,6 +205,7 @@ def count_audit_logs(
     actor_clinic_id: Optional[int],
     target_clinic_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    patient_id: Optional[int] = None,
     action: Optional[AuditAction] = None,
     entity_type: Optional[str] = None,
     entity_id: Optional[int] = None,
@@ -200,6 +215,7 @@ def count_audit_logs(
         actor_clinic_id=actor_clinic_id,
         target_clinic_id=target_clinic_id,
         user_id=user_id,
+        patient_id=patient_id,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,

@@ -18,6 +18,7 @@ def normalize_audit_filters(
 
     return {
         "user_id": filters.user_id,
+        "patient_id": filters.patient_id,
         "action": filters.action,
         "entity_type": filters.entity_type,
         "entity_id": filters.entity_id,

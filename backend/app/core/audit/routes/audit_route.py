@@ -89,6 +89,7 @@ def _coerce_query_parameters() -> dict:
 
     for field_name in (
         "user_id",
+        "patient_id",
         "entity_id",
         "page",
         "per_page",
