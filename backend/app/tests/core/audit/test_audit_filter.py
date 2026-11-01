@@ -22,6 +22,8 @@ def test_normalize_audit_filters_returns_query_arguments():
     result = normalize_audit_filters(filters)
 
     assert result == {
+
+        "patient_id": None,
         "user_id": 10,
         "action": AuditAction.LOGIN,
         "entity_type": "User",
@@ -35,6 +37,8 @@ def test_normalize_audit_filters_preserves_optional_none_values():
     result = normalize_audit_filters(filters)
 
     assert result == {
+
+        "patient_id": None,
         "user_id": None,
         "action": None,
         "entity_type": None,
@@ -108,6 +112,8 @@ def test_split_audit_filters_separates_query_and_pagination():
     )
 
     assert query_filters == {
+
+        "patient_id": None,
         "user_id": 10,
         "action": AuditAction.LOGOUT,
         "entity_type": "User",
@@ -128,6 +134,8 @@ def test_split_audit_filters_preserves_defaults():
     )
 
     assert query_filters == {
+
+        "patient_id": None,
         "user_id": None,
         "action": None,
         "entity_type": None,
