@@ -115,6 +115,9 @@ def test_enabled_runtime_wires_one_project_and_one_lease(runtime_env):
         assert runtime.actuator.scale_in_enabled is False
         assert runtime.actuator.routing_adapter is not None
         assert runtime.actuator.routing_adapter.project_name == "clinic-system"
+        assert runtime.self_healer.routing_adapter is runtime.actuator.routing_adapter
+        assert runtime.runner.loop._self_healer is runtime.self_healer
+        assert runtime.self_healer.ownership_guard == runtime.lease.is_owner
         assert runtime.actuator.before_scale_command == runtime.lease.mark_scale_command_started
         assert runtime.runner.loop._controller._observation_adapter.config.bucket_seconds == API_REQUEST_METRICS_BUCKET_SECONDS
         assert runtime.runner.loop._controller._coordinator._decision_engine.policy.allow_scale_in is False

@@ -48,6 +48,9 @@ from app.core.autoscaling.live_actuator import (
 )
 from app.core.autoscaling.nginx_routing import NginxBackendRoutingAdapter
 from app.core.autoscaling.reconciliation_loop import AutoscalingReconciliationLoop
+from app.core.autoscaling.self_healing import (
+    ComposeBackendSelfHealer,
+)
 from app.core.observability.api_request_metrics import API_REQUEST_METRICS_BUCKET_SECONDS
 
 
@@ -67,6 +70,7 @@ class AutoscalingRuntime:
     controller: APIBackendAutoscalingController
     coordinator: AutoscalingCoordinator
     actuator: ComposeLiveScalingActuator
+    self_healer: ComposeBackendSelfHealer
     lease: RedisControllerLease
     project_name: str
     project_root: Path
@@ -264,6 +268,14 @@ def build_runtime(
             project_name=project_name,
             upstream_file=routing_file,
         )
+        self_healer = ComposeBackendSelfHealer(
+            project_root=project_root,
+            project_name=project_name,
+            min_replicas=minimum,
+            max_replicas=maximum,
+            routing_adapter=routing_adapter,
+            ownership_guard=lease.is_owner,
+        )
         actuator = ComposeLiveScalingActuator(
             preview_adapter,
             live_enabled=True,
@@ -285,6 +297,7 @@ def build_runtime(
             controller=controller,
             actuator=guarded_actuator,
             acknowledge_scale_result=guarded_acknowledgement,
+            self_healer=self_healer,
             enabled=True,
             interval_seconds=loop_interval,
         )
@@ -301,6 +314,7 @@ def build_runtime(
             controller=controller,
             coordinator=coordinator,
             actuator=actuator,
+            self_healer=self_healer,
             lease=lease,
             project_name=project_name,
             project_root=project_root,
@@ -333,17 +347,36 @@ def main() -> int:
         if runtime.redis_client.ping() is not True:
             raise RuntimeError("redis_ping_failed")
         snapshot = runtime.replica_reader.read()
+        healing_preflight = runtime.self_healer.inspect()
+
+        if not healing_preflight.recoverable_preflight:
+            raise RuntimeError(
+                "backend_replica_preflight_failed"
+            )
+
+        desired = healing_preflight.desired_replicas
+
         if (
-            not snapshot.healthy
-            or type(snapshot.current_replicas) is not int
-            or not runtime.min_replicas <= snapshot.current_replicas <= runtime.max_replicas
+            type(desired) is not int
+            or not runtime.min_replicas
+            <= desired
+            <= runtime.max_replicas
         ):
-            raise RuntimeError("backend_replica_preflight_failed")
+            raise RuntimeError(
+                "backend_replica_preflight_failed"
+            )
 
         _LOG.info(
-            "autoscaling preflight passed project=%s replicas=%s range=%s..%s scale_in=disabled",
+            (
+                "autoscaling preflight passed project=%s "
+                "observed_replicas=%s desired_routes=%s "
+                "fleet_healthy=%s self_heal_state=%s range=%s..%s"
+            ),
             runtime.project_name,
             snapshot.current_replicas,
+            desired,
+            snapshot.healthy,
+            healing_preflight.status.value,
             runtime.min_replicas,
             runtime.max_replicas,
         )

@@ -17,6 +17,9 @@ from app.core.autoscaling.reconciliation_loop import (
     AutoscalingReconciliationLoop,
     ReconciliationStatus,
 )
+from app.core.autoscaling.self_healing import (
+    SelfHealingStatus,
+)
 
 
 AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -97,6 +100,25 @@ def cycle_result(
     )
 
 
+class FakeSelfHealer:
+    def __init__(
+        self,
+        status=SelfHealingStatus.NOOP,
+        *,
+        reason="backend_fleet_healthy",
+    ):
+        self.status = status
+        self.reason = reason
+        self.calls = 0
+
+    def reconcile_once(self):
+        self.calls += 1
+        return SimpleNamespace(
+            status=self.status,
+            reason=self.reason,
+        )
+
+
 class FakeController:
     def __init__(self, results):
         self.results = list(results)
@@ -160,6 +182,7 @@ def make_loop(
     enabled=True,
     controller_results=None,
     actuator=None,
+    self_healer=None,
     ack_error=None,
 ):
     controller = FakeController(controller_results or [])
@@ -175,6 +198,7 @@ def make_loop(
         controller=controller,
         actuator=selected_actuator,
         acknowledge_scale_result=acknowledge,
+        self_healer=self_healer,
         enabled=enabled,
         clock=lambda: AT,
     )
@@ -432,3 +456,77 @@ def test_failed_acknowledgement_does_not_resend_mutation():
     assert result.exception_type == "RuntimeError"
     assert len(actuator.calls) == 1
     assert acknowledgements == []
+
+
+def test_self_heal_repair_precedes_demand_scaling():
+    healer = FakeSelfHealer(
+        SelfHealingStatus.REPAIRED,
+        reason="backend_replaced_and_route_set_verified",
+    )
+    loop, controller, actuator, acknowledgements = make_loop(
+        controller_results=[cycle_result()],
+        self_healer=healer,
+    )
+
+    result = loop.run_once(evaluated_at=AT)
+
+    assert result.status is ReconciliationStatus.SELF_HEALED
+    assert result.ok
+    assert healer.calls == 1
+    assert controller.calls == []
+    assert actuator.calls == []
+    assert acknowledgements == []
+
+
+def test_self_heal_wait_blocks_demand_scaling_for_cycle():
+    healer = FakeSelfHealer(
+        SelfHealingStatus.WAITING,
+        reason="backend_health_transition_in_progress",
+    )
+    loop, controller, actuator, acknowledgements = make_loop(
+        controller_results=[cycle_result()],
+        self_healer=healer,
+    )
+
+    result = loop.run_once(evaluated_at=AT)
+
+    assert result.status is ReconciliationStatus.SELF_HEALING_WAIT
+    assert result.ok
+    assert controller.calls == []
+    assert actuator.calls == []
+    assert acknowledgements == []
+
+
+def test_self_heal_failure_blocks_demand_scaling():
+    healer = FakeSelfHealer(
+        SelfHealingStatus.FAILED,
+        reason="self_heal_compose_failed",
+    )
+    loop, controller, actuator, acknowledgements = make_loop(
+        controller_results=[cycle_result()],
+        self_healer=healer,
+    )
+
+    result = loop.run_once(evaluated_at=AT)
+
+    assert result.status is ReconciliationStatus.SELF_HEALING_BLOCKED
+    assert not result.ok
+    assert controller.calls == []
+    assert actuator.calls == []
+    assert acknowledgements == []
+
+
+def test_healthy_self_heal_noop_allows_normal_scaling():
+    healer = FakeSelfHealer()
+    loop, controller, actuator, acknowledgements = make_loop(
+        controller_results=[cycle_result()],
+        self_healer=healer,
+    )
+
+    result = loop.run_once(evaluated_at=AT)
+
+    assert result.status is ReconciliationStatus.ACTUATION_APPLIED
+    assert healer.calls == 1
+    assert len(controller.calls) == 1
+    assert len(actuator.calls) == 1
+    assert acknowledgements == [(True, AT)]

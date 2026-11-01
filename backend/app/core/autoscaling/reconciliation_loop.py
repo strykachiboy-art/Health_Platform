@@ -22,6 +22,9 @@ from typing import Any, Callable
 from app.core.autoscaling.compose_adapter import ScalePreviewStatus
 from app.core.autoscaling.coordinator import AutoscalingCycleStatus
 from app.core.autoscaling.decision_engine import ScalingAction, ScalingDecision
+from app.core.autoscaling.self_healing import (
+    SelfHealingStatus,
+)
 
 
 _LOG = logging.getLogger(__name__)
@@ -41,6 +44,9 @@ class ReconciliationStatus(str, Enum):
     UNCERTAIN = "uncertain"
     SCALE_IN_DEFERRED = "scale_in_deferred"
     ACKNOWLEDGEMENT_FAILED = "acknowledgement_failed"
+    SELF_HEALED = "self_healed"
+    SELF_HEALING_WAIT = "self_healing_wait"
+    SELF_HEALING_BLOCKED = "self_healing_blocked"
     ERROR = "error"
 
 
@@ -63,6 +69,8 @@ class ReconciliationResult:
             ReconciliationStatus.HOLD,
             ReconciliationStatus.ACTUATION_APPLIED,
             ReconciliationStatus.RECONCILED_APPLIED,
+            ReconciliationStatus.SELF_HEALED,
+            ReconciliationStatus.SELF_HEALING_WAIT,
         }
 
 
@@ -84,6 +92,7 @@ class AutoscalingReconciliationLoop:
         controller: Any,
         actuator: Any,
         acknowledge_scale_result: Callable[..., None],
+        self_healer: Any = None,
         enabled: bool = False,
         interval_seconds: float = 10.0,
         clock: Callable[[], datetime] | None = None,
@@ -108,6 +117,14 @@ class AutoscalingReconciliationLoop:
         if not callable(acknowledge_scale_result):
             raise TypeError("acknowledge_scale_result must be callable")
 
+        if (
+            self_healer is not None
+            and not callable(
+                getattr(self_healer, "reconcile_once", None)
+            )
+        ):
+            raise TypeError("self_healer must provide reconcile_once()")
+
         if clock is not None and not callable(clock):
             raise TypeError("clock must be callable")
 
@@ -116,6 +133,7 @@ class AutoscalingReconciliationLoop:
         self._controller = controller
         self._actuator = actuator
         self._acknowledge = acknowledge_scale_result
+        self._self_healer = self_healer
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = threading.Lock()
 
@@ -156,6 +174,84 @@ class AutoscalingReconciliationLoop:
                     ReconciliationStatus.ERROR,
                     "timezone_aware_timestamp_required",
                 )
+
+            # Fleet repair always precedes demand scaling. Never mutate a
+            # backend while a previous scale operation is pending reconciliation.
+            if (
+                self._pending_decision is None
+                and self._pending_kind is None
+                and self._self_healer is not None
+            ):
+                try:
+                    healing = self._self_healer.reconcile_once()
+                except Exception as exc:
+                    return ReconciliationResult(
+                        ReconciliationStatus.ERROR,
+                        "self_healing_cycle_failed",
+                        evaluated_at=at,
+                        exception_type=type(exc).__name__,
+                    )
+
+                healing_status = getattr(healing, "status", None)
+
+                if healing_status is SelfHealingStatus.REPAIRED:
+                    return ReconciliationResult(
+                        ReconciliationStatus.SELF_HEALED,
+                        getattr(
+                            healing,
+                            "reason",
+                            "backend_self_healed",
+                        ),
+                        evaluated_at=at,
+                        actuation_result=healing,
+                    )
+
+                if healing_status is SelfHealingStatus.WAITING:
+                    return ReconciliationResult(
+                        ReconciliationStatus.SELF_HEALING_WAIT,
+                        getattr(
+                            healing,
+                            "reason",
+                            "backend_health_transition_in_progress",
+                        ),
+                        evaluated_at=at,
+                        actuation_result=healing,
+                    )
+
+                if healing_status in {
+                    SelfHealingStatus.REFUSED,
+                    SelfHealingStatus.FAILED,
+                }:
+                    return ReconciliationResult(
+                        ReconciliationStatus.SELF_HEALING_BLOCKED,
+                        getattr(
+                            healing,
+                            "reason",
+                            "backend_self_healing_blocked",
+                        ),
+                        evaluated_at=at,
+                        actuation_result=healing,
+                    )
+
+                if healing_status is SelfHealingStatus.UNCERTAIN:
+                    return ReconciliationResult(
+                        ReconciliationStatus.UNCERTAIN,
+                        getattr(
+                            healing,
+                            "reason",
+                            "backend_self_healing_uncertain",
+                        ),
+                        evaluated_at=at,
+                        actuation_result=healing,
+                    )
+
+                if healing_status is not SelfHealingStatus.NOOP:
+                    return ReconciliationResult(
+                        ReconciliationStatus.ERROR,
+                        "self_healing_result_invalid",
+                        evaluated_at=at,
+                        actuation_result=healing,
+                    )
 
             # A known actuator outcome whose acknowledgement failed may be
             # retried as an acknowledgement only, never as another mutation.

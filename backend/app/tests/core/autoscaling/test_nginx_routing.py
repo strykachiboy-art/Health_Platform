@@ -199,3 +199,55 @@ def test_malformed_upstream_file_fails_closed(tmp_path):
     assert result.confirmed is False
     assert result.reason == "upstream_file_invalid"
     assert fake.calls == []
+
+def test_quarantine_middle_replica_marks_down_and_excludes_from_active_verification(
+    tmp_path,
+):
+    adapter, path, fake = make_adapter(tmp_path, count=4)
+    result = adapter.quarantine("clinic-system-backend-2")
+    assert result == RouteOperationResult(
+        True, None, "route_quarantine_confirmed", 0
+    )
+    text = path.read_text(encoding="utf-8")
+    assert (
+        "server clinic-system-backend-2:5000 resolve "
+        "max_fails=1 fail_timeout=10s down;"
+    ) in text
+    assert adapter.quarantined_backends() == (
+        "clinic-system-backend-2",
+    )
+    verification = adapter.verify_replicas(4)
+    assert verification.confirmed is False
+    assert verification.reason == "upstream_contains_quarantined_backend"
+    assert any(
+        command[-2:] == ["-s", "reload"]
+        for command in fake.calls
+    )
+
+
+def test_restore_quarantined_middle_replica_returns_full_active_route_set(
+    tmp_path,
+):
+    adapter, path, _fake = make_adapter(tmp_path, count=4)
+    assert adapter.quarantine("clinic-system-backend-2").confirmed
+    restored = adapter.restore_quarantined(
+        "clinic-system-backend-2"
+    )
+    assert restored == RouteOperationResult(
+        True, None, "route_quarantine_restored", 0
+    )
+    assert path.read_text(encoding="utf-8") == render(4)
+    assert adapter.quarantined_backends() == ()
+    assert adapter.verify_replicas(4).confirmed is True
+
+
+def test_quarantine_refuses_second_backend_while_one_is_already_down(
+    tmp_path,
+):
+    adapter, path, _fake = make_adapter(tmp_path, count=4)
+    assert adapter.quarantine("clinic-system-backend-2").confirmed
+    before = path.read_text(encoding="utf-8")
+    second = adapter.quarantine("clinic-system-backend-3")
+    assert second.confirmed is False
+    assert second.reason == "another_backend_already_quarantined"
+    assert path.read_text(encoding="utf-8") == before
