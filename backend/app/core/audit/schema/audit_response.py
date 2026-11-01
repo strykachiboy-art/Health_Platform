@@ -33,7 +33,7 @@ class AuditLogResponseSchema(BaseModel):
 
     ip_address: StrictStr | None
     created_at: datetime
-    evidence_sha256: StrictStr
+    evidence_sha256: StrictStr | None
 
     model_config = ConfigDict(
         from_attributes=True,

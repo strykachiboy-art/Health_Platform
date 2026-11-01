@@ -50,6 +50,14 @@ def test_serialize_audit_log_returns_response_contract():
     result = serialize_audit_log(log)
 
     assert result == {
+
+        "patient_id": None,
+
+        "operation_id": None,
+
+        "reason": None,
+
+        "evidence_sha256": None,
         "id": 1,
         "user_id": 10,
         "clinic_id": 2,
