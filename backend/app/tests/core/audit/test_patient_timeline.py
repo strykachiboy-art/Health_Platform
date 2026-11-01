@@ -13,13 +13,18 @@ from app.core.enums.role_enums import Role
 def make_log(
     *,
     clinic_id,
+    patient_id,
     entity_type="Patient",
-    entity_id=100,
+    entity_id=None,
     action=AuditAction.CREATE,
     user_id=None,
 ):
+    if entity_id is None:
+        entity_id = patient_id
+
     return AuditLog(
         clinic_id=clinic_id,
+        patient_id=patient_id,
         entity_type=entity_type,
         entity_id=entity_id,
         action=action,
@@ -29,26 +34,29 @@ def make_log(
 
 def test_get_patient_timeline_returns_patient_events(
     db_session,
+    clinic,
+    make_patient,
 ):
-    db_session.add(
-        make_log(
-            clinic_id=1,
-            entity_id=100,
-        )
-    )
+    patient = make_patient(clinic)
+    other_patient = make_patient(clinic)
 
     db_session.add(
         make_log(
-            clinic_id=1,
-            entity_id=100,
+            clinic_id=clinic.id,
+            patient_id=patient.id,
+        )
+    )
+    db_session.add(
+        make_log(
+            clinic_id=clinic.id,
+            patient_id=patient.id,
             action=AuditAction.UPDATE,
         )
     )
-
     db_session.add(
         make_log(
-            clinic_id=1,
-            entity_id=101,
+            clinic_id=clinic.id,
+            patient_id=other_patient.id,
         )
     )
 
@@ -56,8 +64,8 @@ def test_get_patient_timeline_returns_patient_events(
 
     result = get_patient_timeline(
         actor_role=Role.ADMIN,
-        actor_clinic_id=1,
-        patient_id=100,
+        actor_clinic_id=clinic.id,
+        patient_id=patient.id,
     )
 
     assert len(result) == 2
@@ -66,29 +74,38 @@ def test_get_patient_timeline_returns_patient_events(
         for log in result
     )
     assert all(
-        log.entity_id == 100
+        log.entity_id == patient.id
         for log in result
     )
     assert all(
-        log.clinic_id == 1
+        log.patient_id == patient.id
+        for log in result
+    )
+    assert all(
+        log.clinic_id == clinic.id
         for log in result
     )
 
 
 def test_patient_timeline_is_tenant_scoped(
     db_session,
+    make_clinic,
+    make_patient,
 ):
-    db_session.add(
-        make_log(
-            clinic_id=1,
-            entity_id=100,
-        )
-    )
+    clinic_a = make_clinic()
+    clinic_b = make_clinic()
+    patient = make_patient(clinic_a)
 
     db_session.add(
         make_log(
-            clinic_id=2,
-            entity_id=100,
+            clinic_id=clinic_a.id,
+            patient_id=patient.id,
+        )
+    )
+    db_session.add(
+        make_log(
+            clinic_id=clinic_b.id,
+            patient_id=patient.id,
         )
     )
 
@@ -96,28 +113,33 @@ def test_patient_timeline_is_tenant_scoped(
 
     result = get_patient_timeline(
         actor_role=Role.ADMIN,
-        actor_clinic_id=1,
-        patient_id=100,
+        actor_clinic_id=clinic_a.id,
+        patient_id=patient.id,
     )
 
     assert len(result) == 1
-    assert result[0].clinic_id == 1
+    assert result[0].clinic_id == clinic_a.id
 
 
 def test_super_admin_can_read_patient_timeline_across_clinics(
     db_session,
+    make_clinic,
+    make_patient,
 ):
-    db_session.add(
-        make_log(
-            clinic_id=1,
-            entity_id=100,
-        )
-    )
+    clinic_a = make_clinic()
+    clinic_b = make_clinic()
+    patient = make_patient(clinic_a)
 
     db_session.add(
         make_log(
-            clinic_id=2,
-            entity_id=100,
+            clinic_id=clinic_a.id,
+            patient_id=patient.id,
+        )
+    )
+    db_session.add(
+        make_log(
+            clinic_id=clinic_b.id,
+            patient_id=patient.id,
         )
     )
 
@@ -126,7 +148,7 @@ def test_super_admin_can_read_patient_timeline_across_clinics(
     result = get_patient_timeline(
         actor_role=Role.SUPER_ADMIN,
         actor_clinic_id=None,
-        patient_id=100,
+        patient_id=patient.id,
     )
 
     assert len(result) == 2
@@ -134,19 +156,22 @@ def test_super_admin_can_read_patient_timeline_across_clinics(
 
 def test_patient_timeline_supports_action_filter(
     db_session,
+    clinic,
+    make_patient,
 ):
-    db_session.add(
-        make_log(
-            clinic_id=1,
-            entity_id=100,
-            action=AuditAction.CREATE,
-        )
-    )
+    patient = make_patient(clinic)
 
     db_session.add(
         make_log(
-            clinic_id=1,
-            entity_id=100,
+            clinic_id=clinic.id,
+            patient_id=patient.id,
+            action=AuditAction.CREATE,
+        )
+    )
+    db_session.add(
+        make_log(
+            clinic_id=clinic.id,
+            patient_id=patient.id,
             action=AuditAction.UPDATE,
         )
     )
@@ -155,8 +180,8 @@ def test_patient_timeline_supports_action_filter(
 
     result = get_patient_timeline(
         actor_role=Role.ADMIN,
-        actor_clinic_id=1,
-        patient_id=100,
+        actor_clinic_id=clinic.id,
+        patient_id=patient.id,
         action=AuditAction.UPDATE,
     )
 
@@ -166,12 +191,16 @@ def test_patient_timeline_supports_action_filter(
 
 def test_patient_timeline_page_preserves_pagination(
     db_session,
+    clinic,
+    make_patient,
 ):
+    patient = make_patient(clinic)
+
     for index in range(5):
         db_session.add(
             make_log(
-                clinic_id=1,
-                entity_id=100,
+                clinic_id=clinic.id,
+                patient_id=patient.id,
             )
         )
 
@@ -179,8 +208,8 @@ def test_patient_timeline_page_preserves_pagination(
 
     result = get_patient_timeline_page(
         actor_role=Role.ADMIN,
-        actor_clinic_id=1,
-        patient_id=100,
+        actor_clinic_id=clinic.id,
+        patient_id=patient.id,
         page=1,
         per_page=2,
     )
@@ -194,25 +223,29 @@ def test_patient_timeline_page_preserves_pagination(
 
 def test_count_patient_timeline_is_tenant_scoped(
     db_session,
+    make_clinic,
+    make_patient,
 ):
-    db_session.add(
-        make_log(
-            clinic_id=1,
-            entity_id=100,
-        )
-    )
+    clinic_a = make_clinic()
+    clinic_b = make_clinic()
+    patient = make_patient(clinic_a)
 
     db_session.add(
         make_log(
-            clinic_id=1,
-            entity_id=100,
+            clinic_id=clinic_a.id,
+            patient_id=patient.id,
         )
     )
-
     db_session.add(
         make_log(
-            clinic_id=2,
-            entity_id=100,
+            clinic_id=clinic_a.id,
+            patient_id=patient.id,
+        )
+    )
+    db_session.add(
+        make_log(
+            clinic_id=clinic_b.id,
+            patient_id=patient.id,
         )
     )
 
@@ -220,8 +253,8 @@ def test_count_patient_timeline_is_tenant_scoped(
 
     count = count_patient_timeline(
         actor_role=Role.ADMIN,
-        actor_clinic_id=1,
-        patient_id=100,
+        actor_clinic_id=clinic_a.id,
+        patient_id=patient.id,
     )
 
     assert count == 2
