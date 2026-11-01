@@ -5,6 +5,9 @@ from unittest.mock import Mock
 
 import pytest
 
+from app.core.enums.medication_reconciliation_enums import (
+    MedicationReconciliationEvent,
+)
 from app.core.enums.role_enums import Role
 from app.core.enums.ward_enums import (
     AdmissionStatus,
@@ -18,6 +21,9 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.extensions import db
+from app.modules.medication_reconciliation.services import (
+    medication_reconciliation_service as med_recon_service,
+)
 from app.modules.ward.services import ward_service
 
 
@@ -160,6 +166,57 @@ def _create_admission(
         bed,
         admission,
     )
+
+def _mark_admission_discharged(
+    admission,
+    bed,
+):
+    admission.status = AdmissionStatus.DISCHARGED
+    admission.discharged_at = (
+        datetime.now(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    bed.status = BedStatus.AVAILABLE
+    db.session.flush()
+
+
+def _clinical_discharge_payload(
+    *,
+    reason="Clinical discharge complete",
+):
+    return {
+        "reason": reason,
+        "primary_diagnosis": "Resolved acute illness",
+        "secondary_diagnoses": ["Hypertension"],
+        "condition_at_discharge": "Stable and ambulatory",
+        "instructions": "Return for worsening symptoms",
+        "follow_up_plan": "Clinic follow-up in seven days",
+        "destination": "Home",
+    }
+
+
+def _finalize_empty_discharge_reconciliation(
+    clinic,
+    admission,
+    actor,
+):
+    record = med_recon_service.create_medication_reconciliation(
+        clinic_id=clinic.id,
+        admission_id=admission.id,
+        event_type=MedicationReconciliationEvent.DISCHARGE,
+        actor_staff_id=actor.id,
+        no_medications_reported=True,
+        notes="Discharge medication review",
+        items=[],
+    )
+
+    return med_recon_service.finalize_medication_reconciliation(
+        record.id,
+        clinic_id=clinic.id,
+        actor_staff_id=actor.id,
+        expected_version=1,
+    )
+
 
 
 # Authentication
@@ -2618,7 +2675,7 @@ def test_list_patient_admissions_route_success(
     make_staff,
     auth_headers_for,
 ):
-    patient, staff, _, first = (
+    patient, staff, first_bed, first = (
         _create_admission(
             clinic,
             make_patient,
@@ -2627,10 +2684,9 @@ def test_list_patient_admissions_route_success(
         )
     )
 
-    ward_service.discharge_patient(
-        first.id,
-        clinic.id,
-        actor_user_id=staff.user_id,
+    _mark_admission_discharged(
+        first,
+        first_bed,
     )
 
     _, second_bed = _create_bed(
@@ -2683,7 +2739,7 @@ def test_list_patient_admissions_route_supports_pagination(
     make_staff,
     auth_headers_for,
 ):
-    patient, staff, _, first = _create_admission(
+    patient, staff, first_bed, first = _create_admission(
         clinic,
         make_patient,
         make_staff,
@@ -2694,10 +2750,9 @@ def test_list_patient_admissions_route_supports_pagination(
         staff.user_id,
     )
 
-    ward_service.discharge_patient(
-        first.id,
-        clinic.id,
-        actor_user_id=staff.user_id,
+    _mark_admission_discharged(
+        first,
+        first_bed,
     )
 
     for index in range(2, 4):
@@ -2715,10 +2770,9 @@ def test_list_patient_admissions_route_supports_pagination(
             actor_user_id=staff.user_id,
         )
 
-        ward_service.discharge_patient(
-            admission.id,
-            clinic.id,
-            actor_user_id=staff.user_id,
+        _mark_admission_discharged(
+            admission,
+            bed,
         )
 
     response = client.get(
@@ -3185,9 +3239,23 @@ def test_discharge_patient_route_success(
         )
     )
 
+    _finalize_empty_discharge_reconciliation(
+        clinic,
+        admission,
+        staff,
+    )
+
     user = db.session.get(
         type(staff.user),
         staff.user_id,
+    )
+
+    headers = _headers(
+        auth_headers_for,
+        user,
+    )
+    headers["Idempotency-Key"] = (
+        "ward-route-discharge-success"
     )
 
     response = client.post(
@@ -3195,13 +3263,10 @@ def test_discharge_patient_route_success(
             f"/api/v1/wards/admissions/"
             f"{admission.id}/discharge"
         ),
-        json={
-            "reason": "Patient recovered",
-        },
-        headers=_headers(
-            auth_headers_for,
-            user,
+        json=_clinical_discharge_payload(
+            reason="Patient recovered",
         ),
+        headers=headers,
     )
 
     assert response.status_code == 200
@@ -3220,6 +3285,9 @@ def test_discharge_patient_route_success(
     assert result["status"] == (
         AdmissionStatus.DISCHARGED.value
     )
+    assert body["discharge_summary"]["admission_id"] == (
+        admission.id
+    )
 
 
 def test_discharge_patient_route_allows_no_reason(
@@ -3235,9 +3303,28 @@ def test_discharge_patient_route_allows_no_reason(
         make_staff,
     )
 
+    _finalize_empty_discharge_reconciliation(
+        clinic,
+        admission,
+        staff,
+    )
+
     user = db.session.get(
         type(staff.user),
         staff.user_id,
+    )
+
+    payload = _clinical_discharge_payload(
+        reason=None,
+    )
+    payload.pop("reason")
+
+    headers = _headers(
+        auth_headers_for,
+        user,
+    )
+    headers["Idempotency-Key"] = (
+        "ward-route-discharge-no-reason"
     )
 
     response = client.post(
@@ -3245,11 +3332,8 @@ def test_discharge_patient_route_allows_no_reason(
             f"/api/v1/wards/admissions/"
             f"{admission.id}/discharge"
         ),
-        json={},
-        headers=_headers(
-            auth_headers_for,
-            user,
-        ),
+        json=payload,
+        headers=headers,
     )
 
     assert response.status_code == 200
@@ -3262,16 +3346,32 @@ def test_discharge_patient_route_allows_no_reason(
 
 def test_discharge_patient_route_missing_admission(
     client,
-    user,
+    clinic,
+    make_staff,
     auth_headers_for,
 ):
+    staff = make_staff(
+        clinic=clinic,
+        role=Role.DOCTOR,
+    )
+
+    user = db.session.get(
+        type(staff.user),
+        staff.user_id,
+    )
+
+    headers = _headers(
+        auth_headers_for,
+        user,
+    )
+    headers["Idempotency-Key"] = (
+        "ward-route-missing-admission"
+    )
+
     response = client.post(
         "/api/v1/wards/admissions/999999/discharge",
-        json={},
-        headers=_headers(
-            auth_headers_for,
-            user,
-        ),
+        json=_clinical_discharge_payload(),
+        headers=headers,
     )
 
     assert response.status_code == 404

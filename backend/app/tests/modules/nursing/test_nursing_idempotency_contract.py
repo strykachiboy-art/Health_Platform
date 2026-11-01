@@ -716,6 +716,8 @@ def _route_result(kind):
         result.status = (
             NursingNoteStatus.SIGNED
         )
+        result.record_status = "final"
+        result.finalized_by_staff_id = 17
         result.signed_at = now
         result.version = 2
         return result

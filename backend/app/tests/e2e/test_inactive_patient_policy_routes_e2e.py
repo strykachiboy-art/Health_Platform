@@ -75,7 +75,7 @@ def test_inactive_patient_cannot_create_lab_order_via_api(
     make_patient,
     make_lab_test,
 ):
-    staff, headers = make_authenticated_staff(clinic, Role.ADMIN)
+    staff, headers = make_authenticated_staff(clinic, Role.DOCTOR)
     patient = make_patient(clinic, is_active=False)
     lab_test = make_lab_test(
         clinic,

@@ -41,6 +41,9 @@ FULL_HOSPITAL_QUERY_BUDGET = 22
 PHARMACIST_QUERY_BUDGET = 5
 RECEPTIONIST_QUERY_BUDGET = 4
 PATIENT_ORDER_QUERY_BUDGET = 8
+DOCTOR_MY_PATIENTS_QUERY_BUDGET = 6
+NURSE_MY_PATIENTS_QUERY_BUDGET = 2
+OTHER_MY_PATIENTS_QUERY_BUDGET = 0
 
 WARMUPS = 3
 RUNS = 20
@@ -509,3 +512,74 @@ def test_patient_order_query_budget_is_constant_as_orders_grow(
 
     assert small_queries == PATIENT_ORDER_QUERY_BUDGET
     assert large_queries == PATIENT_ORDER_QUERY_BUDGET
+
+
+def test_my_patients_query_budgets_are_role_bounded(
+    clinic,
+    make_staff,
+):
+    doctor = make_staff(
+        clinic,
+        role=Role.DOCTOR,
+    )
+    nurse = make_staff(
+        clinic,
+        role=Role.NURSE,
+    )
+    pharmacist = make_staff(
+        clinic,
+        role=Role.PHARMACIST,
+    )
+
+    period = (
+        clinical_dashboard_service
+        .resolve_dashboard_period(None)
+    )
+
+    start, end = (
+        clinical_dashboard_service
+        .period_bounds(period)
+    )
+
+    # Resolve role before query measurement. Accessing staff.user.role
+    # inside _measure_call can lazy-load User and incorrectly charge
+    # that unrelated ORM relationship query to this read-model budget.
+    expectations = (
+        (
+            doctor,
+            Role.DOCTOR,
+            DOCTOR_MY_PATIENTS_QUERY_BUDGET,
+        ),
+        (
+            nurse,
+            Role.NURSE,
+            NURSE_MY_PATIENTS_QUERY_BUDGET,
+        ),
+        (
+            pharmacist,
+            Role.PHARMACIST,
+            OTHER_MY_PATIENTS_QUERY_BUDGET,
+        ),
+    )
+
+    for (
+        staff,
+        role,
+        expected_queries,
+    ) in expectations:
+        result, queries, _ = _measure_call(
+            lambda staff=staff, role=role: (
+                clinical_dashboard_service
+                ._get_my_patients(
+                    role=role,
+                    staff_id=staff.id,
+                    clinic_id=clinic.id,
+                    start=start,
+                    end=end,
+                )
+            )
+        )
+
+        assert result.total == 0
+        assert result.items == []
+        assert queries == expected_queries

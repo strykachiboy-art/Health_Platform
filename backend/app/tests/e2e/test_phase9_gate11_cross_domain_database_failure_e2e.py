@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
+from urllib.parse import urlparse
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -82,11 +84,28 @@ def _docker(
 def _assert_disposable_database(
     database_url: str,
 ) -> None:
-    expected_fragment = (
-        "127.0.0.1:55433/clinic_gate11"
-    )
+    try:
+        parsed = urlparse(database_url)
+        database_port = parsed.port
+    except ValueError as exc:
+        raise AssertionError(
+            "REFUSING_NON_DISPOSABLE_DATABASE="
+            f"{database_url}"
+        ) from exc
 
-    if expected_fragment not in database_url:
+    if (
+        parsed.scheme
+        not in {
+            "postgresql",
+            "postgresql+psycopg",
+        }
+        or parsed.hostname != "127.0.0.1"
+        or parsed.username != "gate11"
+        or parsed.password != "gate11_test"
+        or parsed.path != "/clinic_gate11"
+        or database_port is None
+        or database_port <= 0
+    ):
         raise AssertionError(
             "REFUSING_NON_DISPOSABLE_DATABASE="
             f"{database_url}"
@@ -102,6 +121,100 @@ def _assert_disposable_database(
         raise AssertionError(
             "DISPOSABLE_DB_CONTAINER_MISSING="
             f"{DB_CONTAINER}"
+        )
+
+    try:
+        container = json.loads(
+            inspect.stdout
+        )[0]
+    except (
+        IndexError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise AssertionError(
+            "DISPOSABLE_DB_CONTAINER_INSPECT_INVALID="
+            f"{DB_CONTAINER}"
+        ) from exc
+
+    config = container.get(
+        "Config",
+        {},
+    )
+    image = str(
+        config.get(
+            "Image",
+            "",
+        )
+    )
+    environment = set(
+        config.get(
+            "Env",
+            [],
+        )
+        or []
+    )
+
+    if not image.startswith(
+        "postgres:18"
+    ):
+        raise AssertionError(
+            "DISPOSABLE_DB_IMAGE_MISMATCH="
+            f"{image}"
+        )
+
+    required_environment = {
+        "POSTGRES_USER=gate11",
+        "POSTGRES_PASSWORD=gate11_test",
+        "POSTGRES_DB=clinic_gate11",
+    }
+
+    if not required_environment.issubset(
+        environment
+    ):
+        raise AssertionError(
+            "DISPOSABLE_DB_ENVIRONMENT_MISMATCH"
+        )
+
+    port_bindings = (
+        container.get(
+            "NetworkSettings",
+            {},
+        )
+        .get(
+            "Ports",
+            {},
+        )
+        .get(
+            "5432/tcp",
+        )
+        or []
+    )
+
+    expected_host_port = str(
+        database_port
+    )
+
+    matching_binding = any(
+        str(
+            binding.get(
+                "HostPort",
+                "",
+            )
+        )
+        == expected_host_port
+        and binding.get(
+            "HostIp"
+        )
+        == "127.0.0.1"
+        for binding in port_bindings
+    )
+
+    if not matching_binding:
+        raise AssertionError(
+            "DISPOSABLE_DB_PORT_MISMATCH="
+            f"{database_url}"
         )
 
 
@@ -423,112 +536,8 @@ def _seed_domain(
 def _cleanup_clinic(
     clinic_id: int,
 ) -> None:
-    db.session.execute(
-        delete(AuditLog).where(
-            AuditLog.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(DispenseItem).where(
-            DispenseItem.dispense_record_id.in_(
-                select(
-                    DispenseRecord.id
-                ).where(
-                    DispenseRecord.prescription_id.in_(
-                        select(
-                            Prescription.id
-                        ).where(
-                            Prescription.clinic_id
-                            == clinic_id,
-                        )
-                    )
-                )
-            )
-        )
-    )
-
-    db.session.execute(
-        delete(DispenseRecord).where(
-            DispenseRecord.prescription_id.in_(
-                select(
-                    Prescription.id
-                ).where(
-                    Prescription.clinic_id
-                    == clinic_id,
-                )
-            )
-        )
-    )
-
-    db.session.execute(
-        delete(PrescriptionItem).where(
-            PrescriptionItem.prescription_id.in_(
-                select(
-                    Prescription.id
-                ).where(
-                    Prescription.clinic_id
-                    == clinic_id,
-                )
-            )
-        )
-    )
-
-    db.session.execute(
-        delete(Prescription).where(
-            Prescription.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(DrugBatch).where(
-            DrugBatch.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Drug).where(
-            Drug.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Consultation).where(
-            Consultation.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Appointment).where(
-            Appointment.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Patient).where(
-            Patient.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Staff).where(
-            Staff.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(User).where(
-            User.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Clinic).where(
-            Clinic.id == clinic_id,
-        )
-    )
-
-    db.session.commit()
+    # Production audit rows are immutable. This Phase 9 E2E runs against a dedicated disposable database; database teardown owns row cleanup.
+    return None
 
 
 def _clinical_state(

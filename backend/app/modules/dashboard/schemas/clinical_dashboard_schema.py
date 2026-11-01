@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums.ai_enums import (
     AIFeature,
     AIApprovalStatus,
     AIRiskLevel,
+)
+from app.core.enums.nursing_enums import (
+    NursingCareTaskPriority,
 )
 
 from app.modules.dashboard.schemas.department_dashboard_schema import (
@@ -222,6 +228,70 @@ class ClinicalAIDashboardSchema(BaseModel):
     )
 
 
+ClinicalMyPatientSource = Literal[
+    "active_consultation",
+    "scheduled_appointment",
+    "pending_lab_order",
+    "active_prescription",
+    "assigned_nursing_task",
+]
+
+ClinicalMyPatientNextAction = Literal[
+    "continue_consultation",
+    "prepare_for_appointment",
+    "follow_up_lab_order",
+    "review_medication_plan",
+    "complete_nursing_task",
+]
+
+
+class ClinicalMyPatientSchema(BaseModel):
+    patient_id: int = Field(..., gt=0)
+    patient_number: str
+    first_name: str
+    last_name: str
+
+    primary_source: ClinicalMyPatientSource
+
+    care_sources: list[ClinicalMyPatientSource] = Field(
+        ...,
+        min_length=1,
+    )
+
+    next_action: ClinicalMyPatientNextAction
+    next_action_at: datetime | None = None
+
+    admission_id: int | None = Field(
+        default=None,
+        gt=0,
+    )
+
+    ward_name: str | None = None
+    bed_number: str | None = None
+
+    nursing_task_priority: (
+        NursingCareTaskPriority | None
+    ) = None
+
+    open_nursing_tasks: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ClinicalMyPatientsSchema(BaseModel):
+    total: int = Field(default=0, ge=0)
+    preview_limit: int = Field(default=20, ge=1, le=100)
+
+    items: list[ClinicalMyPatientSchema] = Field(
+        default_factory=list,
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ClinicalDashboardSchema(BaseModel):
     context: DashboardContextSchema
 
@@ -235,6 +305,10 @@ class ClinicalDashboardSchema(BaseModel):
         ClinicalDepartmentSchema
     ] = Field(
         default_factory=list,
+    )
+
+    my_patients: ClinicalMyPatientsSchema = Field(
+        default_factory=ClinicalMyPatientsSchema,
     )
 
     ai: ClinicalAIDashboardSchema

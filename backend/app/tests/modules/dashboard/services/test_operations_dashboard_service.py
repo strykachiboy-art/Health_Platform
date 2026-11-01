@@ -1258,6 +1258,8 @@ def test_metrics_have_expected_keys(
         "available_ambulances",
         "maintenance_ambulances",
         "unread_chat_messages",
+        "hospital_active_admissions",
+        "hospital_available_beds",
     ]
 
 

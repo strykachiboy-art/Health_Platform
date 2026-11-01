@@ -59,12 +59,27 @@ def test_gate11_cross_domain_unknown_outcome_replays_one_prescription(
         },
     )
 
+    pharmacist_staff = make_staff(
+        clinic=clinic,
+        role=Role.PHARMACIST,
+        user_overrides={
+            "email": (
+                f"gate11-s11-pharmacist-{uuid4().hex}"
+                "@example.com"
+            ),
+        },
+    )
+
     admin_login = e2e_login(
         admin.email,
     )
 
     doctor_login = e2e_login(
         doctor_staff.user.email,
+    )
+
+    pharmacist_login = e2e_login(
+        pharmacist_staff.user.email,
     )
 
     patient_response = client.post(
@@ -156,7 +171,7 @@ def test_gate11_cross_domain_unknown_outcome_replays_one_prescription(
             "unit_price": "5.00",
             "is_controlled": False,
         },
-        headers=_auth(admin_login),
+        headers=_auth(pharmacist_login),
     )
 
     assert drug_response.status_code == 201, (

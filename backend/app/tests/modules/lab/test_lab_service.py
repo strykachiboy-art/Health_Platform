@@ -1026,6 +1026,10 @@ def test_validate_actor_for_order(
         id=9,
         clinic_id=4,
     )
+    actor.user = SimpleNamespace(
+        is_active=True,
+        role=lab_service.Role.LAB_TECHNICIAN,
+    )
 
     get_staff = Mock(
         return_value=actor

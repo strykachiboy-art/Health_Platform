@@ -39,6 +39,16 @@ from app.modules.dashboard.services.clinical_dashboard_service import (
 
 from app.modules.ward.models.ward_model import Admission
 
+from app.core.enums.nursing_enums import (
+    NursingCarePlanStatus,
+    NursingCareTaskPriority,
+    NursingCareTaskStatus,
+)
+from app.modules.nursing.models.nursing_model import (
+    NursingCarePlan,
+    NursingCareTask,
+)
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -679,6 +689,451 @@ def test_clinical_dashboard_enforces_clinic_isolation(
 
 
 # ============================================================================
+# MY PATIENTS
+# ============================================================================
+
+
+def test_doctor_my_patients_unifies_longitudinal_workflow_sources(
+    clinic,
+    make_clinic,
+    make_staff,
+    make_patient,
+    make_appointment,
+    make_consultation,
+    make_lab_test,
+    make_lab_order,
+    make_prescription,
+):
+    doctor = make_staff(clinic, role=Role.DOCTOR)
+    other_doctor = make_staff(
+        clinic,
+        role=Role.DOCTOR,
+    )
+
+    other_clinic = make_clinic()
+    other_clinic_doctor = make_staff(
+        other_clinic,
+        role=Role.DOCTOR,
+    )
+
+    active = make_patient(
+        clinic,
+        first_name="Active",
+        last_name="Consult",
+    )
+    appointment_only = make_patient(
+        clinic,
+        first_name="Appointment",
+        last_name="Only",
+    )
+    lab_only = make_patient(
+        clinic,
+        first_name="Lab",
+        last_name="Only",
+    )
+    prescription_only = make_patient(
+        clinic,
+        first_name="Prescription",
+        last_name="Only",
+    )
+    excluded_other_staff = make_patient(
+        clinic,
+        first_name="Other",
+        last_name="Staff",
+    )
+    excluded_inactive = make_patient(
+        clinic,
+        first_name="Inactive",
+        last_name="Patient",
+        is_active=False,
+    )
+    excluded_other_clinic = make_patient(
+        other_clinic,
+        first_name="Other",
+        last_name="Clinic",
+    )
+
+    appointment = make_appointment(
+        clinic=clinic,
+        patient=active,
+        staff=doctor,
+        status=AppointmentStatus.CONFIRMED,
+        scheduled_start=_today_at(9),
+        scheduled_end=_today_at(10),
+    )
+
+    make_consultation(
+        clinic=clinic,
+        patient=active,
+        staff=doctor,
+        appointment=appointment,
+        status=ConsultationStatus.IN_PROGRESS,
+    )
+
+    lab_test = make_lab_test(clinic)
+
+    make_lab_order(
+        clinic=clinic,
+        patient=active,
+        staff=doctor,
+        tests=[lab_test],
+        status=LabOrderStatus.ORDERED,
+    )
+
+    make_prescription(
+        clinic=clinic,
+        patient=active,
+        staff=doctor,
+        status=PrescriptionStatus.ACTIVE,
+    )
+
+    make_appointment(
+        clinic=clinic,
+        patient=appointment_only,
+        staff=doctor,
+        status=AppointmentStatus.SCHEDULED,
+        scheduled_start=_today_at(11),
+        scheduled_end=_today_at(12),
+    )
+
+    make_lab_order(
+        clinic=clinic,
+        patient=lab_only,
+        staff=doctor,
+        tests=[lab_test],
+        status=LabOrderStatus.IN_PROGRESS,
+    )
+
+    make_prescription(
+        clinic=clinic,
+        patient=prescription_only,
+        staff=doctor,
+        status=PrescriptionStatus.ACTIVE,
+    )
+
+    make_appointment(
+        clinic=clinic,
+        patient=excluded_other_staff,
+        staff=other_doctor,
+        status=AppointmentStatus.CONFIRMED,
+        scheduled_start=_today_at(13),
+        scheduled_end=_today_at(14),
+    )
+
+    make_consultation(
+        clinic=clinic,
+        patient=excluded_inactive,
+        staff=doctor,
+        status=ConsultationStatus.IN_PROGRESS,
+    )
+
+    other_lab_test = make_lab_test(other_clinic)
+
+    make_lab_order(
+        clinic=other_clinic,
+        patient=excluded_other_clinic,
+        staff=other_clinic_doctor,
+        tests=[other_lab_test],
+        status=LabOrderStatus.ORDERED,
+    )
+
+    dashboard = get_clinical_dashboard(
+        actor=doctor.user,
+    )
+
+    assert dashboard.my_patients.total == 4
+    assert dashboard.my_patients.preview_limit == 20
+
+    items = dashboard.my_patients.items
+
+    assert [item.patient_id for item in items] == [
+        active.id,
+        appointment_only.id,
+        lab_only.id,
+        prescription_only.id,
+    ]
+
+    assert items[0].primary_source == (
+        "active_consultation"
+    )
+    assert items[0].next_action == (
+        "continue_consultation"
+    )
+    assert items[0].care_sources == [
+        "active_consultation",
+        "scheduled_appointment",
+        "pending_lab_order",
+        "active_prescription",
+    ]
+
+    assert items[1].primary_source == (
+        "scheduled_appointment"
+    )
+    assert items[1].next_action == (
+        "prepare_for_appointment"
+    )
+
+    assert items[2].primary_source == (
+        "pending_lab_order"
+    )
+    assert items[2].next_action == (
+        "follow_up_lab_order"
+    )
+
+    assert items[3].primary_source == (
+        "active_prescription"
+    )
+    assert items[3].next_action == (
+        "review_medication_plan"
+    )
+
+    metrics = {
+        metric.key: metric
+        for metric in dashboard.metrics
+    }
+
+    assert metrics["my_patients"].value == 4
+    assert metrics["my_patients"].unit == "patients"
+
+
+def test_nurse_my_patients_uses_assigned_open_tasks_and_inpatient_context(
+    clinic,
+    make_staff,
+    make_patient,
+    make_ward,
+    make_bed,
+    db_session,
+):
+    nurse = make_staff(clinic, role=Role.NURSE)
+    other_nurse = make_staff(
+        clinic,
+        role=Role.NURSE,
+    )
+
+    urgent_patient = make_patient(
+        clinic,
+        first_name="Urgent",
+        last_name="Patient",
+    )
+    routine_patient = make_patient(
+        clinic,
+        first_name="Routine",
+        last_name="Patient",
+    )
+    excluded_patient = make_patient(
+        clinic,
+        first_name="Excluded",
+        last_name="Patient",
+    )
+
+    ward = make_ward(clinic)
+
+    urgent_bed = make_bed(
+        ward,
+        status=BedStatus.OCCUPIED,
+    )
+    routine_bed = make_bed(
+        ward,
+        status=BedStatus.OCCUPIED,
+    )
+    excluded_bed = make_bed(
+        ward,
+        status=BedStatus.OCCUPIED,
+    )
+
+    urgent_admission = Admission(
+        patient_id=urgent_patient.id,
+        bed_id=urgent_bed.id,
+        admitted_by_id=nurse.id,
+        status=AdmissionStatus.ADMITTED,
+    )
+    routine_admission = Admission(
+        patient_id=routine_patient.id,
+        bed_id=routine_bed.id,
+        admitted_by_id=nurse.id,
+        status=AdmissionStatus.ADMITTED,
+    )
+    excluded_admission = Admission(
+        patient_id=excluded_patient.id,
+        bed_id=excluded_bed.id,
+        admitted_by_id=other_nurse.id,
+        status=AdmissionStatus.ADMITTED,
+    )
+
+    db_session.add_all(
+        [
+            urgent_admission,
+            routine_admission,
+            excluded_admission,
+        ]
+    )
+    db_session.flush()
+
+    def add_plan(patient, admission, creator):
+        plan = NursingCarePlan(
+            clinic_id=clinic.id,
+            patient_id=patient.id,
+            admission_id=admission.id,
+            created_by_staff_id=creator.id,
+            title=f"Care {patient.id}",
+            problem="Active nursing problem",
+            goal="Complete assigned care",
+            status=NursingCarePlanStatus.ACTIVE,
+        )
+        db_session.add(plan)
+        db_session.flush()
+        return plan
+
+    urgent_plan = add_plan(
+        urgent_patient,
+        urgent_admission,
+        nurse,
+    )
+    routine_plan = add_plan(
+        routine_patient,
+        routine_admission,
+        nurse,
+    )
+    excluded_plan = add_plan(
+        excluded_patient,
+        excluded_admission,
+        other_nurse,
+    )
+
+    due = _today_at(8).replace(tzinfo=None)
+
+    db_session.add_all(
+        [
+            NursingCareTask(
+                care_plan_id=urgent_plan.id,
+                clinic_id=clinic.id,
+                patient_id=urgent_patient.id,
+                admission_id=urgent_admission.id,
+                created_by_staff_id=nurse.id,
+                assigned_to_staff_id=nurse.id,
+                description="Urgent assigned task",
+                priority=NursingCareTaskPriority.URGENT,
+                status=NursingCareTaskStatus.PENDING,
+                due_at=due,
+            ),
+            NursingCareTask(
+                care_plan_id=urgent_plan.id,
+                clinic_id=clinic.id,
+                patient_id=urgent_patient.id,
+                admission_id=urgent_admission.id,
+                created_by_staff_id=nurse.id,
+                assigned_to_staff_id=nurse.id,
+                description="Second assigned task",
+                priority=NursingCareTaskPriority.ROUTINE,
+                status=NursingCareTaskStatus.IN_PROGRESS,
+                due_at=_today_at(15).replace(tzinfo=None),
+            ),
+            NursingCareTask(
+                care_plan_id=routine_plan.id,
+                clinic_id=clinic.id,
+                patient_id=routine_patient.id,
+                admission_id=routine_admission.id,
+                created_by_staff_id=nurse.id,
+                assigned_to_staff_id=nurse.id,
+                description="Routine assigned task",
+                priority=NursingCareTaskPriority.ROUTINE,
+                status=NursingCareTaskStatus.PENDING,
+                due_at=_today_at(10).replace(tzinfo=None),
+            ),
+            NursingCareTask(
+                care_plan_id=excluded_plan.id,
+                clinic_id=clinic.id,
+                patient_id=excluded_patient.id,
+                admission_id=excluded_admission.id,
+                created_by_staff_id=other_nurse.id,
+                assigned_to_staff_id=other_nurse.id,
+                description="Other nurse task",
+                priority=NursingCareTaskPriority.URGENT,
+                status=NursingCareTaskStatus.PENDING,
+                due_at=_today_at(7).replace(tzinfo=None),
+            ),
+        ]
+    )
+    db_session.flush()
+
+    dashboard = get_clinical_dashboard(
+        actor=nurse.user,
+    )
+
+    assert dashboard.my_patients.total == 2
+
+    items = dashboard.my_patients.items
+
+    assert [item.patient_id for item in items] == [
+        urgent_patient.id,
+        routine_patient.id,
+    ]
+
+    urgent_item = items[0]
+
+    assert urgent_item.primary_source == (
+        "assigned_nursing_task"
+    )
+    assert urgent_item.care_sources == [
+        "assigned_nursing_task",
+    ]
+    assert urgent_item.next_action == (
+        "complete_nursing_task"
+    )
+    assert urgent_item.admission_id == (
+        urgent_admission.id
+    )
+    assert urgent_item.ward_name == ward.name
+    assert urgent_item.bed_number == (
+        urgent_bed.bed_number
+    )
+    assert urgent_item.nursing_task_priority is (
+        NursingCareTaskPriority.URGENT
+    )
+    assert urgent_item.open_nursing_tasks == 2
+    assert urgent_item.next_action_at == due
+
+    assert items[1].nursing_task_priority is (
+        NursingCareTaskPriority.ROUTINE
+    )
+    assert items[1].open_nursing_tasks == 1
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        Role.PHARMACIST,
+        Role.LAB_TECHNICIAN,
+        Role.PARAMEDIC,
+        Role.EMT,
+    ],
+)
+def test_my_patients_is_empty_for_non_longitudinal_clinical_roles(
+    clinic,
+    make_staff,
+    role,
+):
+    staff = make_staff(
+        clinic,
+        role=role,
+    )
+
+    dashboard = get_clinical_dashboard(
+        actor=staff.user,
+    )
+
+    assert dashboard.my_patients.total == 0
+    assert dashboard.my_patients.items == []
+
+    metrics = {
+        metric.key: metric
+        for metric in dashboard.metrics
+    }
+
+    assert metrics["my_patients"].value == 0
+
+
+# ============================================================================
 # AI AGGREGATES
 # ============================================================================
 
@@ -1040,19 +1495,24 @@ def test_clinical_dashboard_builds_expected_metrics(
 
     assert set(metrics) == {
         "appointments",
+        "my_patients",
         "pending_consultations",
         "pending_labs",
         "ai_requests",
         "unread_chat",
+        "active_admissions",
+        "draft_discharge_reconciliations",
     }
 
     assert metrics["appointments"].value == 0
+    assert metrics["my_patients"].value == 0
     assert metrics["pending_consultations"].value == 0
     assert metrics["pending_labs"].value == 0
     assert metrics["ai_requests"].value == 0
     assert metrics["unread_chat"].value == 0
 
     assert metrics["appointments"].unit == "appointments"
+    assert metrics["my_patients"].unit == "patients"
     assert metrics["pending_consultations"].unit == "consultations"
     assert metrics["pending_labs"].unit == "orders"
     assert metrics["ai_requests"].unit == "requests"

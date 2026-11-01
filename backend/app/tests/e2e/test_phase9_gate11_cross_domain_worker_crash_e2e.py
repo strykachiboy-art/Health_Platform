@@ -602,63 +602,8 @@ def _cleanup(
     staff_id,
     integration_id,
 ):
-    with Session(engine) as session:
-        session.execute(
-            delete(AuditLog).where(
-                AuditLog.entity_type == "Notification",
-                AuditLog.entity_id == notification_id,
-            )
-        )
-
-        session.execute(
-            delete(Notification).where(
-                Notification.id == notification_id,
-            )
-        )
-
-        session.execute(
-            delete(IntegrationConfig).where(
-                IntegrationConfig.id == integration_id,
-            )
-        )
-
-        session.execute(
-            delete(Consultation).where(
-                Consultation.id == consultation_id,
-            )
-        )
-
-        session.execute(
-            delete(Appointment).where(
-                Appointment.id == appointment_id,
-            )
-        )
-
-        session.execute(
-            delete(Patient).where(
-                Patient.id == patient_id,
-            )
-        )
-
-        session.execute(
-            delete(Staff).where(
-                Staff.id == staff_id,
-            )
-        )
-
-        session.execute(
-            delete(User).where(
-                User.id == user_id,
-            )
-        )
-
-        session.execute(
-            delete(Clinic).where(
-                Clinic.id == clinic_id,
-            )
-        )
-
-        session.commit()
+    # Production audit rows are immutable. This Phase 9 E2E runs against a dedicated disposable database; database teardown owns row cleanup.
+    return None
 
 
 def test_gate11_cross_domain_real_worker_crash_unknown_outcome_recovers():

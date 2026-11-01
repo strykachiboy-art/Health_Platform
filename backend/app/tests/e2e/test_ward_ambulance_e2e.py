@@ -2,12 +2,18 @@
 
 from app.core.audit.models.audit_model import AuditLog
 from app.core.enums.audit_enums import AuditAction
+from app.core.enums.medication_reconciliation_enums import (
+    MedicationReconciliationEvent,
+)
 from app.core.enums.role_enums import Role
 from app.modules.ambulance.models.ambulance_model import (
     AmbulanceTrip,
     AmbulanceVehicle,
 )
 from app.modules.patient.models.patient_model import Patient
+from app.modules.medication_reconciliation.services import (
+    medication_reconciliation_service as med_recon_service,
+)
 from app.modules.ward.models.ward_model import (
     Admission,
     Bed,
@@ -41,6 +47,14 @@ def test_ward_ambulance_e2e(
         },
     )
 
+    doctor_staff = make_staff(
+        clinic=clinic,
+        role=Role.DOCTOR,
+        user_overrides={
+            "email": "e2e-ward-ambulance-doctor@test.com",
+        },
+    )
+
     driver_staff = make_staff(
         clinic=clinic,
         role=Role.DRIVER,
@@ -63,6 +77,10 @@ def test_ward_ambulance_e2e(
         "e2e-ward-ambulance-nurse@test.com",
     )
 
+    doctor_login = e2e_login(
+        "e2e-ward-ambulance-doctor@test.com",
+    )
+
     driver_login = e2e_login(
         "e2e-ward-ambulance-driver@test.com",
     )
@@ -76,6 +94,9 @@ def test_ward_ambulance_e2e(
 
     assert nurse_login["user_id"] == nurse_staff.user.id
     assert nurse_login["role"] == Role.NURSE.value
+
+    assert doctor_login["user_id"] == doctor_staff.user.id
+    assert doctor_login["role"] == Role.DOCTOR.value
 
     assert driver_login["user_id"] == driver_staff.user.id
     assert driver_login["role"] == Role.DRIVER.value
@@ -595,14 +616,46 @@ def test_ward_ambulance_e2e(
     # DISCHARGE
     # =========================================================================
 
+    reconciliation = (
+        med_recon_service.create_medication_reconciliation(
+            clinic_id=clinic.id,
+            admission_id=admission_id,
+            event_type=MedicationReconciliationEvent.DISCHARGE,
+            actor_staff_id=doctor_staff.id,
+            no_medications_reported=True,
+            notes="E2E discharge medication review",
+            items=[],
+        )
+    )
+
+    med_recon_service.finalize_medication_reconciliation(
+        reconciliation.id,
+        clinic_id=clinic.id,
+        actor_staff_id=doctor_staff.id,
+        expected_version=1,
+    )
+
     discharge_response = client.post(
         f"/api/v1/wards/admissions/{admission_id}/discharge",
         json={
             "reason": "Transferred via ambulance",
+            "primary_diagnosis": "Transfer completed",
+            "secondary_diagnoses": [],
+            "condition_at_discharge": "Stable for transfer",
+            "instructions": (
+                "Continue care at receiving facility"
+            ),
+            "follow_up_plan": (
+                "Follow receiving facility care plan"
+            ),
+            "destination": "Receiving Hospital",
         },
         headers={
             "Authorization": (
-                f"Bearer {nurse_login['access_token']}"
+                f"Bearer {doctor_login['access_token']}"
+            ),
+            "Idempotency-Key": (
+                "e2e-ward-ambulance-discharge-1"
             ),
         },
     )

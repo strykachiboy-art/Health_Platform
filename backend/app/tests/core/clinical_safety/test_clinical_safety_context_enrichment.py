@@ -149,6 +149,15 @@ def test_completed_consultation_icd10_codes_enrich_context(
         clinic,
     )
 
+    completed_at = (
+        datetime.now(timezone.utc)
+        - timedelta(minutes=1)
+    )
+    started_at = (
+        completed_at
+        - timedelta(minutes=1)
+    )
+
     db.session.add_all(
         [
             Consultation(
@@ -156,6 +165,8 @@ def test_completed_consultation_icd10_codes_enrich_context(
                 patient_id=patient.id,
                 staff_id=staff.id,
                 status=ConsultationStatus.COMPLETED,
+                started_at=started_at,
+                ended_at=completed_at,
                 icd10_code="e11.9",
             ),
             Consultation(
@@ -163,6 +174,8 @@ def test_completed_consultation_icd10_codes_enrich_context(
                 patient_id=patient.id,
                 staff_id=staff.id,
                 status=ConsultationStatus.COMPLETED,
+                started_at=started_at,
+                ended_at=completed_at,
                 icd10_code=" E11.9 ",
             ),
             Consultation(
@@ -170,6 +183,8 @@ def test_completed_consultation_icd10_codes_enrich_context(
                 patient_id=patient.id,
                 staff_id=staff.id,
                 status=ConsultationStatus.COMPLETED,
+                started_at=started_at,
+                ended_at=completed_at,
                 icd10_code="I10",
             ),
             Consultation(
@@ -213,12 +228,23 @@ def test_diagnosis_codes_work_with_existing_rule_evaluator(
         clinic,
     )
 
+    completed_at = (
+        datetime.now(timezone.utc)
+        - timedelta(minutes=1)
+    )
+    started_at = (
+        completed_at
+        - timedelta(minutes=1)
+    )
+
     db.session.add(
         Consultation(
             clinic_id=clinic.id,
             patient_id=patient.id,
             staff_id=staff.id,
             status=ConsultationStatus.COMPLETED,
+            started_at=started_at,
+            ended_at=completed_at,
             icd10_code="I10",
         )
     )

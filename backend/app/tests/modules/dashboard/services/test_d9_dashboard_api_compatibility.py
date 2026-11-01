@@ -363,6 +363,7 @@ def test_clinical_schema_is_backward_compatible_and_hospital_is_additive():
         CLINICAL_LEGACY_FIELDS
         | {
             "hospital",
+            "my_patients",
         }
     )
 
@@ -372,6 +373,13 @@ def test_clinical_schema_is_backward_compatible_and_hospital_is_additive():
     )
 
     assert hospital_field.default is None
+
+    my_patients_field = (
+        ClinicalDashboardSchema
+        .model_fields["my_patients"]
+    )
+
+    assert my_patients_field.default_factory is not None
 
 
 def test_management_schema_is_backward_compatible_and_hospital_is_additive():

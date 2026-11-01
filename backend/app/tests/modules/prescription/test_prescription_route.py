@@ -246,6 +246,8 @@ def test_create_prescription_success(
         consultation_id=3,
         expires_at=expires_at,
         notes="Take as directed",
+        clinical_safety_acknowledged=False,
+        clinical_safety_justification=None,
     )
 
 
@@ -1819,6 +1821,24 @@ def test_serialize_prescription_includes_items(
         "duration": "7 days",
         "quantity": 14,
         "instructions": "Take after meals",
+        "dose_value": None,
+        "dose_unit": None,
+        "route_code": None,
+        "route_display": None,
+        "frequency_code": None,
+        "frequency_interval": None,
+        "frequency_interval_unit": None,
+        "scheduled_times": [],
+        "start_at": None,
+        "end_at": None,
+        "is_prn": False,
+        "prn_reason": None,
+        "max_single_dose": None,
+        "max_daily_dose": None,
+        "administration_instructions": None,
+        "order_priority": "routine",
+        "order_type": "outpatient",
+        "ordered_at": None,
     }
 
 

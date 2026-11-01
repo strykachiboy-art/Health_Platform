@@ -986,14 +986,14 @@ def test_update_lab_test_rejects_client_clinic(
 
 def test_create_lab_order_success(
     client,
-    lab_admin_headers,
-    lab_admin_staff,
+    lab_doctor_headers,
+    lab_doctor_staff,
     monkeypatch,
     lab_routes,
 ):
     service = Mock(
         return_value=make_lab_order(
-            clinic_id=lab_admin_staff.clinic_id
+            clinic_id=lab_doctor_staff.clinic_id
         )
     )
 
@@ -1005,7 +1005,7 @@ def test_create_lab_order_success(
 
     response = client.post(
         "/api/v1/lab/orders",
-        headers=lab_admin_headers,
+        headers=lab_doctor_headers,
         json={
             "patient_id": 10,
             "test_ids": [1, 2],
@@ -1016,11 +1016,11 @@ def test_create_lab_order_success(
     assert response.status_code == 201
     assert (
         service.call_args.kwargs["clinic_id"]
-        == lab_admin_staff.clinic_id
+        == lab_doctor_staff.clinic_id
     )
     assert (
         service.call_args.kwargs["ordered_by_id"]
-        == lab_admin_staff.id
+        == lab_doctor_staff.id
     )
     assert service.call_args.kwargs["patient_id"] == 10
     assert service.call_args.kwargs["test_ids"] == [1, 2]
@@ -1028,11 +1028,11 @@ def test_create_lab_order_success(
 
 def test_create_lab_order_rejects_client_clinic(
     client,
-    lab_admin_headers,
+    lab_doctor_headers,
 ):
     response = client.post(
         "/api/v1/lab/orders",
-        headers=lab_admin_headers,
+        headers=lab_doctor_headers,
         json={
             "patient_id": 10,
             "test_ids": [1],
@@ -1045,11 +1045,11 @@ def test_create_lab_order_rejects_client_clinic(
 
 def test_create_lab_order_rejects_client_actor(
     client,
-    lab_admin_headers,
+    lab_doctor_headers,
 ):
     response = client.post(
         "/api/v1/lab/orders",
-        headers=lab_admin_headers,
+        headers=lab_doctor_headers,
         json={
             "patient_id": 10,
             "test_ids": [1],
@@ -1062,11 +1062,11 @@ def test_create_lab_order_rejects_client_actor(
 
 def test_create_lab_order_rejects_duplicate_test_ids(
     client,
-    lab_admin_headers,
+    lab_doctor_headers,
 ):
     response = client.post(
         "/api/v1/lab/orders",
-        headers=lab_admin_headers,
+        headers=lab_doctor_headers,
         json={
             "patient_id": 10,
             "test_ids": [1, 1],
@@ -1078,11 +1078,11 @@ def test_create_lab_order_rejects_duplicate_test_ids(
 
 def test_create_lab_order_rejects_invalid_test_id(
     client,
-    lab_admin_headers,
+    lab_doctor_headers,
 ):
     response = client.post(
         "/api/v1/lab/orders",
-        headers=lab_admin_headers,
+        headers=lab_doctor_headers,
         json={
             "patient_id": 10,
             "test_ids": [0],
@@ -1953,11 +1953,11 @@ def test_pydantic_validation_returns_consistent_shape(
 
 def test_create_order_has_no_client_controlled_staff_identity(
     client,
-    lab_admin_headers,
+    lab_doctor_headers,
 ):
     response = client.post(
         "/api/v1/lab/orders",
-        headers=lab_admin_headers,
+        headers=lab_doctor_headers,
         json={
             "patient_id": 10,
             "test_ids": [1],

@@ -329,55 +329,8 @@ def _cleanup_clinic(
     clinic_id: int,
     notification_id: int,
 ) -> None:
-    db.session.execute(
-        delete(AuditLog).where(
-            AuditLog.clinic_id == clinic_id,
-            AuditLog.entity_type == "Notification",
-            AuditLog.entity_id == notification_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Notification).where(
-            Notification.id == notification_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Consultation).where(
-            Consultation.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Appointment).where(
-            Appointment.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Patient).where(
-            Patient.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Staff).where(
-            Staff.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(User).where(
-            User.clinic_id == clinic_id,
-        )
-    )
-
-    db.session.execute(
-        delete(Clinic).where(
-            Clinic.id == clinic_id,
-        )
-    )
+    # Production audit rows are immutable. This Phase 9 E2E runs against a dedicated disposable database; database teardown owns row cleanup.
+    return None
 
 
 def test_gate11_cross_domain_real_redis_failure_recovers_without_duplicate_state(

@@ -187,7 +187,7 @@ def test_gate11_cross_domain_billing_payment_failure_rolls_back_and_recovers(
             "unit_price": "5.00",
             "is_controlled": False,
         },
-        headers=_auth(admin_login),
+        headers=_auth(pharmacist_login),
     )
 
     assert drug_response.status_code == 201, (
@@ -210,7 +210,7 @@ def test_gate11_cross_domain_billing_payment_failure_rolls_back_and_recovers(
             "expiry_date": expiry_date.isoformat(),
             "reorder_level": 10,
         },
-        headers=_auth(admin_login),
+        headers=_auth(pharmacist_login),
     )
 
     assert batch_response.status_code == 201, (

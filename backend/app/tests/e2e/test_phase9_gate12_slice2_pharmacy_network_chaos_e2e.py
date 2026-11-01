@@ -93,7 +93,7 @@ def test_gate12_slice2_pharmacy_network_unknown_outcome_reconciles_one_dispense(
             "unit_price": "5.00",
             "is_controlled": False,
         },
-        headers=admin_headers,
+        headers=pharmacist_headers,
     )
 
     assert drug_response.status_code == 201, (
@@ -113,7 +113,7 @@ def test_gate12_slice2_pharmacy_network_unknown_outcome_reconciles_one_dispense(
             "quantity_on_hand": 50,
             "reorder_level": 10,
         },
-        headers=admin_headers,
+        headers=pharmacist_headers,
     )
 
     assert batch_response.status_code == 201, (

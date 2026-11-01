@@ -182,7 +182,7 @@ def test_consultation_prescription_pharmacy_e2e(
         },
         headers={
             "Authorization": (
-                f"Bearer {admin_login['access_token']}"
+                f"Bearer {pharmacist_login['access_token']}"
             ),
         },
     )
@@ -224,7 +224,7 @@ def test_consultation_prescription_pharmacy_e2e(
         },
         headers={
             "Authorization": (
-                f"Bearer {admin_login['access_token']}"
+                f"Bearer {pharmacist_login['access_token']}"
             ),
         },
     )

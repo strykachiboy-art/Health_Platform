@@ -89,6 +89,10 @@ def _note(clinic_id=1, admission_id=10, patient_id=20, staff_id=30):
         author_staff_id=staff_id,
         note_type=NursingNoteType.PROGRESS,
         status=NursingNoteStatus.DRAFT,
+        record_status="draft",
+        record_version=1,
+        finalized_by_staff_id=None,
+        latest_amendment_id=None,
         note_text="Patient resting.",
         observed_at=now,
         signed_at=None,
@@ -381,6 +385,8 @@ def test_note_create_update_and_sign_routes_map_service_calls(
             staff_id=nurse.id,
         )
         note.status = NursingNoteStatus.SIGNED
+        note.record_status = "final"
+        note.finalized_by_staff_id = nurse.id
         note.signed_at = _now()
         return note
 

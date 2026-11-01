@@ -201,7 +201,7 @@ def test_clinical_route_domains_require_active_staff_guard():
         "lab": 14,
         "pharmacy": 15,
         "prescription": 7,
-        "ward": 22,
+        "ward": 25,
     }
     methods = {"get", "post", "put", "patch", "delete", "route"}
     role_guards = {

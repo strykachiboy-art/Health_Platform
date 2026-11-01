@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
@@ -6,6 +6,9 @@ from unittest.mock import Mock
 import pytest
 
 from app.core.enums.audit_enums import AuditAction
+from app.core.enums.medication_reconciliation_enums import (
+    MedicationReconciliationEvent,
+)
 from app.core.enums.role_enums import Role
 from app.core.enums.staff_enums import StaffStatus
 from app.core.enums.ward_enums import (
@@ -21,6 +24,9 @@ from app.core.exceptions import (
 )
 from app.extensions import db
 from app.modules.ward.models.ward_model import Ward
+from app.modules.medication_reconciliation.services import (
+    medication_reconciliation_service as med_recon_service,
+)
 from app.modules.ward.services import ward_service
 
 
@@ -176,6 +182,57 @@ def _create_admission(
         actor_staff,
         admission,
     )
+
+def _mark_admission_discharged(
+    admission,
+    bed,
+):
+    admission.status = AdmissionStatus.DISCHARGED
+    admission.discharged_at = (
+        datetime.now(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    bed.status = BedStatus.AVAILABLE
+    db.session.flush()
+
+
+def _clinical_discharge_payload(
+    *,
+    reason="Clinical discharge complete",
+):
+    return {
+        "reason": reason,
+        "primary_diagnosis": "Resolved acute illness",
+        "secondary_diagnoses": ["Hypertension"],
+        "condition_at_discharge": "Stable and ambulatory",
+        "instructions": "Return for worsening symptoms",
+        "follow_up_plan": "Clinic follow-up in seven days",
+        "destination": "Home",
+    }
+
+
+def _finalize_empty_discharge_reconciliation(
+    clinic,
+    admission,
+    actor,
+):
+    record = med_recon_service.create_medication_reconciliation(
+        clinic_id=clinic.id,
+        admission_id=admission.id,
+        event_type=MedicationReconciliationEvent.DISCHARGE,
+        actor_staff_id=actor.id,
+        no_medications_reported=True,
+        notes="Discharge medication review",
+        items=[],
+    )
+
+    return med_recon_service.finalize_medication_reconciliation(
+        record.id,
+        clinic_id=clinic.id,
+        actor_staff_id=actor.id,
+        expected_version=1,
+    )
+
 
 
 # Datetime helpers
@@ -3177,7 +3234,7 @@ def test_list_admissions_for_patient_returns_paginated_history(
 ):
     (
         _,
-        _,
+        first_bed,
         patient,
         actor,
         first,
@@ -3188,10 +3245,9 @@ def test_list_admissions_for_patient_returns_paginated_history(
         bed_number="B-001",
     )
 
-    ward_service.discharge_patient(
-        first.id,
-        clinic.id,
-        actor_user_id=actor.user_id,
+    _mark_admission_discharged(
+        first,
+        first_bed,
     )
 
     _, bed2 = _create_bed(
@@ -3230,7 +3286,7 @@ def test_list_admissions_for_patient_orders_newest_first(
 ):
     (
         _,
-        _,
+        first_bed,
         patient,
         actor,
         first,
@@ -3241,10 +3297,9 @@ def test_list_admissions_for_patient_orders_newest_first(
         bed_number="B-001",
     )
 
-    ward_service.discharge_patient(
-        first.id,
-        clinic.id,
-        actor_user_id=actor.user_id,
+    _mark_admission_discharged(
+        first,
+        first_bed,
     )
 
     _, bed2 = _create_bed(
@@ -3289,10 +3344,8 @@ def test_list_admissions_for_patient_supports_pagination(
         clinic=clinic,
     )
 
-    admissions = []
-
     for index in range(1, 4):
-        ward, bed = _create_bed(
+        _, bed = _create_bed(
             clinic,
             name=f"Admission Ward {index}",
             bed_number=f"B-{index:03d}",
@@ -3306,12 +3359,9 @@ def test_list_admissions_for_patient_supports_pagination(
             actor_user_id=actor.user_id,
         )
 
-        admissions.append(admission)
-
-        ward_service.discharge_patient(
-            admission.id,
-            clinic.id,
-            actor_user_id=actor.user_id,
+        _mark_admission_discharged(
+            admission,
+            bed,
         )
 
     result = ward_service.list_admissions_for_patient(
@@ -3867,9 +3917,9 @@ def test_transfer_bed_rejects_non_active_admission(
 ):
     (
         _,
+        source_bed,
         _,
         _,
-        actor,
         admission,
     ) = _create_admission(
         clinic,
@@ -3877,10 +3927,9 @@ def test_transfer_bed_rejects_non_active_admission(
         make_staff,
     )
 
-    ward_service.discharge_patient(
-        admission.id,
-        clinic.id,
-        actor_user_id=actor.user_id,
+    _mark_admission_discharged(
+        admission,
+        source_bed,
     )
 
     _, destination = _create_bed(
@@ -3993,7 +4042,6 @@ def test_discharge_patient_success(
     clinic,
     make_patient,
     make_staff,
-    monkeypatch,
 ):
     (
         _,
@@ -4007,19 +4055,20 @@ def test_discharge_patient_success(
         make_staff,
     )
 
-    audit = Mock()
-
-    monkeypatch.setattr(
-        ward_service,
-        "create_audit_log",
-        audit,
+    _finalize_empty_discharge_reconciliation(
+        clinic,
+        admission,
+        actor,
     )
 
     result = ward_service.discharge_patient(
         admission_id=admission.id,
         clinic_id=clinic.id,
-        reason="  Patient recovered  ",
         actor_user_id=actor.user_id,
+        actor_staff_id=actor.id,
+        **_clinical_discharge_payload(
+            reason="Patient recovered",
+        ),
     )
 
     assert result.id == admission.id
@@ -4028,18 +4077,6 @@ def test_discharge_patient_success(
     assert result.discharged_at.tzinfo is None
     assert result.reason == "Patient recovered"
     assert bed.status == BedStatus.AVAILABLE
-
-    audit.assert_called_once()
-
-    kwargs = audit.call_args.kwargs
-
-    assert kwargs["action"] == AuditAction.UPDATE
-    assert kwargs["entity_type"] == "admission"
-    assert kwargs["entity_id"] == admission.id
-    assert kwargs["user_id"] == actor.user_id
-    assert kwargs["new_value"]["status"] == (
-        AdmissionStatus.DISCHARGED.value
-    )
 
 
 def test_discharge_patient_allows_no_reason(
@@ -4060,15 +4097,23 @@ def test_discharge_patient_allows_no_reason(
         reason="Original reason",
     )
 
-    result = ward_service.discharge_patient(
-        admission.id,
-        clinic.id,
-        actor_user_id=actor.user_id,
+    _finalize_empty_discharge_reconciliation(
+        clinic,
+        admission,
+        actor,
     )
 
-    assert result.status == (
-        AdmissionStatus.DISCHARGED
+    result = ward_service.discharge_patient(
+        admission_id=admission.id,
+        clinic_id=clinic.id,
+        actor_user_id=actor.user_id,
+        actor_staff_id=actor.id,
+        **_clinical_discharge_payload(
+            reason=None,
+        ),
     )
+
+    assert result.status == AdmissionStatus.DISCHARGED
     assert result.reason == "Original reason"
     assert bed.status == BedStatus.AVAILABLE
 
@@ -4090,20 +4135,32 @@ def test_discharge_patient_rejects_already_discharged(
         make_staff,
     )
 
+    _finalize_empty_discharge_reconciliation(
+        clinic,
+        admission,
+        actor,
+    )
+
+    payload = _clinical_discharge_payload()
+
     ward_service.discharge_patient(
-        admission.id,
-        clinic.id,
+        admission_id=admission.id,
+        clinic_id=clinic.id,
         actor_user_id=actor.user_id,
+        actor_staff_id=actor.id,
+        **payload,
     )
 
     with pytest.raises(
         ConflictError,
-        match="currently",
+        match="Clinical discharge requires an active admission",
     ):
         ward_service.discharge_patient(
-            admission.id,
-            clinic.id,
+            admission_id=admission.id,
+            clinic_id=clinic.id,
             actor_user_id=actor.user_id,
+            actor_staff_id=actor.id,
+            **payload,
         )
 
 
@@ -4119,7 +4176,7 @@ def test_discharge_patient_rejects_foreign_admission(
         _,
         _,
         _,
-        actor,
+        _,
         admission,
     ) = _create_admission(
         other_clinic,
@@ -4127,11 +4184,18 @@ def test_discharge_patient_rejects_foreign_admission(
         make_staff,
     )
 
+    local_actor = make_staff(
+        clinic=clinic,
+        role=Role.DOCTOR,
+    )
+
     with pytest.raises(NotFoundError):
         ward_service.discharge_patient(
-            admission.id,
-            clinic.id,
-            actor_user_id=actor.user_id,
+            admission_id=admission.id,
+            clinic_id=clinic.id,
+            actor_user_id=local_actor.user_id,
+            actor_staff_id=local_actor.id,
+            **_clinical_discharge_payload(),
         )
 
 

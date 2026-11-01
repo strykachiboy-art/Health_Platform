@@ -1239,32 +1239,21 @@ def test_discharge_racing_with_transfer_is_serially_valid(
             "outcome"
         ] == "accepted"
 
+        # Python return timestamps do not define the database
+        # serialization order. A rejected transfer can observe the
+        # committed discharge and unwind before the discharge caller
+        # records its own return timestamp. The outcome plus persisted
+        # state assertions below are the authoritative serial-validity
+        # contract.
         if (
             transfer[
                 "outcome"
             ]
-            == "accepted"
+            == "rejected"
         ):
-            assert (
-                transfer[
-                    "completed_ns"
-                ]
-                <= discharge[
-                    "completed_ns"
-                ]
-            )
-        else:
             assert transfer[
                 "error_type"
             ] == ConflictError.__name__
-            assert (
-                discharge[
-                    "completed_ns"
-                ]
-                <= transfer[
-                    "completed_ns"
-                ]
-            )
 
         with app.app_context():
             admission = db.session.get(

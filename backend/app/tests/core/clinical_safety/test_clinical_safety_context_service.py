@@ -333,6 +333,15 @@ def test_builder_includes_only_active_unexpired_medications(
         expires_at=None,
     )
 
+    issued_at = (
+        now
+        - timedelta(minutes=1)
+    )
+
+    active_rx.issued_at = issued_at
+    expired_rx.issued_at = issued_at
+    cancelled_rx.issued_at = issued_at
+
     db.session.add_all(
         [
             PrescriptionItem(

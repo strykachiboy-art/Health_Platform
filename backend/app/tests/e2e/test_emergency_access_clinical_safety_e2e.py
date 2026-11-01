@@ -53,6 +53,14 @@ def test_emergency_access_clinical_safety_e2e(
         },
     )
 
+    pharmacist_staff = make_staff(
+        clinic=clinic,
+        role=Role.PHARMACIST,
+        user_overrides={
+            "email": "e2e-g8-pharmacist@test.com",
+        },
+    )
+
     receptionist = make_user(
         clinic=clinic,
         role=Role.RECEPTIONIST,
@@ -67,12 +75,17 @@ def test_emergency_access_clinical_safety_e2e(
         "e2e-g8-doctor@test.com",
     )
 
+    pharmacist_login = e2e_login(
+        "e2e-g8-pharmacist@test.com",
+    )
+
     receptionist_login = e2e_login(
         "e2e-g8-receptionist@test.com",
     )
 
     assert admin_login["role"] == Role.ADMIN.value
     assert doctor_login["role"] == Role.DOCTOR.value
+    assert pharmacist_login["role"] == Role.PHARMACIST.value
     assert receptionist_login["role"] == Role.RECEPTIONIST.value
 
     # =========================================================================
@@ -640,7 +653,7 @@ def test_emergency_access_clinical_safety_e2e(
         },
         headers={
             "Authorization": (
-                f"Bearer {admin_login['access_token']}"
+                f"Bearer {pharmacist_login['access_token']}"
             ),
         },
     )
@@ -663,7 +676,7 @@ def test_emergency_access_clinical_safety_e2e(
         },
         headers={
             "Authorization": (
-                f"Bearer {admin_login['access_token']}"
+                f"Bearer {pharmacist_login['access_token']}"
             ),
         },
     )

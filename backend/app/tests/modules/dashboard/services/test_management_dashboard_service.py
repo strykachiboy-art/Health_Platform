@@ -1879,6 +1879,10 @@ def test_get_management_dashboard_builds_expected_metrics(
         "ai_requests",
         "missed_appointments",
         "unread_chat_messages",
+        "hospital_available_beds",
+        "urgent_nursing_tasks",
+        "emar_due",
+        "draft_discharge_reconciliations",
     ]
 
     assert result.metrics[0].value == 1
@@ -2175,6 +2179,10 @@ def test_get_management_dashboard_builds_complete_summary(
         "ai_requests",
         "missed_appointments",
         "unread_chat_messages",
+        "hospital_available_beds",
+        "urgent_nursing_tasks",
+        "emar_due",
+        "draft_discharge_reconciliations",
     ]
 
     metrics = {
@@ -2193,6 +2201,7 @@ def test_get_management_dashboard_builds_complete_summary(
         "critical_ai_results",
         "pending_ai_reviews",
         "priority_chat_messages",
+        "hospital_bed_capacity",
     }
 
     assert any(

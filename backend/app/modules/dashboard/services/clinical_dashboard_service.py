@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import and_
+from sqlalchemy import and_, case, literal, union_all
 
 from app.extensions import db
 
@@ -17,6 +17,10 @@ from app.core.enums.consultation_enums import (
 )
 from app.core.enums.lab_enums import (
     LabOrderStatus,
+)
+from app.core.enums.nursing_enums import (
+    NursingCareTaskPriority,
+    NursingCareTaskStatus,
 )
 from app.core.enums.prescription_enums import (
     PrescriptionStatus,
@@ -40,6 +44,9 @@ from app.modules.consultation.models.consultation_model import (
 from app.modules.lab.models.lab_model import (
     LabOrder,
 )
+from app.modules.nursing.models.nursing_model import (
+    NursingCareTask,
+)
 from app.modules.prescription.models.prescription_model import (
     Prescription,
 )
@@ -54,6 +61,8 @@ from app.modules.staff.models.staff_model import (
 )
 from app.modules.ward.models.ward_model import (
     Admission,
+    Bed,
+    Ward,
 )
 
 from app.modules.dashboard.schemas.department_dashboard_schema import (
@@ -78,6 +87,8 @@ from app.modules.dashboard.schemas.clinical_dashboard_schema import (
     ClinicalHospitalAdmissionsSchema,
     ClinicalHospitalDashboardSchema,
     ClinicalMedicationReconciliationSchema,
+    ClinicalMyPatientSchema,
+    ClinicalMyPatientsSchema,
     ClinicalNursingWorkloadSchema,
 )
 
@@ -111,6 +122,16 @@ HOSPITAL_DASHBOARD_ROLES = {
     Role.NURSE,
     Role.PHARMACIST,
 }
+
+
+MY_PATIENTS_PREVIEW_LIMIT = 20
+
+DOCTOR_MY_PATIENT_SOURCE_ORDER = (
+    "active_consultation",
+    "scheduled_appointment",
+    "pending_lab_order",
+    "active_prescription",
+)
 
 
 def _build_hospital_dashboard(
@@ -359,6 +380,691 @@ def _get_my_departments(
     ]
 
 
+def _doctor_my_patient_source_ids(
+    *,
+    clinic_id: int,
+    staff_id: int,
+    start,
+    end,
+):
+    active_consultations = (
+        db.select(
+            Consultation.patient_id.label("patient_id")
+        )
+        .join(
+            Patient,
+            Patient.id == Consultation.patient_id,
+        )
+        .where(
+            Patient.clinic_id == clinic_id,
+            Patient.is_active.is_(True),
+            Consultation.clinic_id == clinic_id,
+            Consultation.staff_id == staff_id,
+            Consultation.status
+            == ConsultationStatus.IN_PROGRESS,
+        )
+    )
+
+    scheduled_appointments = (
+        db.select(
+            Appointment.patient_id.label("patient_id")
+        )
+        .join(
+            Patient,
+            Patient.id == Appointment.patient_id,
+        )
+        .where(
+            Patient.clinic_id == clinic_id,
+            Patient.is_active.is_(True),
+            Appointment.clinic_id == clinic_id,
+            Appointment.staff_id == staff_id,
+            Appointment.status.in_(
+                [
+                    AppointmentStatus.SCHEDULED,
+                    AppointmentStatus.CONFIRMED,
+                ]
+            ),
+            Appointment.scheduled_start >= start,
+            Appointment.scheduled_start < end,
+        )
+    )
+
+    pending_labs = (
+        db.select(
+            LabOrder.patient_id.label("patient_id")
+        )
+        .join(
+            Patient,
+            Patient.id == LabOrder.patient_id,
+        )
+        .where(
+            Patient.clinic_id == clinic_id,
+            Patient.is_active.is_(True),
+            LabOrder.clinic_id == clinic_id,
+            LabOrder.ordered_by_id == staff_id,
+            LabOrder.status.in_(
+                [
+                    LabOrderStatus.ORDERED,
+                    LabOrderStatus.SAMPLE_COLLECTED,
+                    LabOrderStatus.IN_PROGRESS,
+                ]
+            ),
+        )
+    )
+
+    active_prescriptions = (
+        db.select(
+            Prescription.patient_id.label("patient_id")
+        )
+        .join(
+            Patient,
+            Patient.id == Prescription.patient_id,
+        )
+        .where(
+            Patient.clinic_id == clinic_id,
+            Patient.is_active.is_(True),
+            Prescription.clinic_id == clinic_id,
+            Prescription.prescribed_by_id == staff_id,
+            Prescription.status
+            == PrescriptionStatus.ACTIVE,
+        )
+    )
+
+    return (
+        active_consultations,
+        scheduled_appointments,
+        pending_labs,
+        active_prescriptions,
+    )
+
+
+def _doctor_my_patient_rows(
+    *,
+    clinic_id: int,
+    staff_id: int,
+    start,
+    end,
+    preview_limit: int,
+):
+    group_columns = (
+        Patient.id,
+        Patient.patient_number,
+        Patient.first_name,
+        Patient.last_name,
+    )
+
+    consultation_event = db.func.min(
+        Consultation.started_at
+    ).label("event_at")
+
+    consultation_rows = db.session.execute(
+        db.select(
+            *group_columns,
+            consultation_event,
+        )
+        .join(
+            Consultation,
+            Consultation.patient_id == Patient.id,
+        )
+        .where(
+            Patient.clinic_id == clinic_id,
+            Patient.is_active.is_(True),
+            Consultation.clinic_id == clinic_id,
+            Consultation.staff_id == staff_id,
+            Consultation.status
+            == ConsultationStatus.IN_PROGRESS,
+        )
+        .group_by(*group_columns)
+        .order_by(
+            consultation_event.asc(),
+            Patient.id.asc(),
+        )
+        .limit(preview_limit)
+    ).all()
+
+    appointment_event = db.func.min(
+        Appointment.scheduled_start
+    ).label("event_at")
+
+    appointment_rows = db.session.execute(
+        db.select(
+            *group_columns,
+            appointment_event,
+        )
+        .join(
+            Appointment,
+            Appointment.patient_id == Patient.id,
+        )
+        .where(
+            Patient.clinic_id == clinic_id,
+            Patient.is_active.is_(True),
+            Appointment.clinic_id == clinic_id,
+            Appointment.staff_id == staff_id,
+            Appointment.status.in_(
+                [
+                    AppointmentStatus.SCHEDULED,
+                    AppointmentStatus.CONFIRMED,
+                ]
+            ),
+            Appointment.scheduled_start >= start,
+            Appointment.scheduled_start < end,
+        )
+        .group_by(*group_columns)
+        .order_by(
+            appointment_event.asc(),
+            Patient.id.asc(),
+        )
+        .limit(preview_limit)
+    ).all()
+
+    lab_event = db.func.min(
+        LabOrder.created_at
+    ).label("event_at")
+
+    lab_rows = db.session.execute(
+        db.select(
+            *group_columns,
+            lab_event,
+        )
+        .join(
+            LabOrder,
+            LabOrder.patient_id == Patient.id,
+        )
+        .where(
+            Patient.clinic_id == clinic_id,
+            Patient.is_active.is_(True),
+            LabOrder.clinic_id == clinic_id,
+            LabOrder.ordered_by_id == staff_id,
+            LabOrder.status.in_(
+                [
+                    LabOrderStatus.ORDERED,
+                    LabOrderStatus.SAMPLE_COLLECTED,
+                    LabOrderStatus.IN_PROGRESS,
+                ]
+            ),
+        )
+        .group_by(*group_columns)
+        .order_by(
+            lab_event.asc(),
+            Patient.id.asc(),
+        )
+        .limit(preview_limit)
+    ).all()
+
+    prescription_event = db.func.max(
+        Prescription.issued_at
+    ).label("event_at")
+
+    prescription_rows = db.session.execute(
+        db.select(
+            *group_columns,
+            prescription_event,
+        )
+        .join(
+            Prescription,
+            Prescription.patient_id == Patient.id,
+        )
+        .where(
+            Patient.clinic_id == clinic_id,
+            Patient.is_active.is_(True),
+            Prescription.clinic_id == clinic_id,
+            Prescription.prescribed_by_id == staff_id,
+            Prescription.status
+            == PrescriptionStatus.ACTIVE,
+        )
+        .group_by(*group_columns)
+        .order_by(
+            prescription_event.desc(),
+            Patient.id.asc(),
+        )
+        .limit(preview_limit)
+    ).all()
+
+    return (
+        consultation_rows,
+        appointment_rows,
+        lab_rows,
+        prescription_rows,
+    )
+
+
+def _get_doctor_my_patients(
+    *,
+    clinic_id: int,
+    staff_id: int,
+    start,
+    end,
+    preview_limit: int,
+) -> ClinicalMyPatientsSchema:
+    source_ids = _doctor_my_patient_source_ids(
+        clinic_id=clinic_id,
+        staff_id=staff_id,
+        start=start,
+        end=end,
+    )
+
+    all_source_ids = union_all(
+        *source_ids
+    ).subquery()
+
+    total = int(
+        db.session.execute(
+            db.select(
+                db.func.count(
+                    db.distinct(
+                        all_source_ids.c.patient_id
+                    )
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+
+    rows_by_source = _doctor_my_patient_rows(
+        clinic_id=clinic_id,
+        staff_id=staff_id,
+        start=start,
+        end=end,
+        preview_limit=preview_limit,
+    )
+
+    source_specs = (
+        (
+            "active_consultation",
+            "continue_consultation",
+            rows_by_source[0],
+        ),
+        (
+            "scheduled_appointment",
+            "prepare_for_appointment",
+            rows_by_source[1],
+        ),
+        (
+            "pending_lab_order",
+            "follow_up_lab_order",
+            rows_by_source[2],
+        ),
+        (
+            "active_prescription",
+            "review_medication_plan",
+            rows_by_source[3],
+        ),
+    )
+
+    candidates: dict[int, dict] = {}
+
+    for source, next_action, rows in source_specs:
+        for (
+            patient_id,
+            patient_number,
+            first_name,
+            last_name,
+            event_at,
+        ) in rows:
+            candidate = candidates.get(patient_id)
+
+            if candidate is None:
+                candidates[patient_id] = {
+                    "patient_id": patient_id,
+                    "patient_number": patient_number,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "primary_source": source,
+                    "care_sources": [source],
+                    "next_action": next_action,
+                    "next_action_at": event_at,
+                }
+            elif source not in candidate["care_sources"]:
+                candidate["care_sources"].append(source)
+
+    visible = list(candidates.values())[:preview_limit]
+    visible_ids = [item["patient_id"] for item in visible]
+
+    tag_queries = []
+
+    tag_specs = (
+        (
+            Consultation.patient_id,
+            "active_consultation",
+            [
+                Consultation.clinic_id == clinic_id,
+                Consultation.staff_id == staff_id,
+                Consultation.status
+                == ConsultationStatus.IN_PROGRESS,
+            ],
+        ),
+        (
+            Appointment.patient_id,
+            "scheduled_appointment",
+            [
+                Appointment.clinic_id == clinic_id,
+                Appointment.staff_id == staff_id,
+                Appointment.status.in_(
+                    [
+                        AppointmentStatus.SCHEDULED,
+                        AppointmentStatus.CONFIRMED,
+                    ]
+                ),
+                Appointment.scheduled_start >= start,
+                Appointment.scheduled_start < end,
+            ],
+        ),
+        (
+            LabOrder.patient_id,
+            "pending_lab_order",
+            [
+                LabOrder.clinic_id == clinic_id,
+                LabOrder.ordered_by_id == staff_id,
+                LabOrder.status.in_(
+                    [
+                        LabOrderStatus.ORDERED,
+                        LabOrderStatus.SAMPLE_COLLECTED,
+                        LabOrderStatus.IN_PROGRESS,
+                    ]
+                ),
+            ],
+        ),
+        (
+            Prescription.patient_id,
+            "active_prescription",
+            [
+                Prescription.clinic_id == clinic_id,
+                Prescription.prescribed_by_id == staff_id,
+                Prescription.status
+                == PrescriptionStatus.ACTIVE,
+            ],
+        ),
+    )
+
+    for patient_column, source, filters in tag_specs:
+        tag_queries.append(
+            db.select(
+                patient_column.label("patient_id"),
+                literal(source).label("care_source"),
+            )
+            .join(
+                Patient,
+                Patient.id == patient_column,
+            )
+            .where(
+                Patient.clinic_id == clinic_id,
+                Patient.is_active.is_(True),
+                patient_column.in_(visible_ids),
+                *filters,
+            )
+        )
+
+    tags = db.session.execute(
+        union_all(*tag_queries)
+    ).all()
+
+    by_patient = {
+        item["patient_id"]: item
+        for item in visible
+    }
+
+    for patient_id, source in tags:
+        item = by_patient.get(patient_id)
+
+        if (
+            item is not None
+            and source not in item["care_sources"]
+        ):
+            item["care_sources"].append(source)
+
+    order = {
+        source: index
+        for index, source in enumerate(
+            DOCTOR_MY_PATIENT_SOURCE_ORDER
+        )
+    }
+
+    items = []
+
+    for candidate in visible:
+        candidate["care_sources"] = sorted(
+            candidate["care_sources"],
+            key=order.__getitem__,
+        )
+
+        items.append(
+            ClinicalMyPatientSchema(
+                **candidate
+            )
+        )
+
+    return ClinicalMyPatientsSchema(
+        total=total,
+        preview_limit=preview_limit,
+        items=items,
+    )
+
+
+def _get_nurse_my_patients(
+    *,
+    clinic_id: int,
+    staff_id: int,
+    preview_limit: int,
+) -> ClinicalMyPatientsSchema:
+    open_statuses = (
+        NursingCareTaskStatus.PENDING,
+        NursingCareTaskStatus.IN_PROGRESS,
+    )
+
+    base_filters = (
+        Patient.clinic_id == clinic_id,
+        Patient.is_active.is_(True),
+        NursingCareTask.clinic_id == clinic_id,
+        NursingCareTask.assigned_to_staff_id == staff_id,
+        NursingCareTask.status.in_(open_statuses),
+        Admission.status == AdmissionStatus.ADMITTED,
+        Ward.clinic_id == clinic_id,
+    )
+
+    total = int(
+        db.session.execute(
+            db.select(
+                db.func.count(
+                    db.distinct(
+                        NursingCareTask.patient_id
+                    )
+                )
+            )
+            .select_from(NursingCareTask)
+            .join(
+                Patient,
+                Patient.id
+                == NursingCareTask.patient_id,
+            )
+            .join(
+                Admission,
+                Admission.id
+                == NursingCareTask.admission_id,
+            )
+            .join(
+                Bed,
+                Bed.id == Admission.bed_id,
+            )
+            .join(
+                Ward,
+                Ward.id == Bed.ward_id,
+            )
+            .where(*base_filters)
+        ).scalar_one()
+        or 0
+    )
+
+    priority_rank = case(
+        (
+            NursingCareTask.priority
+            == NursingCareTaskPriority.URGENT,
+            0,
+        ),
+        (
+            NursingCareTask.priority
+            == NursingCareTaskPriority.HIGH,
+            1,
+        ),
+        else_=2,
+    )
+
+    due_missing = case(
+        (
+            NursingCareTask.due_at.is_(None),
+            1,
+        ),
+        else_=0,
+    )
+
+    ranked = (
+        db.select(
+            Patient.id.label("patient_id"),
+            Patient.patient_number.label(
+                "patient_number"
+            ),
+            Patient.first_name.label("first_name"),
+            Patient.last_name.label("last_name"),
+            Admission.id.label("admission_id"),
+            Ward.name.label("ward_name"),
+            Bed.bed_number.label("bed_number"),
+            NursingCareTask.priority.label(
+                "task_priority"
+            ),
+            NursingCareTask.due_at.label("due_at"),
+            priority_rank.label("priority_rank"),
+            due_missing.label("due_missing"),
+            db.func.count(NursingCareTask.id)
+            .over(
+                partition_by=Patient.id,
+            )
+            .label("open_task_count"),
+            db.func.row_number()
+            .over(
+                partition_by=Patient.id,
+                order_by=[
+                    priority_rank.asc(),
+                    due_missing.asc(),
+                    NursingCareTask.due_at.asc(),
+                    NursingCareTask.id.asc(),
+                ],
+            )
+            .label("row_number"),
+        )
+        .select_from(NursingCareTask)
+        .join(
+            Patient,
+            Patient.id == NursingCareTask.patient_id,
+        )
+        .join(
+            Admission,
+            Admission.id == NursingCareTask.admission_id,
+        )
+        .join(
+            Bed,
+            Bed.id == Admission.bed_id,
+        )
+        .join(
+            Ward,
+            Ward.id == Bed.ward_id,
+        )
+        .where(*base_filters)
+        .subquery()
+    )
+
+    rows = db.session.execute(
+        db.select(
+            ranked.c.patient_id,
+            ranked.c.patient_number,
+            ranked.c.first_name,
+            ranked.c.last_name,
+            ranked.c.admission_id,
+            ranked.c.ward_name,
+            ranked.c.bed_number,
+            ranked.c.task_priority,
+            ranked.c.due_at,
+            ranked.c.open_task_count,
+        )
+        .where(
+            ranked.c.row_number == 1,
+        )
+        .order_by(
+            ranked.c.priority_rank.asc(),
+            ranked.c.due_missing.asc(),
+            ranked.c.due_at.asc(),
+            ranked.c.patient_id.asc(),
+        )
+        .limit(preview_limit)
+    ).all()
+
+    items = [
+        ClinicalMyPatientSchema(
+            patient_id=patient_id,
+            patient_number=patient_number,
+            first_name=first_name,
+            last_name=last_name,
+            primary_source="assigned_nursing_task",
+            care_sources=["assigned_nursing_task"],
+            next_action="complete_nursing_task",
+            next_action_at=due_at,
+            admission_id=admission_id,
+            ward_name=ward_name,
+            bed_number=bed_number,
+            nursing_task_priority=task_priority,
+            open_nursing_tasks=int(
+                open_task_count or 0
+            ),
+        )
+        for (
+            patient_id,
+            patient_number,
+            first_name,
+            last_name,
+            admission_id,
+            ward_name,
+            bed_number,
+            task_priority,
+            due_at,
+            open_task_count,
+        ) in rows
+    ]
+
+    return ClinicalMyPatientsSchema(
+        total=total,
+        preview_limit=preview_limit,
+        items=items,
+    )
+
+
+def _get_my_patients(
+    *,
+    role: Role,
+    staff_id: int,
+    clinic_id: int,
+    start,
+    end,
+    preview_limit: int = MY_PATIENTS_PREVIEW_LIMIT,
+) -> ClinicalMyPatientsSchema:
+    if role is Role.DOCTOR:
+        return _get_doctor_my_patients(
+            clinic_id=clinic_id,
+            staff_id=staff_id,
+            start=start,
+            end=end,
+            preview_limit=preview_limit,
+        )
+
+    if role is Role.NURSE:
+        return _get_nurse_my_patients(
+            clinic_id=clinic_id,
+            staff_id=staff_id,
+            preview_limit=preview_limit,
+        )
+
+    return ClinicalMyPatientsSchema(
+        preview_limit=preview_limit,
+    )
+
+
 def get_clinical_dashboard(
     *,
     actor: User,
@@ -407,6 +1113,14 @@ def get_clinical_dashboard(
     my_departments = _get_my_departments(
         staff_id=staff.id,
         clinic_id=clinic_id,
+    )
+
+    my_patients = _get_my_patients(
+        role=actor.role,
+        staff_id=staff.id,
+        clinic_id=clinic_id,
+        start=start,
+        end=end,
     )
 
     appointments_today_count = (
@@ -694,6 +1408,12 @@ def get_clinical_dashboard(
             unit="appointments",
         ),
         build_metric(
+            key="my_patients",
+            label="My patients",
+            value=my_patients.total,
+            unit="patients",
+        ),
+        build_metric(
             key="pending_consultations",
             label="Pending consultations",
             value=int(
@@ -793,6 +1513,7 @@ def get_clinical_dashboard(
         overview=overview,
         hospital=hospital,
         my_departments=my_departments,
+        my_patients=my_patients,
         ai=ai,
         chat=chat,
         metrics=metrics,
