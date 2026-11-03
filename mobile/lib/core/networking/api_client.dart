@@ -61,8 +61,17 @@ class ApiClient {
   }
 
   /// Performs a GET request and requires a JSON object response.
-  Future<Map<String, dynamic>> getJson(String path, {String? bearerToken}) {
-    return _requestJson(method: 'GET', path: path, bearerToken: bearerToken);
+  Future<Map<String, dynamic>> getJson(
+    String path, {
+    String? bearerToken,
+    Map<String, String>? additionalHeaders,
+  }) {
+    return _requestJson(
+      method: 'GET',
+      path: path,
+      bearerToken: bearerToken,
+      additionalHeaders: additionalHeaders,
+    );
   }
 
   /// Performs a JSON POST request and requires a JSON object response.
@@ -132,12 +141,65 @@ class ApiClient {
     return normalized;
   }
 
+  static Map<String, String> _normalizeAdditionalHeaders(
+    Map<String, String>? value,
+  ) {
+    if (value == null || value.isEmpty) {
+      return const <String, String>{};
+    }
+
+    const reserved = <String>{
+      'accept',
+      'authorization',
+      'content-type',
+      'idempotency-key',
+    };
+
+    final normalized = <String, String>{};
+
+    for (final entry in value.entries) {
+      final name = entry.key.trim();
+      final headerValue = entry.value.trim();
+
+      if (name.isEmpty || !RegExp(r'^[A-Za-z0-9-]+$').hasMatch(name)) {
+        throw ArgumentError.value(
+          entry.key,
+          'additionalHeaders',
+          'Header names must contain only letters, digits, and hyphens.',
+        );
+      }
+
+      if (reserved.contains(name.toLowerCase())) {
+        throw ArgumentError.value(
+          entry.key,
+          'additionalHeaders',
+          'Core transport headers cannot be overridden.',
+        );
+      }
+
+      if (headerValue.isEmpty ||
+          headerValue.contains('\r') ||
+          headerValue.contains('\n')) {
+        throw ArgumentError.value(
+          entry.value,
+          'additionalHeaders',
+          'Header values must be non-empty single-line values.',
+        );
+      }
+
+      normalized[name] = headerValue;
+    }
+
+    return Map<String, String>.unmodifiable(normalized);
+  }
+
   Future<Map<String, dynamic>> _requestJson({
     required String method,
     required String path,
     Map<String, dynamic>? body,
     String? bearerToken,
     String? idempotencyKey,
+    Map<String, String>? additionalHeaders,
   }) async {
     if (bearerToken != null && bearerToken.trim().isEmpty) {
       throw ArgumentError.value(
@@ -148,6 +210,9 @@ class ApiClient {
     }
 
     final normalizedIdempotencyKey = _normalizeIdempotencyKey(idempotencyKey);
+    final normalizedAdditionalHeaders = _normalizeAdditionalHeaders(
+      additionalHeaders,
+    );
 
     if (!const <String>{'GET', 'POST', 'PATCH'}.contains(method) ||
         (method == 'GET' && body != null) ||
@@ -169,6 +234,8 @@ class ApiClient {
     if (normalizedIdempotencyKey != null) {
       headers['Idempotency-Key'] = normalizedIdempotencyKey;
     }
+
+    headers.addAll(normalizedAdditionalHeaders);
 
     final requestId = ++_requestSequence;
 

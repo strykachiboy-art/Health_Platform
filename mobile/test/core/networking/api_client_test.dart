@@ -74,6 +74,52 @@ void main() {
       expect(result, {'success': true, 'status': 'ok'});
     });
 
+    test('GET forwards explicit additional headers', () async {
+      final mock = MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(request.headers['x-emergency-access-id'], '17');
+
+        return http.Response('{"success":true}', 200);
+      });
+      addTearDown(mock.close);
+
+      final api = ApiClient(config: testConfig(), client: mock);
+      addTearDown(api.close);
+
+      await api.getJson(
+        'api/v1/patients/7',
+        bearerToken: 'test-access-token',
+        additionalHeaders: const <String, String>{
+          'X-Emergency-Access-ID': '17',
+        },
+      );
+    });
+
+    test('additional headers cannot override core transport headers', () async {
+      var requests = 0;
+
+      final mock = MockClient((request) async {
+        requests++;
+        return http.Response('{"success":true}', 200);
+      });
+      addTearDown(mock.close);
+
+      final api = ApiClient(config: testConfig(), client: mock);
+      addTearDown(api.close);
+
+      await expectLater(
+        api.getJson(
+          'api/v1/patients/7',
+          additionalHeaders: const <String, String>{
+            'Authorization': 'Bearer injected',
+          },
+        ),
+        throwsArgumentError,
+      );
+
+      expect(requests, 0);
+    });
+
     test('forwards a caller-supplied PATCH idempotency key', () async {
       final mock = MockClient((request) async {
         expect(request.method, 'PATCH');

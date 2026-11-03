@@ -108,6 +108,56 @@ void main() {
       expect(patient.allergies, 'Peanuts');
     });
 
+    test('fetchPatient sends emergency access header only when explicitly supplied', () async {
+      final client = MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(request.url.path, '/api/v1/patients/7');
+        expect(request.headers['x-emergency-access-id'], '17');
+        expect(request.headers['authorization'], 'Bearer $_token');
+
+        return http.Response(
+          jsonEncode({'success': true, 'data': patientJson()}),
+          200,
+        );
+      });
+      addTearDown(client.close);
+
+      final patient = await dataSource(client)
+          .fetchPatient(patientId: 7, emergencyAccessId: 17);
+
+      expect(patient.id, 7);
+    });
+
+    test('fetchPatient rejects invalid emergency access ID before session and HTTP', () async {
+      var sessionLoads = 0;
+      var requests = 0;
+
+      final client = MockClient((request) async {
+        requests++;
+        return http.Response(
+          jsonEncode({'success': true, 'data': patientJson()}),
+          200,
+        );
+      });
+      addTearDown(client.close);
+
+      final source = dataSource(
+        client,
+        loadAccessToken: () async {
+          sessionLoads++;
+          return _token;
+        },
+      );
+
+      await expectLater(
+        source.fetchPatient(patientId: 7, emergencyAccessId: 0),
+        throwsArgumentError,
+      );
+
+      expect(sessionLoads, 0);
+      expect(requests, 0);
+    });
+
     for (final desiredStatus in <bool>[true, false]) {
       test(
         'setPatientStatus sends is_active=$desiredStatus and parses response',

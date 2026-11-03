@@ -61,15 +61,28 @@ class PatientRemoteDataSource {
     return PatientPage.fromJson(data);
   }
 
-  Future<Patient> fetchPatient({required int patientId}) async {
+  Future<Patient> fetchPatient({
+    required int patientId,
+    int? emergencyAccessId,
+  }) async {
     if (patientId <= 0) {
       throw ArgumentError.value(patientId, 'patientId', 'Must be positive.');
+    }
+    if (emergencyAccessId != null && emergencyAccessId <= 0) {
+      throw ArgumentError.value(
+        emergencyAccessId,
+        'emergencyAccessId',
+        'Must be positive when provided.',
+      );
     }
 
     final bearerToken = await _loadAccessToken();
     final envelope = await _apiClient.getJson(
       'api/v1/patients/$patientId',
       bearerToken: bearerToken,
+      additionalHeaders: emergencyAccessId == null
+          ? null
+          : <String, String>{'X-Emergency-Access-ID': '$emergencyAccessId'},
     );
     final data = _dataFromEnvelope(envelope);
     return Patient.fromJson(data);

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
+import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_profile_edit_screen.dart';
@@ -14,10 +15,12 @@ class PatientDetailScreen extends StatefulWidget {
     super.key,
     required this.dataSource,
     required this.patientId,
+    this.emergencyAccessContext,
   });
 
   final PatientRemoteDataSource dataSource;
   final int patientId;
+  final EmergencyAccessContext? emergencyAccessContext;
 
   @override
   State<PatientDetailScreen> createState() => _PatientDetailScreenState();
@@ -49,9 +52,13 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       _errorMessage = null;
     });
 
+    final emergencyAccessId = widget.emergencyAccessContext
+        ?.emergencyAccessIdForPatient(widget.patientId);
+
     try {
       final patient = await widget.dataSource.fetchPatient(
         patientId: widget.patientId,
+        emergencyAccessId: emergencyAccessId,
       );
       if (!mounted || generation != _requestGeneration) return;
       setState(() {
@@ -60,6 +67,13 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       });
     } catch (error) {
       if (!mounted || generation != _requestGeneration) return;
+
+      if (emergencyAccessId != null &&
+          error is ApiException &&
+          const <int>{401, 403, 404}.contains(error.statusCode)) {
+        widget.emergencyAccessContext?.clearIfGrantId(emergencyAccessId);
+      }
+
       setState(() {
         _lastError = error;
         _errorMessage = _messageFor(error);
