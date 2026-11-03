@@ -7,6 +7,7 @@ import 'package:http/testing.dart';
 import 'package:clinic_system_pro/core/config/backend_config.dart';
 import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
+import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 
 const _token = 'test-access-token';
@@ -45,7 +46,10 @@ Map<String, dynamic> pageJson({
   },
 };
 
-PatientRemoteDataSource dataSource(MockClient client) {
+PatientRemoteDataSource dataSource(
+  MockClient client, {
+  AuthenticatedAccessTokenLoader? loadAccessToken,
+}) {
   return PatientRemoteDataSource(
     apiClient: ApiClient(
       config: const BackendConfig(
@@ -54,41 +58,36 @@ PatientRemoteDataSource dataSource(MockClient client) {
       ),
       client: client,
     ),
+    loadAccessToken: loadAccessToken ?? () async => _token,
   );
 }
 
 void main() {
   group('PatientRemoteDataSource', () {
-    test(
-      'fetchPatients encodes search, pagination, active-only and bearer token',
-      () async {
-        final client = MockClient((request) async {
-          expect(request.method, 'GET');
-          expect(request.url.path, '/api/v1/patients');
-          expect(request.url.queryParameters, {
-            'search': 'Ada Lovelace',
-            'page': '2',
-            'per_page': '25',
-            'active_only': 'true',
-          });
-          expect(request.headers['authorization'], 'Bearer $_token');
-          return http.Response(jsonEncode(pageJson(page: 2)), 200);
+    test('fetchPatients encodes search, pagination, active-only and shared session token', () async {
+      final client = MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(request.url.path, '/api/v1/patients');
+        expect(request.url.queryParameters, {
+          'search': 'Ada Lovelace',
+          'page': '2',
+          'per_page': '25',
+          'active_only': 'true',
         });
-        addTearDown(client.close);
+        expect(request.headers['authorization'], 'Bearer $_token');
+        return http.Response(jsonEncode(pageJson(page: 2)), 200);
+      });
+      addTearDown(client.close);
 
-        final page = await dataSource(client).fetchPatients(
-          bearerToken: _token,
-          search: '  Ada Lovelace  ',
-          page: 2,
-        );
+      final page = await dataSource(client)
+          .fetchPatients(search: '  Ada Lovelace  ', page: 2);
 
-        expect(page.total, 1);
-        expect(page.page, 2);
-        expect(page.items.single.fullName, 'Ada Lovelace');
-        expect(page.items.single.patientNumber, 'PT-0007');
-        expect(page.items.single.phone, '+2348000000000');
-      },
-    );
+      expect(page.total, 1);
+      expect(page.page, 2);
+      expect(page.items.single.fullName, 'Ada Lovelace');
+      expect(page.items.single.patientNumber, 'PT-0007');
+      expect(page.items.single.phone, '+2348000000000');
+    });
 
     test('fetchPatient parses details from the existing endpoint', () async {
       final client = MockClient((request) async {
@@ -102,8 +101,7 @@ void main() {
       });
       addTearDown(client.close);
 
-      final patient = await dataSource(client)
-          .fetchPatient(bearerToken: _token, patientId: 7);
+      final patient = await dataSource(client).fetchPatient(patientId: 7);
 
       expect(patient.id, 7);
       expect(patient.dateOfBirth, DateTime(1815, 12, 10));
@@ -128,11 +126,8 @@ void main() {
           });
           addTearDown(client.close);
 
-          final patient = await dataSource(client).setPatientStatus(
-            bearerToken: _token,
-            patientId: 7,
-            isActive: desiredStatus,
-          );
+          final patient = await dataSource(client)
+              .setPatientStatus(patientId: 7, isActive: desiredStatus);
 
           expect(patient.id, 7);
           expect(patient.isActive, desiredStatus);
@@ -149,7 +144,7 @@ void main() {
         addTearDown(client.close);
 
         await expectLater(
-          dataSource(client).fetchPatient(bearerToken: _token, patientId: 7),
+          dataSource(client).fetchPatient(patientId: 7),
           throwsA(isA<FormatException>()),
         );
       },
@@ -164,7 +159,7 @@ void main() {
         addTearDown(client.close);
 
         await expectLater(
-          dataSource(client).fetchPatients(bearerToken: _token),
+          dataSource(client).fetchPatients(),
           throwsA(
             isA<ApiException>()
                 .having(
@@ -178,18 +173,35 @@ void main() {
       },
     );
 
-    test('rejects blank bearer token before issuing a request', () async {
+    test('session unavailable fails before issuing an HTTP request', () async {
       var requests = 0;
+
       final client = MockClient((request) async {
         requests++;
         return http.Response(jsonEncode(pageJson()), 200);
       });
       addTearDown(client.close);
 
-      await expectLater(
-        dataSource(client).fetchPatients(bearerToken: '  '),
-        throwsArgumentError,
+      final source = dataSource(
+        client,
+        loadAccessToken: () async {
+          throw const AuthenticatedSessionUnavailableException(
+            AuthenticatedSessionAccessFailure.signedOut,
+          );
+        },
       );
+
+      await expectLater(
+        source.fetchPatients(),
+        throwsA(
+          isA<AuthenticatedSessionUnavailableException>().having(
+            (error) => error.failure,
+            'failure',
+            AuthenticatedSessionAccessFailure.signedOut,
+          ),
+        ),
+      );
+
       expect(requests, 0);
     });
 
@@ -213,7 +225,6 @@ void main() {
       addTearDown(client.close);
 
       final patient = await dataSource(client).updatePatient(
-        bearerToken: _token,
         patientId: 7,
         updates: {'first_name': ' Grace ', 'phone': null},
       );
@@ -236,11 +247,8 @@ void main() {
         addTearDown(client.close);
 
         await expectLater(
-          dataSource(client).updatePatient(
-            bearerToken: _token,
-            patientId: 7,
-            updates: {'is_active': false},
-          ),
+          dataSource(client)
+              .updatePatient(patientId: 7, updates: {'is_active': false}),
           throwsArgumentError,
         );
         expect(requests, 0);
@@ -260,19 +268,11 @@ void main() {
       final source = dataSource(client);
 
       await expectLater(
-        source.updatePatient(
-          bearerToken: _token,
-          patientId: 7,
-          updates: const {},
-        ),
+        source.updatePatient(patientId: 7, updates: const {}),
         throwsArgumentError,
       );
       await expectLater(
-        source.updatePatient(
-          bearerToken: _token,
-          patientId: 0,
-          updates: {'first_name': 'Grace'},
-        ),
+        source.updatePatient(patientId: 0, updates: {'first_name': 'Grace'}),
         throwsArgumentError,
       );
       expect(requests, 0);
@@ -309,7 +309,6 @@ void main() {
         addTearDown(client.close);
 
         final patient = await dataSource(client).createPatient(
-          bearerToken: _token,
           firstName: ' Ada ',
           lastName: ' Lovelace ',
           dateOfBirth: DateTime(1990, 2, 3),
@@ -344,7 +343,6 @@ void main() {
       addTearDown(client.close);
 
       await dataSource(client).createPatient(
-        bearerToken: _token,
         firstName: 'Ada',
         lastName: 'Lovelace',
         phone: ' ',
@@ -365,11 +363,7 @@ void main() {
       addTearDown(client.close);
 
       await expectLater(
-        dataSource(client).createPatient(
-          bearerToken: _token,
-          firstName: '  ',
-          lastName: 'Lovelace',
-        ),
+        dataSource(client).createPatient(firstName: '  ', lastName: 'Lovelace'),
         throwsArgumentError,
       );
 
@@ -401,7 +395,6 @@ void main() {
 
         await expectLater(
           dataSource(client).createPatient(
-            bearerToken: _token,
             firstName: 'Ada',
             lastName: 'Lovelace',
             email: invalidEmail,
@@ -426,7 +419,5 @@ void main() {
         );
       },
     );
-
-
   });
 }

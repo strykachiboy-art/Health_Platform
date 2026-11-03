@@ -1,18 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
+import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 
 class PatientRegistrationScreen extends StatefulWidget {
-  const PatientRegistrationScreen({
-    super.key,
-    required this.dataSource,
-    required this.bearerToken,
-  });
+  const PatientRegistrationScreen({super.key, required this.dataSource});
 
   final PatientRemoteDataSource dataSource;
-  final String bearerToken;
 
   @override
   State<PatientRegistrationScreen> createState() =>
@@ -283,7 +279,6 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
 
     try {
       final patient = await widget.dataSource.createPatient(
-        bearerToken: widget.bearerToken,
         firstName: _firstName.text,
         lastName: _lastName.text,
         dateOfBirth: _dateOfBirth,
@@ -303,6 +298,16 @@ class _PatientRegistrationScreenState extends State<PatientRegistrationScreen> {
       setState(() {
         _createdPatient = patient;
         _formMessage = null;
+      });
+    } on AuthenticatedSessionUnavailableException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _outcomeUnknown = false;
+        _formMessage =
+            error.failure == AuthenticatedSessionAccessFailure.recoveryRequired
+            ? 'Your saved session requires recovery before registering a patient.'
+            : 'Sign in before registering a patient.';
       });
     } on ApiException catch (error) {
       if (!mounted) return;

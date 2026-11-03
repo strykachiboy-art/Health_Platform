@@ -21,6 +21,7 @@ import 'package:clinic_system_pro/core/sync/appointment_create_queue_producer.da
 import 'package:clinic_system_pro/core/security/secure_key_value_storage.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
+import 'package:clinic_system_pro/features/auth/data/coordinator_authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_store.dart';
 import 'package:clinic_system_pro/features/auth/data/google_sign_in_provider.dart';
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
@@ -32,7 +33,6 @@ void main() {
   final connectivitySource = ConnectivityPlusDeviceConnectivitySource();
 
   final healthDataSource = BackendHealthRemoteDataSource(apiClient: apiClient);
-  final patientDataSource = PatientRemoteDataSource(apiClient: apiClient);
   final authRemoteDataSource = AuthRemoteDataSource(apiClient: apiClient);
   final secureStorage = FlutterSecureKeyValueStorage();
   final sessionStore = AuthSessionStore(storage: secureStorage);
@@ -40,6 +40,16 @@ void main() {
     sessionStore: sessionStore,
     remoteDataSource: authRemoteDataSource,
   );
+
+  final authenticatedSessionAccess = CoordinatorAuthenticatedSessionAccess(
+    sessionCoordinator: sessionCoordinator,
+  );
+
+  final patientDataSource = PatientRemoteDataSource(
+    apiClient: apiClient,
+    loadAccessToken: authenticatedSessionAccess.requireAccessToken,
+  );
+
   final sessionNavigationGuard = SessionNavigationGuard();
   final googleSignInProvider = GoogleSignInProvider(
     configuration: GoogleSignInConfiguration.fromEnvironment(),

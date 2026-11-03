@@ -40,6 +40,7 @@ PatientRemoteDataSource _dataSource(MockClient client) =>
         ),
         client: client,
       ),
+      loadAccessToken: () async => 'test-token',
     );
 
 Future<void> _enterRequiredNames(WidgetTester tester) async {
@@ -84,10 +85,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PatientRegistrationScreen(
-          dataSource: _dataSource(client),
-          bearerToken: 'test-token',
-        ),
+        home: PatientRegistrationScreen(dataSource: _dataSource(client)),
       ),
     );
     await tester.pumpAndSettle();
@@ -128,10 +126,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PatientRegistrationScreen(
-            dataSource: _dataSource(client),
-            bearerToken: 'test-token',
-          ),
+          home: PatientRegistrationScreen(dataSource: _dataSource(client)),
         ),
       );
       await tester.pumpAndSettle();
@@ -180,10 +175,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PatientRegistrationScreen(
-            dataSource: _dataSource(client),
-            bearerToken: 'test-token',
-          ),
+          home: PatientRegistrationScreen(dataSource: _dataSource(client)),
         ),
       );
       await tester.pumpAndSettle();
@@ -237,10 +229,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PatientRegistrationScreen(
-            dataSource: _dataSource(client),
-            bearerToken: 'test-token',
-          ),
+          home: PatientRegistrationScreen(dataSource: _dataSource(client)),
         ),
       );
       await tester.pumpAndSettle();

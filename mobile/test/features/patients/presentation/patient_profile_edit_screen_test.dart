@@ -44,6 +44,7 @@ PatientRemoteDataSource _dataSource(MockClient client) =>
         ),
         client: client,
       ),
+      loadAccessToken: () async => 'test-token',
     );
 
 Future<void> _openEditor(
@@ -60,7 +61,6 @@ Future<void> _openEditor(
                 MaterialPageRoute(
                   builder: (_) => PatientProfileEditScreen(
                     dataSource: source,
-                    bearerToken: 'test-token',
                     patient: _patient(),
                   ),
                 ),
@@ -107,7 +107,6 @@ void main() {
                     MaterialPageRoute(
                       builder: (_) => PatientProfileEditScreen(
                         dataSource: source,
-                        bearerToken: 'test-token',
                         patient: _patient(),
                       ),
                     ),
@@ -233,7 +232,6 @@ void main() {
                     MaterialPageRoute(
                       builder: (_) => PatientProfileEditScreen(
                         dataSource: _dataSource(client),
-                        bearerToken: 'test-token',
                         patient: _patient(),
                       ),
                     ),

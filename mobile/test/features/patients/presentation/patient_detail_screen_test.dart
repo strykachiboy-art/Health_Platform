@@ -43,6 +43,7 @@ PatientRemoteDataSource _dataSource(
     client: client,
     requestTimeout: requestTimeout,
   ),
+  loadAccessToken: () async => 'test-token',
 );
 
 void main() {
@@ -79,7 +80,6 @@ void main() {
         MaterialApp(
           home: PatientDetailScreen(
             dataSource: _dataSource(client),
-            bearerToken: 'test-token',
             patientId: 7,
           ),
         ),
@@ -126,7 +126,6 @@ void main() {
       MaterialApp(
         home: PatientDetailScreen(
           dataSource: _dataSource(client),
-          bearerToken: 'test-token',
           patientId: 7,
         ),
       ),
@@ -157,7 +156,6 @@ void main() {
       MaterialApp(
         home: PatientDetailScreen(
           dataSource: _dataSource(client),
-          bearerToken: 'expired-token',
           patientId: 7,
         ),
       ),
@@ -192,7 +190,6 @@ void main() {
         MaterialApp(
           home: PatientDetailScreen(
             dataSource: _dataSource(client),
-            bearerToken: 'test-token',
             patientId: 7,
           ),
         ),
@@ -228,9 +225,7 @@ void main() {
         findsNothing,
       );
       expect(
-        find.byKey(
-          const ValueKey('patient-status-stale-disabled-message'),
-        ),
+        find.byKey(const ValueKey('patient-status-stale-disabled-message')),
         findsOneWidget,
       );
 
@@ -283,7 +278,6 @@ void main() {
           MaterialApp(
             home: PatientDetailScreen(
               dataSource: _dataSource(client),
-              bearerToken: 'test-token',
               patientId: 7,
             ),
           ),
@@ -299,10 +293,7 @@ void main() {
 
         expect(patientGets, 2);
         expect(find.text('Ada Lovelace'), findsNothing);
-        expect(
-          find.byKey(const ValueKey('patient-detail-name')),
-          findsNothing,
-        );
+        expect(find.byKey(const ValueKey('patient-detail-name')), findsNothing);
         expect(
           find.byKey(const ValueKey('patient-detail-stale-data-notice')),
           findsNothing,
@@ -336,7 +327,6 @@ void main() {
         MaterialApp(
           home: PatientDetailScreen(
             dataSource: _dataSource(client),
-            bearerToken: 'test-token',
             patientId: 7,
           ),
         ),
@@ -399,7 +389,6 @@ void main() {
       MaterialApp(
         home: PatientDetailScreen(
           dataSource: _dataSource(client),
-          bearerToken: 'test-token',
           patientId: 7,
         ),
       ),
@@ -458,7 +447,6 @@ void main() {
       MaterialApp(
         home: PatientDetailScreen(
           dataSource: _dataSource(client),
-          bearerToken: 'test-token',
           patientId: 7,
         ),
       ),
@@ -511,7 +499,6 @@ void main() {
         MaterialApp(
           home: PatientDetailScreen(
             dataSource: _dataSource(client),
-            bearerToken: 'test-token',
             patientId: 7,
           ),
         ),
@@ -571,7 +558,6 @@ void main() {
         MaterialApp(
           home: PatientDetailScreen(
             dataSource: _dataSource(client),
-            bearerToken: 'test-token',
             patientId: 7,
           ),
         ),

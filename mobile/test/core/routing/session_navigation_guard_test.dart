@@ -30,7 +30,10 @@ void main() {
       final guard = SessionNavigationGuard();
       final router = createAppRouter(
         healthDataSource: BackendHealthRemoteDataSource(apiClient: apiClient),
-        patientDataSource: PatientRemoteDataSource(apiClient: apiClient),
+        patientDataSource: PatientRemoteDataSource(
+          apiClient: apiClient,
+          loadAccessToken: () async => 'test-access-token',
+        ),
         loginScreen: const Scaffold(
           body: Center(child: Text('Session sign-in route')),
         ),
@@ -43,14 +46,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Session sign-in route'), findsOneWidget);
 
-      router.go('/patients/register', extra: 'test-access-token');
+      router.go('/patients/register');
       await tester.pumpAndSettle();
       expect(find.text('Session sign-in route'), findsOneWidget);
       expect(find.text('Register a new patient'), findsNothing);
 
       guard.markSessionAvailable();
       await tester.pumpAndSettle();
-      router.go('/patients/register', extra: 'test-access-token');
+      router.go('/patients/register');
       await tester.pumpAndSettle();
       expect(find.text('Register a new patient'), findsOneWidget);
 

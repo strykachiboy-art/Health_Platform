@@ -1,23 +1,28 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'package:clinic_system_pro/core/networking/api_client.dart';
+import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
 
 import 'models/patient.dart';
 import 'models/patient_page.dart';
 
 /// Data access for the existing Flask patient endpoints.
 class PatientRemoteDataSource {
-  const PatientRemoteDataSource({required ApiClient apiClient})
-    : _apiClient = apiClient; // ignore: prefer_initializing_formals
+  const PatientRemoteDataSource({
+    required ApiClient apiClient,
+    required AuthenticatedAccessTokenLoader loadAccessToken,
+  }) : _apiClient = apiClient,
+       _loadAccessToken = loadAccessToken;
 
   final ApiClient _apiClient;
+  final AuthenticatedAccessTokenLoader _loadAccessToken;
 
   Future<PatientPage> fetchPatients({
-    required String bearerToken,
     String? search,
     int page = 1,
     int perPage = 25,
     bool activeOnly = true,
   }) async {
-    _validateToken(bearerToken);
     if (page < 1) {
       throw ArgumentError.value(page, 'page', 'Must be at least 1.');
     }
@@ -49,20 +54,19 @@ class PatientRemoteDataSource {
       path: 'api/v1/patients',
       queryParameters: query,
     ).toString();
+
+    final bearerToken = await _loadAccessToken();
     final envelope = await _apiClient.getJson(path, bearerToken: bearerToken);
     final data = _dataFromEnvelope(envelope);
     return PatientPage.fromJson(data);
   }
 
-  Future<Patient> fetchPatient({
-    required String bearerToken,
-    required int patientId,
-  }) async {
-    _validateToken(bearerToken);
+  Future<Patient> fetchPatient({required int patientId}) async {
     if (patientId <= 0) {
       throw ArgumentError.value(patientId, 'patientId', 'Must be positive.');
     }
 
+    final bearerToken = await _loadAccessToken();
     final envelope = await _apiClient.getJson(
       'api/v1/patients/$patientId',
       bearerToken: bearerToken,
@@ -76,15 +80,14 @@ class PatientRemoteDataSource {
   /// The backend remains the authority for role permissions, clinic ownership,
   /// audit logging, and the resulting patient state.
   Future<Patient> setPatientStatus({
-    required String bearerToken,
     required int patientId,
     required bool isActive,
   }) async {
-    _validateToken(bearerToken);
     if (patientId <= 0) {
       throw ArgumentError('patientId must be positive.');
     }
 
+    final bearerToken = await _loadAccessToken();
     final envelope = await _apiClient.patchJson(
       'api/v1/patients/$patientId/status',
       body: <String, dynamic>{'is_active': isActive},
@@ -95,7 +98,6 @@ class PatientRemoteDataSource {
   }
 
   Future<Patient> createPatient({
-    required String bearerToken,
     required String firstName,
     required String lastName,
     DateTime? dateOfBirth,
@@ -109,8 +111,6 @@ class PatientRemoteDataSource {
     String? emiratesId,
     String? umrn,
   }) async {
-    _validateToken(bearerToken);
-
     final normalizedFirstName = firstName.trim();
     final normalizedLastName = lastName.trim();
 
@@ -175,6 +175,7 @@ class PatientRemoteDataSource {
     _addOptionalString(body, 'emirates_id', emiratesId, maxLength: 50);
     _addOptionalString(body, 'umrn', umrn, maxLength: 50);
 
+    final bearerToken = await _loadAccessToken();
     final envelope = await _apiClient.postJson(
       'api/v1/patients',
       body: body,
@@ -205,11 +206,9 @@ class PatientRemoteDataSource {
   }
 
   Future<Patient> updatePatient({
-    required String bearerToken,
     required int patientId,
     required Map<String, dynamic> updates,
   }) async {
-    _validateToken(bearerToken);
     if (patientId <= 0) {
       throw ArgumentError('patientId must be positive.');
     }
@@ -343,6 +342,7 @@ class PatientRemoteDataSource {
       body[field] = normalized.isEmpty ? null : normalized;
     }
 
+    final bearerToken = await _loadAccessToken();
     final envelope = await _apiClient.patchJson(
       'api/v1/patients/$patientId',
       body: body,
@@ -386,15 +386,5 @@ class PatientRemoteDataSource {
       );
     }
     return data;
-  }
-
-  void _validateToken(String token) {
-    if (token.isEmpty || token.trim() != token) {
-      throw ArgumentError.value(
-        token,
-        'bearerToken',
-        'Must be non-empty and have no surrounding whitespace.',
-      );
-    }
   }
 }

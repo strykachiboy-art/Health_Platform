@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
+import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_profile_edit_screen.dart';
@@ -12,12 +13,10 @@ class PatientDetailScreen extends StatefulWidget {
   const PatientDetailScreen({
     super.key,
     required this.dataSource,
-    required this.bearerToken,
     required this.patientId,
   });
 
   final PatientRemoteDataSource dataSource;
-  final String bearerToken;
   final int patientId;
 
   @override
@@ -52,7 +51,6 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
 
     try {
       final patient = await widget.dataSource.fetchPatient(
-        bearerToken: widget.bearerToken,
         patientId: widget.patientId,
       );
       if (!mounted || generation != _requestGeneration) return;
@@ -66,8 +64,9 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         _lastError = error;
         _errorMessage = _messageFor(error);
         _loading = false;
-        if (error is ApiException &&
-            const <int>{401, 403, 404}.contains(error.statusCode)) {
+        if (error is AuthenticatedSessionUnavailableException ||
+            (error is ApiException &&
+                const <int>{401, 403, 404}.contains(error.statusCode))) {
           // Do not keep showing a snapshot after access is rejected or
           // the backend reports that this patient is no longer available.
           _patient = null;
@@ -77,8 +76,10 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   }
 
   String _messageFor(Object error) {
-    if (widget.bearerToken.trim().isEmpty) {
-      return 'No saved access token was provided. Return to sign in and establish a session.';
+    if (error is AuthenticatedSessionUnavailableException) {
+      return error.failure == AuthenticatedSessionAccessFailure.recoveryRequired
+          ? 'Your saved session requires recovery before this patient can be loaded.'
+          : 'No authenticated session is available. Return to sign in.';
     }
     if (widget.patientId <= 0) {
       return 'This patient address is invalid.';
@@ -111,7 +112,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   }
 
   bool get _needsSignIn =>
-      widget.bearerToken.trim().isEmpty ||
+      _lastError is AuthenticatedSessionUnavailableException ||
       (_lastError is ApiException &&
           (_lastError as ApiException).statusCode == 401);
 
@@ -127,7 +128,6 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       MaterialPageRoute(
         builder: (_) => PatientProfileEditScreen(
           dataSource: widget.dataSource,
-          bearerToken: widget.bearerToken,
           patient: patient,
         ),
       ),
@@ -307,9 +307,8 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
           children: [
             Text(
               'Last confirmed patient details may be out of date.',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: colors.onErrorContainer,
-                  ),
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(color: colors.onErrorContainer),
             ),
             if (_errorMessage != null) ...[
               const SizedBox(height: 8),
@@ -473,7 +472,6 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
 
     try {
       final updated = await widget.dataSource.setPatientStatus(
-        bearerToken: widget.bearerToken,
         patientId: patient.id,
         isActive: desiredStatus,
       );
@@ -515,7 +513,8 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         _statusPermissionDenied =
             error is ApiException && error.statusCode == 403;
         _statusAuthenticationRequired =
-            error is ApiException && error.statusCode == 401;
+            error is AuthenticatedSessionUnavailableException ||
+            (error is ApiException && error.statusCode == 401);
         _statusMessage = _statusFailureMessage(
           error,
           outcomeUnknown: outcomeUnknown,
@@ -525,6 +524,10 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   }
 
   bool _isStatusOutcomeUnknown(Object error) {
+    if (error is AuthenticatedSessionUnavailableException) {
+      return false;
+    }
+
     if (error is ApiException) {
       final status = error.statusCode;
       if (status == 408 || (status != null && status >= 500)) return true;
@@ -540,6 +543,12 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   }
 
   String _statusFailureMessage(Object error, {required bool outcomeUnknown}) {
+    if (error is AuthenticatedSessionUnavailableException) {
+      return error.failure == AuthenticatedSessionAccessFailure.recoveryRequired
+          ? 'Your saved session requires recovery before changing patient status.'
+          : 'Sign in before changing patient status.';
+    }
+
     if (error is ApiException) {
       if (error.statusCode == 401) {
         return 'Your session is no longer authorized. Sign in again before changing patient status.';
@@ -568,7 +577,6 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
 
     try {
       final current = await widget.dataSource.fetchPatient(
-        bearerToken: widget.bearerToken,
         patientId: widget.patientId,
       );
       if (!mounted) return;
@@ -590,7 +598,9 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       );
     } catch (error) {
       if (!mounted) return;
-      final needsSignIn = error is ApiException && error.statusCode == 401;
+      final needsSignIn =
+          error is AuthenticatedSessionUnavailableException ||
+          (error is ApiException && error.statusCode == 401);
       setState(() {
         _statusUpdating = false;
         _statusOutcomeUnknown = !needsSignIn;

@@ -400,12 +400,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
           width: double.infinity,
           child: ElevatedButton.icon(
             key: const ValueKey('open-patient-directory-button'),
-            onPressed: _busy
-                ? null
-                : () => context.push<void>(
-                    '/patients',
-                    extra: session.accessToken,
-                  ),
+            onPressed: _busy ? null : () => context.push<void>('/patients'),
             icon: const Icon(Icons.people_outline),
             label: const Text('Open patient directory'),
           ),

@@ -33,9 +33,7 @@ GoRouter createAppRouter({
         builder: (context, state) {
           final source = patientDataSource;
           if (source == null) return const _PatientRouteUnavailableScreen();
-          final extra = state.extra;
-          final token = extra is String ? extra : '';
-          return PatientDirectoryScreen(dataSource: source, bearerToken: token);
+          return PatientDirectoryScreen(dataSource: source);
         },
       ),
       GoRoute(
@@ -44,12 +42,7 @@ GoRouter createAppRouter({
         builder: (context, state) {
           final source = patientDataSource;
           if (source == null) return const _PatientRouteUnavailableScreen();
-          final extra = state.extra;
-          final token = extra is String ? extra : '';
-          return PatientRegistrationScreen(
-            dataSource: source,
-            bearerToken: token,
-          );
+          return PatientRegistrationScreen(dataSource: source);
         },
       ),
       GoRoute(
@@ -58,15 +51,9 @@ GoRouter createAppRouter({
         builder: (context, state) {
           final source = patientDataSource;
           if (source == null) return const _PatientRouteUnavailableScreen();
-          final extra = state.extra;
-          final token = extra is String ? extra : '';
           final patientId =
               int.tryParse(state.pathParameters['patientId'] ?? '') ?? 0;
-          return PatientDetailScreen(
-            dataSource: source,
-            bearerToken: token,
-            patientId: patientId,
-          );
+          return PatientDetailScreen(dataSource: source, patientId: patientId);
         },
       ),
       GoRoute(

@@ -11,6 +11,7 @@ import 'package:clinic_system_pro/core/security/secure_key_value_storage.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_store.dart';
+import 'package:clinic_system_pro/features/auth/data/coordinator_authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
@@ -69,7 +70,7 @@ Map<String, dynamic> _patientJson() => {
 
 void main() {
   testWidgets(
-    'signed-in patient navigation preserves token for directory, registration and detail',
+    'signed-in patient navigation resolves shared session for directory, registration and detail',
     (tester) async {
       final storage = _MemorySecureStorage();
       final store = AuthSessionStore(storage: storage);
@@ -125,10 +126,17 @@ void main() {
         remoteDataSource: authRemote,
       );
 
+      final sessionAccess = CoordinatorAuthenticatedSessionAccess(
+        sessionCoordinator: coordinator,
+      );
+
       await tester.pumpWidget(
         ClinicSystemProApp(
           healthDataSource: BackendHealthRemoteDataSource(apiClient: apiClient),
-          patientDataSource: PatientRemoteDataSource(apiClient: apiClient),
+          patientDataSource: PatientRemoteDataSource(
+            apiClient: apiClient,
+            loadAccessToken: sessionAccess.requireAccessToken,
+          ),
           loginScreen: GoogleLoginScreen(
             acquireGoogleIdToken: () async => null,
             authRemoteDataSource: authRemote,

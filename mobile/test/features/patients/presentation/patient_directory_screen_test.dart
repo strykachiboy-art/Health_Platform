@@ -50,6 +50,7 @@ PatientRemoteDataSource _dataSource(MockClient client) =>
         ),
         client: client,
       ),
+      loadAccessToken: () async => 'test-token',
     );
 
 void main() {
@@ -64,10 +65,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PatientDirectoryScreen(
-            dataSource: _dataSource(client),
-            bearerToken: 'test-token',
-          ),
+          home: PatientDirectoryScreen(dataSource: _dataSource(client)),
         ),
       );
       await tester.pumpAndSettle();
@@ -99,10 +97,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PatientDirectoryScreen(
-            dataSource: _dataSource(client),
-            bearerToken: 'test-token',
-          ),
+          home: PatientDirectoryScreen(dataSource: _dataSource(client)),
         ),
       );
       await tester.pumpAndSettle();
@@ -148,10 +143,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PatientDirectoryScreen(
-          dataSource: _dataSource(client),
-          bearerToken: 'test-token',
-        ),
+        home: PatientDirectoryScreen(dataSource: _dataSource(client)),
       ),
     );
     await tester.pumpAndSettle();
@@ -206,10 +198,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: PatientDirectoryScreen(
-            dataSource: _dataSource(client),
-            bearerToken: 'test-token',
-          ),
+          home: PatientDirectoryScreen(dataSource: _dataSource(client)),
         ),
       );
       await tester.pumpAndSettle();
@@ -252,10 +241,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PatientDirectoryScreen(
-          dataSource: _dataSource(client),
-          bearerToken: 'test-token',
-        ),
+        home: PatientDirectoryScreen(dataSource: _dataSource(client)),
       ),
     );
     await tester.pumpAndSettle();
@@ -280,10 +266,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: PatientDirectoryScreen(
-          dataSource: _dataSource(client),
-          bearerToken: 'test-token',
-        ),
+        home: PatientDirectoryScreen(dataSource: _dataSource(client)),
       ),
     );
     await tester.pumpAndSettle();

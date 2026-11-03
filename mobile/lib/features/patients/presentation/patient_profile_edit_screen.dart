@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
+import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 
@@ -8,12 +9,10 @@ class PatientProfileEditScreen extends StatefulWidget {
   const PatientProfileEditScreen({
     super.key,
     required this.dataSource,
-    required this.bearerToken,
     required this.patient,
   });
 
   final PatientRemoteDataSource dataSource;
-  final String bearerToken;
   final Patient patient;
 
   @override
@@ -277,6 +276,10 @@ class _PatientProfileEditScreenState extends State<PatientProfileEditScreen> {
   }
 
   bool _isUnknownOutcome(Object error) {
+    if (error is AuthenticatedSessionUnavailableException) {
+      return false;
+    }
+
     if (error is FormatException) return true;
     if (error is! ApiException) return error is! ArgumentError;
     return error.kind == ApiFailureKind.timeout ||
@@ -287,6 +290,12 @@ class _PatientProfileEditScreenState extends State<PatientProfileEditScreen> {
   }
 
   String _messageForRejectedUpdate(Object error) {
+    if (error is AuthenticatedSessionUnavailableException) {
+      return error.failure == AuthenticatedSessionAccessFailure.recoveryRequired
+          ? 'Your saved session requires recovery before editing this patient.'
+          : 'Sign in before editing this patient.';
+    }
+
     if (error is ApiException) {
       if (error.statusCode == 401) {
         return 'Your session may have expired. Sign in again before editing this patient.';
@@ -335,7 +344,6 @@ class _PatientProfileEditScreenState extends State<PatientProfileEditScreen> {
 
     try {
       final updated = await widget.dataSource.updatePatient(
-        bearerToken: widget.bearerToken,
         patientId: widget.patient.id,
         updates: updates,
       );
@@ -376,7 +384,6 @@ class _PatientProfileEditScreenState extends State<PatientProfileEditScreen> {
     });
     try {
       final current = await widget.dataSource.fetchPatient(
-        bearerToken: widget.bearerToken,
         patientId: widget.patient.id,
       );
       if (!mounted) return;
@@ -384,7 +391,9 @@ class _PatientProfileEditScreenState extends State<PatientProfileEditScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _formMessage = error is ApiException && error.statusCode == 401
+        _formMessage = error is AuthenticatedSessionUnavailableException
+            ? 'An authenticated session is required to read the current server version.'
+            : error is ApiException && error.statusCode == 401
             ? 'The server version could not be read because the session was rejected. Return to sign in.'
             : 'The current server version could not be loaded. Retry checking the server state before submitting another update.';
         _formMessageIsError = true;

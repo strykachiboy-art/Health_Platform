@@ -4,18 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
+import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 
 class PatientDirectoryScreen extends StatefulWidget {
-  const PatientDirectoryScreen({
-    super.key,
-    required this.dataSource,
-    required this.bearerToken,
-  });
+  const PatientDirectoryScreen({super.key, required this.dataSource});
 
   final PatientRemoteDataSource dataSource;
-  final String bearerToken;
 
   @override
   State<PatientDirectoryScreen> createState() => _PatientDirectoryScreenState();
@@ -101,7 +97,6 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
 
     try {
       final result = await widget.dataSource.fetchPatients(
-        bearerToken: widget.bearerToken,
         search: _searchController.text,
         page: requestedPage,
         perPage: _pageSize,
@@ -124,8 +119,9 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
       if (!mounted || generation != _requestGeneration) return;
 
       final accessRejected =
-          error is ApiException &&
-          const <int>{401, 403}.contains(error.statusCode);
+          error is AuthenticatedSessionUnavailableException ||
+          (error is ApiException &&
+              const <int>{401, 403}.contains(error.statusCode));
 
       setState(() {
         _lastError = error;
@@ -152,8 +148,10 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   }
 
   String _messageFor(Object error) {
-    if (widget.bearerToken.trim().isEmpty) {
-      return 'No saved access token was provided. Return to sign in and establish a session.';
+    if (error is AuthenticatedSessionUnavailableException) {
+      return error.failure == AuthenticatedSessionAccessFailure.recoveryRequired
+          ? 'Your saved session requires recovery before patient data can be loaded.'
+          : 'No authenticated session is available. Return to sign in.';
     }
     if (error is ApiException) {
       if (error.statusCode == 401) {
@@ -180,7 +178,7 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   }
 
   bool get _needsSignIn =>
-      widget.bearerToken.trim().isEmpty ||
+      _lastError is AuthenticatedSessionUnavailableException ||
       (_lastError is ApiException &&
           (_lastError as ApiException).statusCode == 401);
 
@@ -194,12 +192,8 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
             key: const ValueKey('patient-register-button'),
             tooltip: 'Register patient',
             icon: const Icon(Icons.person_add_alt_1),
-            onPressed: () => unawaited(
-              context.push<void>(
-                '/patients/register',
-                extra: widget.bearerToken,
-              ),
-            ),
+            onPressed: () =>
+                unawaited(context.push<void>('/patients/register')),
           ),
         ],
       ),
@@ -390,12 +384,8 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
             title: Text(patient.fullName),
             subtitle: Text('Patient no. ${patient.patientNumber}'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => unawaited(
-              context.push<void>(
-                '/patients/${patient.id}',
-                extra: widget.bearerToken,
-              ),
-            ),
+            onTap: () =>
+                unawaited(context.push<void>('/patients/${patient.id}')),
           );
         },
       ),
