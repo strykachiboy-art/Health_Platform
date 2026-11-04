@@ -23,6 +23,7 @@ import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dar
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/coordinator_authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_store.dart';
+import 'package:clinic_system_pro/core/networking/local_debug_tls_client.dart';
 import 'package:clinic_system_pro/features/auth/data/google_sign_in_provider.dart';
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
@@ -31,7 +32,11 @@ import 'package:clinic_system_pro/features/emergency_access/data/emergency_acces
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 
 void main() {
-  final apiClient = ApiClient(config: BackendConfig.fromEnvironment());
+  final backendConfig = BackendConfig.fromEnvironment();
+  final apiClient = ApiClient(
+    config: backendConfig,
+    client: createLocalDebugTlsClient(backendConfig),
+  );
   final connectivitySource = ConnectivityPlusDeviceConnectivitySource();
 
   final healthDataSource = BackendHealthRemoteDataSource(apiClient: apiClient);

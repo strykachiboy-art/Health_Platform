@@ -396,15 +396,35 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         const SizedBox(height: 8),
         Text('Role: ${session.role}'),
         const SizedBox(height: 20),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            key: const ValueKey('open-patient-directory-button'),
-            onPressed: _busy ? null : () => context.push<void>('/patients'),
-            icon: const Icon(Icons.people_outline),
-            label: const Text('Open patient directory'),
+        if (const {
+          'ADMIN',
+          'DOCTOR',
+          'NURSE',
+          'RECEPTIONIST',
+          'PHARMACIST',
+          'LAB_TECHNICIAN',
+          'PARAMEDIC',
+          'EMT',
+        }.contains(session.role.toUpperCase()))
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              key: const ValueKey('open-patient-directory-button'),
+              onPressed: _busy ? null : () => context.push<void>('/patients'),
+              icon: const Icon(Icons.people_outline),
+              label: const Text('Open patient directory'),
+            ),
+          )
+        else
+          Text(
+            session.role.toUpperCase() == 'PATIENT'
+                ? 'Your account is registered as a patient. '
+                  'A super administrator must assign an eligible staff '
+                  'role before you can access staff workflows.'
+                : 'The patient directory is not available for this role.',
+            key: const ValueKey('directory-access-not-available'),
+            textAlign: TextAlign.center,
           ),
-        ),
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,

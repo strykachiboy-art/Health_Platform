@@ -81,6 +81,46 @@ Map<String, dynamic> _successEnvelope() => {
 
 void main() {
   group('GoogleLoginScreen', () {
+    testWidgets('patient session does not offer staff patient directory', (
+      tester,
+    ) async {
+      final storage = _MemorySecureStorage();
+      final store = AuthSessionStore(storage: storage);
+      await store.save(const AuthTokenResponse(
+        accessToken: _accessToken,
+        refreshToken: _refreshToken,
+        userId: 42,
+        role: 'patient',
+        clinicContextId: null,
+      ));
+      final client = MockClient((_) async =>
+          http.Response(jsonEncode({'success': true}), 200));
+      addTearDown(client.close);
+      final remote = AuthRemoteDataSource(
+        apiClient: ApiClient(
+          config: const BackendConfig(
+            baseUrl: 'http://127.0.0.1:5000',
+            allowInsecureHttp: true,
+          ),
+          client: client,
+        ),
+      );
+      await tester.pumpWidget(MaterialApp(
+        home: GoogleLoginScreen(
+          acquireGoogleIdToken: () async => null,
+          authRemoteDataSource: remote,
+          sessionCoordinator: AuthSessionCoordinator(
+            sessionStore: store,
+            remoteDataSource: remote,
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('authenticated-session')), findsOneWidget);
+      expect(find.byKey(const ValueKey('open-patient-directory-button')), findsNothing);
+      expect(find.byKey(const ValueKey('directory-access-not-available')), findsOneWidget);
+      expect(find.byKey(const ValueKey('sign-out-button')), findsOneWidget);
+    });
     testWidgets('exchanges Google ID token and securely persists session', (
       tester,
     ) async {
