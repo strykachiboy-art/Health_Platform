@@ -55,6 +55,7 @@ def ensure_admission_case_conversation(
     clinic_id: int,
     admission_id: int,
     actor_user_id: int,
+    authorization_handoff_id: int | None = None,
 ) -> tuple[Conversation, AdmissionCaseConversation, bool]:
     """Create/link an admission case channel and its initial clinical members.
 
@@ -67,10 +68,19 @@ def ensure_admission_case_conversation(
     All writes and audits occur in a single transaction; no nested chat
     service commit can leave an unlinked channel behind after failure.
     """
-    actor = _require_assignment_admin(actor_user_id, clinic_id)
     admission = _get_admission(
         admission_id, clinic_id, lock=True, require_active=True,
     )
+    if authorization_handoff_id is None:
+        actor = _require_assignment_admin(actor_user_id, clinic_id)
+    else:
+        from app.modules.chat.services.case_chat_handoff_authorization import (
+            require_acknowledged_handoff_sync_authority,
+        )
+        actor = require_acknowledged_handoff_sync_authority(
+            clinic_id=clinic_id, admission_id=admission.id,
+            actor_user_id=actor_user_id, handoff_id=authorization_handoff_id,
+        )
 
     # Keep chat settings enforced on retries as well as creation.
     ensure_clinic_active(clinic_id)

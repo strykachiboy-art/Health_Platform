@@ -2840,6 +2840,41 @@ def mark_handoff_ready(
     return handoff
 
 
+def _dispatch_after_acknowledged_handoff_commit(fn):
+    """Attempt chat delivery only after the nursing transaction commits.
+
+    All authorization is rechecked by CT3C; chat failure is never surfaced as
+    a false clinical acknowledgement failure. Failed sync remains durable.
+    """
+    from functools import wraps
+    import logging
+
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        handoff = fn(*args, **kwargs)
+        try:
+            if handoff.acknowledged_by_staff_id == kwargs["actor_staff_id"]:
+                actor = db.session.get(Staff, kwargs["actor_staff_id"])
+                if actor is not None:
+                    from app.modules.chat.services.case_chat_assignment_event_service import (
+                        attempt_case_chat_sync_after_clinical_commit,
+                    )
+                    attempt_case_chat_sync_after_clinical_commit(
+                        clinic_id=kwargs["clinic_id"],
+                        admission_id=handoff.admission_id,
+                        actor_user_id=actor.user_id,
+                    )
+        except Exception as exc:
+            db.session.rollback()
+            logging.getLogger(__name__).warning(
+                "nursing.handoff.case_chat_delivery_deferred error_type=%s",
+                type(exc).__name__,
+            )
+        return handoff
+    return wrapped
+
+
+@_dispatch_after_acknowledged_handoff_commit
 @transactional
 def acknowledge_handoff(
     handoff_id: int,
@@ -2874,17 +2909,21 @@ def acknowledge_handoff(
 
     if replay is not None:
         return replay
-    handoff = _get_handoff(
-        handoff_id,
+    # Keep the lock order consistent with CT1 assignment writers: admission
+    # first, then handoff. A preview does not confer transfer authority.
+    preview = _get_handoff(handoff_id, clinic_id, lock=False)
+    admission = _get_admission(
+        preview.admission_id,
         clinic_id,
         lock=True,
-    )
-
-    _get_admission(
-        handoff.admission_id,
-        clinic_id,
         require_active=True,
     )
+    handoff = _get_handoff(handoff_id, clinic_id, lock=True)
+    if (
+        handoff.admission_id != admission.id
+        or handoff.patient_id != admission.patient_id
+    ):
+        raise ConflictError("Handoff context changed during acknowledgement")
 
     if (
         handoff.status
@@ -2903,6 +2942,18 @@ def acknowledge_handoff(
             "Only the assigned incoming nurse "
             "can acknowledge the handoff"
         )
+
+    # CT3B ownership transfer is part of this same @transactional write.
+    # The precondition service revalidates while admission lock is held;
+    # failure rolls back BOTH assignment changes and handoff acknowledgement.
+    from app.modules.nursing.services.handoff_primary_transfer_service import (
+        transfer_primary_nurse_for_acknowledgement,
+    )
+    transfer_primary_nurse_for_acknowledgement(
+        handoff=handoff,
+        admission=admission,
+        actor=actor,
+    )
 
     handoff.status = (
         NursingHandoffStatus.ACKNOWLEDGED
@@ -2948,6 +2999,14 @@ def acknowledge_handoff(
             handoff.id
         )
 
+    # The nurse-authorized request is durable in the SAME clinical commit.
+    # The chat operation itself starts only after the commit succeeds.
+    from app.modules.chat.services.case_chat_assignment_event_service import (
+        queue_handoff_case_chat_sync_in_clinical_transaction,
+    )
+    queue_handoff_case_chat_sync_in_clinical_transaction(
+        handoff=handoff, actor=actor,
+    )
     return handoff
 
 

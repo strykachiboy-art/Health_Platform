@@ -34,6 +34,9 @@ class AdmissionCaseChatSyncRequest(db.Model):
     clinic_id = db.Column(db.Integer, db.ForeignKey("clinics.id"), nullable=False, index=True)
     admission_id = db.Column(db.Integer, db.ForeignKey("admissions.id"), nullable=False, index=True)
     requested_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    authorization_handoff_id = db.Column(
+        db.Integer, db.ForeignKey("nursing_handoffs.id"), nullable=True, index=True,
+    )
     request_sequence = db.Column(db.Integer, nullable=False, default=1)
     processed_sequence = db.Column(db.Integer, nullable=False, default=0)
     requested_at = db.Column(db.DateTime, nullable=False, default=_utcnow)

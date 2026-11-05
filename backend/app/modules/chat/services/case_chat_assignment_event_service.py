@@ -53,6 +53,7 @@ def queue_case_chat_sync_in_clinical_transaction(
             clinic_id=clinic_id,
             admission_id=admission_id,
             requested_by_user_id=actor_user_id,
+            authorization_handoff_id=None,
             request_sequence=1,
             processed_sequence=0,
             requested_at=_utcnow(),
@@ -61,6 +62,45 @@ def queue_case_chat_sync_in_clinical_transaction(
     else:
         row.request_sequence += 1
         row.requested_by_user_id = actor_user_id
+        row.authorization_handoff_id = None
+        row.requested_at = _utcnow()
+    db.session.flush()
+    return row.request_sequence
+
+
+def queue_handoff_case_chat_sync_in_clinical_transaction(*, handoff, actor) -> int:
+    """Record nurse-originated provenance within the ACKNOWLEDGEMENT commit.
+
+    This operation NEVER permits arbitrary nurse enqueues: the acknowledged
+    handoff, incoming nurse and current assignment must all match.
+    """
+    from app.modules.chat.services.case_chat_handoff_authorization import (
+        require_acknowledged_handoff_sync_authority,
+    )
+    require_acknowledged_handoff_sync_authority(
+        clinic_id=handoff.clinic_id,
+        admission_id=handoff.admission_id,
+        actor_user_id=actor.user_id,
+        handoff_id=handoff.id,
+    )
+    row = db.session.execute(
+        db.select(AdmissionCaseChatSyncRequest).where(
+            AdmissionCaseChatSyncRequest.clinic_id == handoff.clinic_id,
+            AdmissionCaseChatSyncRequest.admission_id == handoff.admission_id,
+        ).with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        row = AdmissionCaseChatSyncRequest(
+            clinic_id=handoff.clinic_id, admission_id=handoff.admission_id,
+            requested_by_user_id=actor.user_id,
+            authorization_handoff_id=handoff.id,
+            request_sequence=1, processed_sequence=0, requested_at=_utcnow(),
+        )
+        db.session.add(row)
+    else:
+        row.request_sequence += 1
+        row.requested_by_user_id = actor.user_id
+        row.authorization_handoff_id = handoff.id
         row.requested_at = _utcnow()
     db.session.flush()
     return row.request_sequence
@@ -94,9 +134,7 @@ def deliver_pending_case_chat_sync(
     If either fails, the pending generation remains intact. Successful delivery
     is idempotent, and stale acknowledgements never discard newer requests.
     """
-    _require_assignment_admin(actor_user_id, clinic_id)
-    # Fail closed on a foreign or missing admission, even when there is no
-    # pending request to process. A queue miss is not proof of authorization.
+    # Clinic-scoped admission existence remains mandatory, including queue miss.
     _get_admission(admission_id, clinic_id, require_active=False)
     row = db.session.execute(
         db.select(AdmissionCaseChatSyncRequest).where(
@@ -104,17 +142,34 @@ def deliver_pending_case_chat_sync(
             AdmissionCaseChatSyncRequest.admission_id == admission_id,
         )
     ).scalar_one_or_none()
-    if row is None or row.request_sequence == row.processed_sequence:
+    if row is None:
+        _require_assignment_admin(actor_user_id, clinic_id)
+        return {"pending": False, "changed": False}
+    from app.core.exceptions import NotFoundError
+    if row.requested_by_user_id != actor_user_id:
+        raise NotFoundError("Case chat synchronization request not found")
+    handoff_id = row.authorization_handoff_id
+    if handoff_id is None:
+        _require_assignment_admin(actor_user_id, clinic_id)
+    else:
+        from app.modules.chat.services.case_chat_handoff_authorization import (
+            require_acknowledged_handoff_sync_authority,
+        )
+        require_acknowledged_handoff_sync_authority(
+            clinic_id=clinic_id, admission_id=admission_id,
+            actor_user_id=actor_user_id, handoff_id=handoff_id,
+        )
+    if row.request_sequence == row.processed_sequence:
         return {"pending": False, "changed": False}
     sequence = row.request_sequence
 
     _conversation, _link, created = ensure_admission_case_conversation(
         clinic_id=clinic_id, admission_id=admission_id,
-        actor_user_id=actor_user_id,
+        actor_user_id=actor_user_id, authorization_handoff_id=handoff_id,
     )
     reconciliation = reconcile_admission_case_chat_membership(
         clinic_id=clinic_id, admission_id=admission_id,
-        actor_user_id=actor_user_id,
+        actor_user_id=actor_user_id, authorization_handoff_id=handoff_id,
     )
     acknowledged = _acknowledge_request_if_current(
         clinic_id=clinic_id, admission_id=admission_id,

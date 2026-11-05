@@ -39,6 +39,7 @@ def _now() -> datetime:
 @transactional
 def reconcile_admission_case_chat_membership(
     *, clinic_id: int, admission_id: int, actor_user_id: int,
+    authorization_handoff_id: int | None = None,
 ) -> dict:
     """Replace stale membership with the CURRENT CT2A assignment roster.
 
@@ -46,10 +47,19 @@ def reconcile_admission_case_chat_membership(
     participant changes commit together. No participant can bypass the live
     case guard merely because sync has not yet happened.
     """
-    actor = _require_assignment_admin(actor_user_id, clinic_id)
     admission = _get_admission(
         admission_id, clinic_id, lock=True, require_active=True,
     )
+    if authorization_handoff_id is None:
+        actor = _require_assignment_admin(actor_user_id, clinic_id)
+    else:
+        from app.modules.chat.services.case_chat_handoff_authorization import (
+            require_acknowledged_handoff_sync_authority,
+        )
+        actor = require_acknowledged_handoff_sync_authority(
+            clinic_id=clinic_id, admission_id=admission.id,
+            actor_user_id=actor_user_id, handoff_id=authorization_handoff_id,
+        )
     ensure_clinic_active(clinic_id)
     link = get_admission_case_conversation_link(
         clinic_id=clinic_id, admission_id=admission.id,
