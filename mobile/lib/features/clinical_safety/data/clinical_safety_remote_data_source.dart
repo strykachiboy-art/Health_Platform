@@ -99,4 +99,38 @@ class ClinicalSafetyRemoteDataSource {
     }
     return result;
   }
+
+  /// Resolution is a non-idempotent, backend-authoritative clinical mutation.
+  /// Do not retry on timeouts, connection failures, HTTP 5xx, or invalid
+  /// response bodies: the server may already have committed the transition.
+  /// The UI must reconcile with a separate GET and must not use this returned
+  /// value to grant clinical permission to proceed with blocked care.
+  Future<ClinicalAlert> resolveAlert({required int alertId}) async {
+    if (alertId <= 0) {
+      throw ArgumentError.value(alertId, 'alertId', 'Must be positive.');
+    }
+
+    final bearerToken = await _loadAccessToken();
+    final response = await _apiClient.postJson(
+      'api/v1/clinical-safety/alerts/$alertId/resolve',
+      body: <String, dynamic>{},
+      bearerToken: bearerToken,
+    );
+
+    final value = response['alert'];
+    if (value is! Map<String, dynamic>) {
+      throw const FormatException(
+        'Clinical resolution response must contain an alert object.',
+      );
+    }
+    final alert = ClinicalAlert.fromJson(value);
+    if (alert.id != alertId ||
+        alert.status != ClinicalAlertStatus.resolved ||
+        alert.resolvedAt == null) {
+      throw const FormatException(
+        'Clinical resolution response does not confirm the requested alert.',
+      );
+    }
+    return alert;
+  }
 }
