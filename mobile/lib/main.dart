@@ -27,6 +27,7 @@ import 'package:clinic_system_pro/core/networking/local_debug_tls_client.dart';
 import 'package:clinic_system_pro/features/auth/data/google_sign_in_provider.dart';
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
+import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_remote_data_source.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
@@ -62,8 +63,17 @@ void main() {
     loadAccessToken: authenticatedSessionAccess.requireAccessToken,
   );
 
+  final clinicalSafetyDataSource = ClinicalSafetyRemoteDataSource(
+    apiClient: apiClient,
+    loadAccessToken: authenticatedSessionAccess.requireAccessToken,
+  );
+
   final sessionNavigationGuard = SessionNavigationGuard(
-    protectedRoutePrefixes: const <String>['/patients', '/emergency-access'],
+    protectedRoutePrefixes: const <String>[
+      '/patients',
+      '/emergency-access',
+      '/clinical-safety',
+    ],
   );
   final emergencyAccessContext = EmergencyAccessContext(
     sessionNavigationGuard: sessionNavigationGuard,
@@ -151,6 +161,7 @@ void main() {
         healthDataSource: healthDataSource,
         patientDataSource: patientDataSource,
         emergencyAccessDataSource: emergencyAccessDataSource,
+        clinicalSafetyDataSource: clinicalSafetyDataSource,
         emergencyAccessContext: emergencyAccessContext,
         loginScreen: loginScreen,
         sessionNavigationGuard: sessionNavigationGuard,
@@ -169,6 +180,7 @@ class ClinicSystemProApp extends StatefulWidget {
     required this.loginScreen,
     this.patientDataSource,
     this.emergencyAccessDataSource,
+    this.clinicalSafetyDataSource,
     this.emergencyAccessContext,
     this.sessionNavigationGuard,
     this.deviceConnectivitySource,
@@ -180,6 +192,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final Widget loginScreen;
   final PatientRemoteDataSource? patientDataSource;
   final EmergencyAccessRemoteDataSource? emergencyAccessDataSource;
+  final ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource;
   final EmergencyAccessContext? emergencyAccessContext;
   final SessionNavigationGuard? sessionNavigationGuard;
   final DeviceConnectivitySource? deviceConnectivitySource;
@@ -201,6 +214,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       loginScreen: widget.loginScreen,
       patientDataSource: widget.patientDataSource,
       emergencyAccessDataSource: widget.emergencyAccessDataSource,
+      clinicalSafetyDataSource: widget.clinicalSafetyDataSource,
       emergencyAccessContext: widget.emergencyAccessContext,
       sessionNavigationGuard: widget.sessionNavigationGuard,
     );

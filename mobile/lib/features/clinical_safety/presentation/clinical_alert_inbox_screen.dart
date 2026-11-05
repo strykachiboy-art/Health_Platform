@@ -13,9 +13,14 @@ import 'package:clinic_system_pro/features/clinical_safety/data/models/clinical_
 /// The backend is the only authority for rule evaluation, action, status and
 /// authorization. Subsequent slices provide detail and decision workflows.
 class ClinicalAlertInboxScreen extends StatefulWidget {
-  const ClinicalAlertInboxScreen({super.key, required this.dataSource});
+  const ClinicalAlertInboxScreen({
+    super.key,
+    required this.dataSource,
+    this.onAlertSelected,
+  });
 
   final ClinicalSafetyRemoteDataSource dataSource;
+  final ValueChanged<int>? onAlertSelected;
 
   @override
   State<ClinicalAlertInboxScreen> createState() =>
@@ -287,6 +292,9 @@ class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
           final critical = _criticalNotResolved(alert);
           return ListTile(
             key: ValueKey('clinical-alert-row-${alert.id}'),
+            onTap: widget.onAlertSelected == null
+                ? null
+                : () => widget.onAlertSelected!(alert.id),
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 4,
               vertical: 6,

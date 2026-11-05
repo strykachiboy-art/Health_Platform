@@ -419,12 +419,35 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
           Text(
             session.role.toUpperCase() == 'PATIENT'
                 ? 'Your account is registered as a patient. '
-                  'A super administrator must assign an eligible staff '
-                  'role before you can access staff workflows.'
+                      'A super administrator must assign an eligible staff '
+                      'role before you can access staff workflows.'
                 : 'The patient directory is not available for this role.',
             key: const ValueKey('directory-access-not-available'),
             textAlign: TextAlign.center,
           ),
+        if (const <String>{
+          'ADMIN',
+          'SUPER_ADMIN',
+          'DOCTOR',
+          'NURSE',
+          'PHARMACIST',
+          'LAB_TECHNICIAN',
+          'PARAMEDIC',
+          'EMT',
+        }.contains(session.role.toUpperCase())) ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              key: const ValueKey('open-clinical-alerts-button'),
+              onPressed: _busy
+                  ? null
+                  : () => context.push<void>('/clinical-safety'),
+              icon: const Icon(Icons.notification_important_outlined),
+              label: const Text('Open clinical alerts'),
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,

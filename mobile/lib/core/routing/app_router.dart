@@ -5,6 +5,9 @@ import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
 import 'package:clinic_system_pro/features/backend_health/presentation/backend_health_screen.dart';
+import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_remote_data_source.dart';
+import 'package:clinic_system_pro/features/clinical_safety/presentation/clinical_alert_inbox_screen.dart';
+import 'package:clinic_system_pro/features/clinical_safety/presentation/clinical_alert_detail_screen.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_remote_data_source.dart';
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_request_screen.dart';
@@ -19,6 +22,7 @@ GoRouter createAppRouter({
   required Widget loginScreen,
   PatientRemoteDataSource? patientDataSource,
   EmergencyAccessRemoteDataSource? emergencyAccessDataSource,
+  ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource,
   EmergencyAccessContext? emergencyAccessContext,
   SessionNavigationGuard? sessionNavigationGuard,
 }) {
@@ -102,6 +106,36 @@ GoRouter createAppRouter({
         },
       ),
       GoRoute(
+        path: '/clinical-safety',
+        name: 'clinical-alert-inbox',
+        builder: (context, state) {
+          final source = clinicalSafetyDataSource;
+          if (source == null) {
+            return const _ClinicalSafetyRouteUnavailableScreen();
+          }
+          return ClinicalAlertInboxScreen(
+            dataSource: source,
+            onAlertSelected: (alertId) =>
+                context.push<void>('/clinical-safety/alerts/$alertId'),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/clinical-safety/alerts/:alertId',
+        name: 'clinical-alert-detail',
+        builder: (context, state) {
+          final source = clinicalSafetyDataSource;
+          final alertId = int.tryParse(state.pathParameters['alertId'] ?? '');
+          if (source == null || alertId == null || alertId <= 0) {
+            return const _ClinicalSafetyRouteUnavailableScreen();
+          }
+          return ClinicalAlertDetailScreen(
+            dataSource: source,
+            alertId: alertId,
+          );
+        },
+      ),
+      GoRoute(
         path: '/health',
         name: 'health',
         builder: (context, state) {
@@ -132,6 +166,18 @@ class _EmergencyAccessRouteUnavailableScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Emergency access')),
       body: const Center(child: Text('Emergency access is not configured.')),
+    );
+  }
+}
+
+class _ClinicalSafetyRouteUnavailableScreen extends StatelessWidget {
+  const _ClinicalSafetyRouteUnavailableScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Clinical safety')),
+      body: const Center(child: Text('Clinical safety route is unavailable.')),
     );
   }
 }
