@@ -341,6 +341,10 @@ def list_clinical_alerts_route():
         patient_id=payload.patient_id,
         status=payload.status,
         rule_id=payload.rule_id,
+        severity=payload.severity,
+        action=payload.action,
+        source_type=payload.source_type,
+        source_id=payload.source_id,
     )
 
     return jsonify(

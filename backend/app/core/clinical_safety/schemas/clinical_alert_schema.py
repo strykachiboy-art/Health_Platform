@@ -8,6 +8,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictInt,
+    field_validator,
 )
 
 from app.core.enums.clinical_safety_enums import (
@@ -108,6 +109,27 @@ class ClinicalAlertListQuerySchema(BaseModel):
         default=None,
         gt=0,
     )
+
+    @field_validator(
+        "page", "per_page", "patient_id", "rule_id", "source_id",
+        mode="before",
+    )
+    @classmethod
+    def parse_http_query_integer(cls, value):
+        # Flask request.args contains strings; preserve StrictInt for the
+        # resulting model and for non-string callers (notably bool/float).
+        if not isinstance(value, str):
+            return value
+        if (
+            not value
+            or len(value) > 18
+            or not value.isascii()
+            or not value.isdecimal()
+        ):
+            raise ValueError(
+                "Query integer must contain only ASCII decimal digits"
+            )
+        return int(value)
 
     model_config = ConfigDict(
         extra="forbid",
