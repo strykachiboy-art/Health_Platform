@@ -183,7 +183,8 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Severity: High'), findsOneWidget);
-    expect(find.text('Acknowledge'), findsNothing);
+    // P21.S04B adds server-evaluated acknowledgement controls, but no
+    // client-side resolution or permission bypass.
     expect(find.text('Resolve'), findsNothing);
   });
 
