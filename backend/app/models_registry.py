@@ -92,6 +92,7 @@ from app.modules.nursing.models.nursing_model import (
     NursingNote,
     NursingHandoff,
 )
+from app.modules.nursing.models.admission_care_assignment_model import AdmissionCareAssignment
 
 # Clinical Orders
 from app.modules.clinical_orders.models.imaging_order_model import (
@@ -285,6 +286,7 @@ __all__ = [
     "NursingCareTask",
     "NursingNote",
     "NursingHandoff",
+    "AdmissionCareAssignment",
 
     # Clinical Orders
     "ImagingOrder",
