@@ -193,6 +193,10 @@ def init_extensions(app):
                 "task": "process_chat_outbox",
                 "schedule": 5.0,
             },
+            "process-pending-case-chat-sync-every-minute": {
+                "task": "process_pending_case_chat_sync",
+                "schedule": 60.0,
+            },
             "recover-stale-chat-outbox-every-minute": {
                 "task": "recover_stale_chat_outbox",
                 "schedule": 60.0,

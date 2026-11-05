@@ -346,18 +346,49 @@ def test_non_admin_with_admin_claim_cannot_mutate(
     assert db.session.query(AdmissionCareAssignment).count() == 0
 
 
-def test_no_new_chat_conversation_created_by_assignment_route(
+def test_assignment_route_creates_one_scoped_case_chat_for_primary_doctor(
     client, clinic, make_patient, make_staff, auth_headers_for,
 ):
+    from app.core.enums.chat_enums import (
+        ConversationStatus, ConversationType, ParticipantStatus,
+    )
+    from app.modules.chat.models.admission_case_conversation_model import (
+        AdmissionCaseConversation,
+    )
     from app.modules.chat.models.conversation_model import Conversation
-    _patient, admin, doctor, _nurse, admission = _case(
+    from app.modules.chat.models.conversation_participant_model import (
+        ConversationParticipant,
+    )
+    patient, admin, doctor, _nurse, admission = _case(
         clinic, make_patient, make_staff,
     )
     assert _assign(
         client, admission, _headers(auth_headers_for, admin),
         doctor, "primary_doctor"
     ).status_code == 201
-    assert db.session.query(Conversation).count() == 0
+
+    conversation = db.session.execute(db.select(Conversation)).scalar_one()
+    link = db.session.execute(
+        db.select(AdmissionCaseConversation)
+    ).scalar_one()
+    participants = db.session.execute(
+        db.select(ConversationParticipant)
+    ).scalars().all()
+    assert conversation.clinic_id == clinic.id
+    assert conversation.patient_id == patient.id
+    assert conversation.conversation_type == ConversationType.PATIENT
+    assert conversation.status == ConversationStatus.ACTIVE
+    assert conversation.created_by_id == admin.user_id
+    assert link.clinic_id == clinic.id
+    assert link.patient_id == patient.id
+    assert link.admission_id == admission.id
+    assert link.conversation_id == conversation.id
+    assert len(participants) == 1
+    assert participants[0].clinic_id == clinic.id
+    assert participants[0].conversation_id == conversation.id
+    assert participants[0].user_id == doctor.user_id
+    assert participants[0].status == ParticipantStatus.ACCEPTED
+    assert participants[0].user_id != admin.user_id
 
 
 def test_inactive_primary_clinician_makes_responsibility_unconfirmed(

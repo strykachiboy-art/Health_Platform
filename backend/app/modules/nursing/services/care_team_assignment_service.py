@@ -7,6 +7,8 @@ chat membership changes, or handoff ownership transfer in this slice.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import wraps
+import logging
 
 from sqlalchemy.exc import IntegrityError
 
@@ -31,6 +33,28 @@ _ASSIGNMENT_ROLES = {
     PRIMARY_DOCTOR: Role.DOCTOR,
     PRIMARY_NURSE: Role.NURSE,
 }
+
+
+def _dispatch_after_primary_assignment_commit(fn):
+    """Clinical result is authoritative; chat failures leave durable work pending."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)  # inner @transactional has committed
+        try:
+            from app.modules.chat.services.case_chat_assignment_event_service import (
+                attempt_case_chat_sync_after_clinical_commit,
+            )
+            attempt_case_chat_sync_after_clinical_commit(
+                clinic_id=kwargs["clinic_id"],
+                admission_id=kwargs["admission_id"],
+                actor_user_id=kwargs["actor_user_id"],
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "case_chat_sync.dispatch_deferred error_type=%s", type(exc).__name__,
+            )
+        return result
+    return wrapper
 
 
 def _utcnow_naive() -> datetime:
@@ -168,6 +192,7 @@ def list_assignment_history(*, admission_id: int, clinic_id: int) -> list:
     ).scalars().all())
 
 
+@_dispatch_after_primary_assignment_commit
 @transactional
 def assign_primary_clinician(
     *,
@@ -248,9 +273,18 @@ def assign_primary_clinician(
             "admission_id": admission.id,
         },
     )
+    from app.modules.chat.services.case_chat_assignment_event_service import (
+        queue_case_chat_sync_in_clinical_transaction,
+    )
+    queue_case_chat_sync_in_clinical_transaction(
+        clinic_id=clinic_id,
+        admission_id=admission.id,
+        actor_user_id=actor.id,
+    )
     return successor
 
 
+@_dispatch_after_primary_assignment_commit
 @transactional
 def end_primary_clinician_assignment(
     *,
@@ -292,5 +326,13 @@ def end_primary_clinician_assignment(
         reason=end_reason,
         old_value={"assignment_id": current.id, "staff_id": current.staff_id},
         new_value={"ended_at": current.ended_at.isoformat(), "assignment_kind": assignment_kind},
+    )
+    from app.modules.chat.services.case_chat_assignment_event_service import (
+        queue_case_chat_sync_in_clinical_transaction,
+    )
+    queue_case_chat_sync_in_clinical_transaction(
+        clinic_id=clinic_id,
+        admission_id=admission.id,
+        actor_user_id=actor.id,
     )
     return current

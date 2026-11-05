@@ -11,6 +11,10 @@ from app.modules.chat.models.conversation_participant_model import (
 )
 from app.modules.chat.models.message_model import Message
 from app.core.enums.chat_enums import ParticipantStatus
+from app.modules.chat.services.case_chat_access_guard import (
+    ensure_case_chat_user_allowed,
+    filter_case_chat_recipient_user_ids,
+)
 
 
 class ChatSecurityService:
@@ -222,6 +226,12 @@ class ChatSecurityService:
                 "Conversation participant not found"
             )
 
+        ensure_case_chat_user_allowed(
+            clinic_id=conversation.clinic_id,
+            conversation_id=conversation.id,
+            user_id=user.id,
+        )
+
         return participant
 
     @classmethod
@@ -295,11 +305,16 @@ class ChatSecurityService:
         )
      )
 
-      return list(
+      user_ids = list(
         db.session.execute(
             statement,
         ).scalars()
-    )
+      )
+      return filter_case_chat_recipient_user_ids(
+          clinic_id=clinic_id,
+          conversation_id=conversation_id,
+          user_ids=user_ids,
+      )
 
     @classmethod
     def get_message(
