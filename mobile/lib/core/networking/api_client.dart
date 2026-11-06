@@ -120,6 +120,11 @@ class ApiClient {
     );
   }
 
+  /// DELETE endpoints do not send a JSON body.
+  Future<Map<String, dynamic>> deleteJson(String path, {String? bearerToken}) {
+    return _requestJson(method: 'DELETE', path: path, bearerToken: bearerToken);
+  }
+
   static String? _normalizeIdempotencyKey(String? value) {
     if (value == null) return null;
 
@@ -214,9 +219,10 @@ class ApiClient {
       additionalHeaders,
     );
 
-    if (!const <String>{'GET', 'POST', 'PATCH'}.contains(method) ||
-        (method == 'GET' && body != null) ||
-        (method != 'GET' && body == null)) {
+    final requiresBody = method == 'POST' || method == 'PATCH';
+    if (!const <String>{'GET', 'POST', 'PATCH', 'DELETE'}.contains(method) ||
+        (requiresBody && body == null) ||
+        (!requiresBody && body != null)) {
       throw StateError('Invalid internal API request configuration.');
     }
 
@@ -250,9 +256,13 @@ class ApiClient {
         response = await _client
             .post(uri, headers: headers, body: jsonEncode(body))
             .timeout(requestTimeout);
-      } else {
+      } else if (method == 'PATCH') {
         response = await _client
             .patch(uri, headers: headers, body: jsonEncode(body))
+            .timeout(requestTimeout);
+      } else {
+        response = await _client
+            .delete(uri, headers: headers)
             .timeout(requestTimeout);
       }
     } on TimeoutException catch (error) {

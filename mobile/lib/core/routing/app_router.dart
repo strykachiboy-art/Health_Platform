@@ -4,6 +4,11 @@ import 'package:go_router/go_router.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
+import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
+import 'package:clinic_system_pro/features/auth/data/clinic_context_switch_coordinator.dart';
+import 'package:clinic_system_pro/features/auth/data/authenticated_sign_out_coordinator.dart';
+import 'package:clinic_system_pro/features/profile/data/profile_remote_data_source.dart';
+import 'package:clinic_system_pro/features/profile/presentation/account_clinic_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_home_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_feature_frame.dart';
 
@@ -26,6 +31,10 @@ GoRouter createAppRouter({
   required Widget loginScreen,
   Future<AuthSessionState> Function()? loadHomeSession,
   DashboardRemoteDataSource? dashboardDataSource,
+  ProfileRemoteDataSource? profileDataSource,
+  AuthRemoteDataSource? authRemoteDataSource,
+  ClinicContextSwitchCoordinator? clinicContextSwitcher,
+  AuthenticatedSignOutCoordinator? signOutCoordinator,
   Widget Function()? statusStripBuilder,
   PatientRemoteDataSource? patientDataSource,
   EmergencyAccessRemoteDataSource? emergencyAccessDataSource,
@@ -37,7 +46,9 @@ GoRouter createAppRouter({
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
     redirect: (context, state) {
-      final authRedirect = sessionNavigationGuard?.redirect(state.matchedLocation);
+      final authRedirect = sessionNavigationGuard?.redirect(
+        state.matchedLocation,
+      );
       if (authRedirect != null) return authRedirect;
       // Login and saved-session restoration use the existing guard. Once
       // ready, land on home without requiring a second manual button tap.
@@ -85,106 +96,134 @@ GoRouter createAppRouter({
           );
         },
         routes: [
-      GoRoute(
-        path: '/patients',
-        name: 'patients',
-        builder: (context, state) {
-          final source = patientDataSource;
-          if (source == null) return const _PatientRouteUnavailableScreen();
-          return PatientDirectoryScreen(dataSource: source);
-        },
-      ),
-      GoRoute(
-        path: '/patients/register',
-        name: 'patient-registration',
-        builder: (context, state) {
-          final source = patientDataSource;
-          if (source == null) return const _PatientRouteUnavailableScreen();
-          return PatientRegistrationScreen(dataSource: source);
-        },
-      ),
-      GoRoute(
-        path: '/patients/:patientId',
-        name: 'patient-detail',
-        builder: (context, state) {
-          final source = patientDataSource;
-          if (source == null) return const _PatientRouteUnavailableScreen();
-          final patientId =
-              int.tryParse(state.pathParameters['patientId'] ?? '') ?? 0;
-          return PatientDetailScreen(
-            dataSource: source,
-            patientId: patientId,
-            emergencyAccessContext: emergencyAccessContext,
-          );
-        },
-      ),
-      GoRoute(
-        path: '/emergency-access/request',
-        name: 'emergency-access-request',
-        builder: (context, state) {
-          final source = emergencyAccessDataSource;
-          if (source == null) {
-            return const _EmergencyAccessRouteUnavailableScreen();
-          }
-          return EmergencyAccessRequestScreen(dataSource: source);
-        },
-      ),
-      GoRoute(
-        path: '/emergency-access/requests/:emergencyAccessId',
-        name: 'emergency-access-review',
-        builder: (context, state) {
-          final source = emergencyAccessDataSource;
-          if (source == null) {
-            return const _EmergencyAccessRouteUnavailableScreen();
-          }
+          GoRoute(
+            path: '/account',
+            name: 'account-clinic',
+            builder: (context, state) {
+              final profile = profileDataSource;
+              final auth = authRemoteDataSource;
+              final switcher = clinicContextSwitcher;
+              final loader = loadHomeSession;
+              if (profile == null ||
+                  auth == null ||
+                  switcher == null ||
+                  loader == null) {
+                return const Scaffold(
+                  body: Center(child: Text('Account is not configured.')),
+                );
+              }
+              return AccountClinicScreen(
+                loadSession: loader,
+                profileDataSource: profile,
+                authRemoteDataSource: auth,
+                clinicContextSwitcher: switcher,
+                signOutCoordinator: signOutCoordinator,
+                sessionNavigationGuard: sessionNavigationGuard,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/patients',
+            name: 'patients',
+            builder: (context, state) {
+              final source = patientDataSource;
+              if (source == null) return const _PatientRouteUnavailableScreen();
+              return PatientDirectoryScreen(dataSource: source);
+            },
+          ),
+          GoRoute(
+            path: '/patients/register',
+            name: 'patient-registration',
+            builder: (context, state) {
+              final source = patientDataSource;
+              if (source == null) return const _PatientRouteUnavailableScreen();
+              return PatientRegistrationScreen(dataSource: source);
+            },
+          ),
+          GoRoute(
+            path: '/patients/:patientId',
+            name: 'patient-detail',
+            builder: (context, state) {
+              final source = patientDataSource;
+              if (source == null) return const _PatientRouteUnavailableScreen();
+              final patientId =
+                  int.tryParse(state.pathParameters['patientId'] ?? '') ?? 0;
+              return PatientDetailScreen(
+                dataSource: source,
+                patientId: patientId,
+                emergencyAccessContext: emergencyAccessContext,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/emergency-access/request',
+            name: 'emergency-access-request',
+            builder: (context, state) {
+              final source = emergencyAccessDataSource;
+              if (source == null) {
+                return const _EmergencyAccessRouteUnavailableScreen();
+              }
+              return EmergencyAccessRequestScreen(dataSource: source);
+            },
+          ),
+          GoRoute(
+            path: '/emergency-access/requests/:emergencyAccessId',
+            name: 'emergency-access-review',
+            builder: (context, state) {
+              final source = emergencyAccessDataSource;
+              if (source == null) {
+                return const _EmergencyAccessRouteUnavailableScreen();
+              }
 
-          final emergencyAccessId = int.tryParse(
-            state.pathParameters['emergencyAccessId'] ?? '',
-          );
+              final emergencyAccessId = int.tryParse(
+                state.pathParameters['emergencyAccessId'] ?? '',
+              );
 
-          if (emergencyAccessId == null || emergencyAccessId <= 0) {
-            return const _EmergencyAccessRouteUnavailableScreen();
-          }
+              if (emergencyAccessId == null || emergencyAccessId <= 0) {
+                return const _EmergencyAccessRouteUnavailableScreen();
+              }
 
-          return EmergencyAccessReviewScreen(
-            dataSource: source,
-            emergencyAccessId: emergencyAccessId,
-            emergencyAccessContext: emergencyAccessContext,
-          );
-        },
-      ),
-      GoRoute(
-        path: '/clinical-safety',
-        name: 'clinical-alert-inbox',
-        builder: (context, state) {
-          final source = clinicalSafetyDataSource;
-          if (source == null) {
-            return const _ClinicalSafetyRouteUnavailableScreen();
-          }
-          return ClinicalAlertInboxScreen(
-            dataSource: source,
-            sessionNavigationGuard: sessionNavigationGuard,
-            onAlertSelected: (alertId) =>
-                context.push<void>('/clinical-safety/alerts/$alertId'),
-          );
-        },
-      ),
-      GoRoute(
-        path: '/clinical-safety/alerts/:alertId',
-        name: 'clinical-alert-detail',
-        builder: (context, state) {
-          final source = clinicalSafetyDataSource;
-          final alertId = int.tryParse(state.pathParameters['alertId'] ?? '');
-          if (source == null || alertId == null || alertId <= 0) {
-            return const _ClinicalSafetyRouteUnavailableScreen();
-          }
-          return ClinicalAlertDetailScreen(
-            dataSource: source,
-            alertId: alertId,
-            sessionNavigationGuard: sessionNavigationGuard,
-          );
-        },
-      ),
+              return EmergencyAccessReviewScreen(
+                dataSource: source,
+                emergencyAccessId: emergencyAccessId,
+                emergencyAccessContext: emergencyAccessContext,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-safety',
+            name: 'clinical-alert-inbox',
+            builder: (context, state) {
+              final source = clinicalSafetyDataSource;
+              if (source == null) {
+                return const _ClinicalSafetyRouteUnavailableScreen();
+              }
+              return ClinicalAlertInboxScreen(
+                dataSource: source,
+                sessionNavigationGuard: sessionNavigationGuard,
+                onAlertSelected: (alertId) =>
+                    context.push<void>('/clinical-safety/alerts/$alertId'),
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-safety/alerts/:alertId',
+            name: 'clinical-alert-detail',
+            builder: (context, state) {
+              final source = clinicalSafetyDataSource;
+              final alertId = int.tryParse(
+                state.pathParameters['alertId'] ?? '',
+              );
+              if (source == null || alertId == null || alertId <= 0) {
+                return const _ClinicalSafetyRouteUnavailableScreen();
+              }
+              return ClinicalAlertDetailScreen(
+                dataSource: source,
+                alertId: alertId,
+                sessionNavigationGuard: sessionNavigationGuard,
+              );
+            },
+          ),
         ],
       ),
       GoRoute(
@@ -202,9 +241,8 @@ class _HomeRouteUnavailableScreen extends StatelessWidget {
   const _HomeRouteUnavailableScreen();
 
   @override
-  Widget build(BuildContext context) => const Scaffold(
-    body: Center(child: Text('Home is not configured.')),
-  );
+  Widget build(BuildContext context) =>
+      const Scaffold(body: Center(child: Text('Home is not configured.')));
 }
 
 class _PatientRouteUnavailableScreen extends StatelessWidget {

@@ -100,10 +100,17 @@ List<HomeDestination> homeDestinationsFor({
 String _dashboardFamily(String role) => switch (role.trim().toLowerCase()) {
   'super_admin' => 'System administration',
   'admin' => 'Clinic management',
-  'doctor' || 'nurse' || 'pharmacist' || 'lab_technician' || 'paramedic' || 'emt' =>
-    'Clinical workspace',
-  'receptionist' || 'driver' || 'ambulance_dispatcher' ||
-  'ambulance_coordinator' || 'other' => 'Operations workspace',
+  'doctor' ||
+  'nurse' ||
+  'pharmacist' ||
+  'lab_technician' ||
+  'paramedic' ||
+  'emt' => 'Clinical workspace',
+  'receptionist' ||
+  'driver' ||
+  'ambulance_dispatcher' ||
+  'ambulance_coordinator' ||
+  'other' => 'Operations workspace',
   'accountant' => 'Finance workspace',
   'patient' => 'Patient workspace',
   _ => 'Unrecognized role',
@@ -223,7 +230,9 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
         _loading = false;
       });
     } on Object {
-      if (!mounted || generation != _generation || guard?.revision != revision) {
+      if (!mounted ||
+          generation != _generation ||
+          guard?.revision != revision) {
         return;
       }
       setState(() => _loading = false);
@@ -231,7 +240,8 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
   }
 
   void _openDestination(HomeDestination destination) {
-    if (_loading || _role == null ||
+    if (_loading ||
+        _role == null ||
         widget.sessionNavigationGuard?.canAccessProtectedRoutes == false) {
       return;
     }
@@ -250,6 +260,17 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
       appBar: AppBar(
         title: const Text('Clinic System Pro'),
         actions: [
+          IconButton(
+            key: const ValueKey('p22-s05-open-account-home'),
+            tooltip: 'Profile and clinic',
+            onPressed:
+                role == null ||
+                    widget.sessionNavigationGuard?.canAccessProtectedRoutes ==
+                        false
+                ? null
+                : () => context.push<void>('/account'),
+            icon: const Icon(Icons.person_outline),
+          ),
           IconButton(
             key: const ValueKey('p22-home-session-controls'),
             tooltip: 'Session and sign out',
@@ -285,65 +306,63 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-          final wide = constraints.maxWidth >= 850 && destinations.isNotEmpty;
-          return Row(
-            children: [
-              if (wide) ...[
-                NavigationRail(
-                  selectedIndex: 0,
-                  labelType: NavigationRailLabelType.all,
-                  destinations: [
-                    const NavigationRailDestination(
-                      icon: Icon(Icons.home_outlined),
-                      label: Text('Home'),
-                    ),
-                    for (final destination in destinations)
-                      NavigationRailDestination(
-                        icon: Icon(destination.icon),
-                        label: Text(destination.label),
-                      ),
-                  ],
-                  onDestinationSelected: (index) {
-                    if (index > 0) {
-                      _openDestination(destinations[index - 1]);
-                    }
-                  },
-                ),
-                const VerticalDivider(width: 1),
-              ],
-              Expanded(
-                child: _loading
-                    ? const Center(
-                        child: CircularProgressIndicator(
-                          key: ValueKey('p22-home-loading'),
-                        ),
-                      )
-                    : role == null
-                    ? const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Text(
-                            'Authenticated session unavailable. Return to sign in.',
-                            key: ValueKey('p22-home-session-unavailable'),
+                final wide =
+                    constraints.maxWidth >= 850 && destinations.isNotEmpty;
+                return Row(
+                  children: [
+                    if (wide) ...[
+                      NavigationRail(
+                        selectedIndex: 0,
+                        labelType: NavigationRailLabelType.all,
+                        destinations: [
+                          const NavigationRailDestination(
+                            icon: Icon(Icons.home_outlined),
+                            label: Text('Home'),
                           ),
-                        ),
-                      )
-                    : _overview(role, destinations),
-              ),
-            ],
-          );
-        },
-              ),
+                          for (final destination in destinations)
+                            NavigationRailDestination(
+                              icon: Icon(destination.icon),
+                              label: Text(destination.label),
+                            ),
+                        ],
+                        onDestinationSelected: (index) {
+                          if (index > 0) {
+                            _openDestination(destinations[index - 1]);
+                          }
+                        },
+                      ),
+                      const VerticalDivider(width: 1),
+                    ],
+                    Expanded(
+                      child: _loading
+                          ? const Center(
+                              child: CircularProgressIndicator(
+                                key: ValueKey('p22-home-loading'),
+                              ),
+                            )
+                          : role == null
+                          ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Text(
+                                  'Authenticated session unavailable. Return to sign in.',
+                                  key: ValueKey('p22-home-session-unavailable'),
+                                ),
+                              ),
+                            )
+                          : _overview(role, destinations),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _overview(
-    String role,
-    List<HomeDestination> destinations,
-  ) {
+  Widget _overview(String role, List<HomeDestination> destinations) {
     final dashboard = widget.dashboardDataSource;
     return ListView(
       key: const ValueKey('p22-home-overview'),
@@ -362,7 +381,9 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
           )
         else
           DashboardOverviewPanel(
-            key: ValueKey('p22-dashboard-${role.toLowerCase()}-${_clinicId ?? 'none'}'),
+            key: ValueKey(
+              'p22-dashboard-${role.toLowerCase()}-${_clinicId ?? 'none'}',
+            ),
             dataSource: dashboard,
             expectedRole: role,
             expectedClinicId: _clinicId,
@@ -377,7 +398,10 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
           ),
         ],
         const SizedBox(height: 24),
-        Text('Available navigation', style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          'Available navigation',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         const SizedBox(height: 8),
         for (final destination in destinations) ...[
           Card(

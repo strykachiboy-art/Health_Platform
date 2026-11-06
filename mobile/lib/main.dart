@@ -20,6 +20,9 @@ import 'package:clinic_system_pro/core/sync/operation_replay_scheduler.dart';
 import 'package:clinic_system_pro/core/sync/appointment_create_queue_producer.dart';
 import 'package:clinic_system_pro/core/security/secure_key_value_storage.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
+import 'package:clinic_system_pro/features/auth/data/clinic_context_switch_coordinator.dart';
+import 'package:clinic_system_pro/features/auth/data/authenticated_sign_out_coordinator.dart';
+import 'package:clinic_system_pro/features/profile/data/profile_remote_data_source.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/coordinator_authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_store.dart';
@@ -72,9 +75,15 @@ void main() {
     protectedRoutePrefixes: const <String>[
       '/patients',
       '/home',
+      '/account',
       '/emergency-access',
       '/clinical-safety',
     ],
+  );
+  final profileDataSource = ProfileRemoteDataSource(
+    apiClient: apiClient,
+    loadSession: sessionCoordinator.restoreSession,
+    sessionNavigationGuard: sessionNavigationGuard,
   );
   final dashboardDataSource = DashboardRemoteDataSource(
     apiClient: apiClient,
@@ -161,6 +170,18 @@ void main() {
     },
   );
 
+  final clinicContextSwitcher = ClinicContextSwitchCoordinator(
+    sessionCoordinator: sessionCoordinator,
+    sessionNavigationGuard: sessionNavigationGuard,
+    replayScheduler: replayScheduler,
+  );
+
+  final signOutCoordinator = AuthenticatedSignOutCoordinator(
+    sessionCoordinator: sessionCoordinator,
+    sessionNavigationGuard: sessionNavigationGuard,
+    replayScheduler: replayScheduler,
+  );
+
   final loginScreen = GoogleLoginScreen(
     acquireGoogleIdToken: googleSignInProvider.signInForIdToken,
     authRemoteDataSource: authRemoteDataSource,
@@ -183,6 +204,10 @@ void main() {
         loginScreen: loginScreen,
         loadHomeSession: sessionCoordinator.restoreSession,
         dashboardDataSource: dashboardDataSource,
+        profileDataSource: profileDataSource,
+        authRemoteDataSource: authRemoteDataSource,
+        clinicContextSwitcher: clinicContextSwitcher,
+        signOutCoordinator: signOutCoordinator,
         statusStripBuilder: () => Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -216,6 +241,10 @@ class ClinicSystemProApp extends StatefulWidget {
     required this.loginScreen,
     this.loadHomeSession,
     this.dashboardDataSource,
+    this.profileDataSource,
+    this.authRemoteDataSource,
+    this.clinicContextSwitcher,
+    this.signOutCoordinator,
     this.statusStripBuilder,
     this.patientDataSource,
     this.emergencyAccessDataSource,
@@ -231,6 +260,10 @@ class ClinicSystemProApp extends StatefulWidget {
   final Widget loginScreen;
   final Future<AuthSessionState> Function()? loadHomeSession;
   final DashboardRemoteDataSource? dashboardDataSource;
+  final ProfileRemoteDataSource? profileDataSource;
+  final AuthRemoteDataSource? authRemoteDataSource;
+  final ClinicContextSwitchCoordinator? clinicContextSwitcher;
+  final AuthenticatedSignOutCoordinator? signOutCoordinator;
   final Widget Function()? statusStripBuilder;
   final PatientRemoteDataSource? patientDataSource;
   final EmergencyAccessRemoteDataSource? emergencyAccessDataSource;
@@ -256,6 +289,10 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       loginScreen: widget.loginScreen,
       loadHomeSession: widget.loadHomeSession,
       dashboardDataSource: widget.dashboardDataSource,
+      profileDataSource: widget.profileDataSource,
+      authRemoteDataSource: widget.authRemoteDataSource,
+      clinicContextSwitcher: widget.clinicContextSwitcher,
+      signOutCoordinator: widget.signOutCoordinator,
       statusStripBuilder: widget.statusStripBuilder,
       patientDataSource: widget.patientDataSource,
       emergencyAccessDataSource: widget.emergencyAccessDataSource,
