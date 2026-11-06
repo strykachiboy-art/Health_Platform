@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
+import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_home_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_feature_frame.dart';
 
@@ -24,6 +25,8 @@ GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
   required Widget loginScreen,
   Future<AuthSessionState> Function()? loadHomeSession,
+  DashboardRemoteDataSource? dashboardDataSource,
+  Widget Function()? statusStripBuilder,
   PatientRemoteDataSource? patientDataSource,
   EmergencyAccessRemoteDataSource? emergencyAccessDataSource,
   ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource,
@@ -61,6 +64,8 @@ GoRouter createAppRouter({
           if (loader == null) return const _HomeRouteUnavailableScreen();
           return AuthenticatedHomeScreen(
             loadSession: loader,
+            dashboardDataSource: dashboardDataSource,
+            statusStripBuilder: statusStripBuilder,
             sessionNavigationGuard: sessionNavigationGuard,
           );
         },
@@ -75,6 +80,7 @@ GoRouter createAppRouter({
             location: state.uri.path,
             loadSession: loader,
             sessionNavigationGuard: sessionNavigationGuard,
+            statusStripBuilder: statusStripBuilder,
             child: child,
           );
         },

@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
+import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
+import 'package:clinic_system_pro/features/dashboard/presentation/dashboard_overview_panel.dart';
 
 /// Navigation suggestions, never authorization grants. The backend enforces
 /// identity, clinic and role for every requested resource.
@@ -113,10 +115,14 @@ class AuthenticatedHomeScreen extends StatefulWidget {
   const AuthenticatedHomeScreen({
     super.key,
     required this.loadSession,
+    this.dashboardDataSource,
+    this.statusStripBuilder,
     this.sessionNavigationGuard,
   });
 
   final Future<AuthSessionState> Function() loadSession;
+  final DashboardRemoteDataSource? dashboardDataSource;
+  final Widget Function()? statusStripBuilder;
   final SessionNavigationGuard? sessionNavigationGuard;
 
   @override
@@ -273,8 +279,12 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
                 ),
               ),
             ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
+      body: Column(
+        children: [
+          if (widget.statusStripBuilder != null) widget.statusStripBuilder!(),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
           final wide = constraints.maxWidth >= 850 && destinations.isNotEmpty;
           return Row(
             children: [
@@ -323,6 +333,9 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
             ],
           );
         },
+              ),
+          ),
+        ],
       ),
     );
   }
@@ -331,6 +344,7 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
     String role,
     List<HomeDestination> destinations,
   ) {
+    final dashboard = widget.dashboardDataSource;
     return ListView(
       key: const ValueKey('p22-home-overview'),
       padding: const EdgeInsets.all(20),
@@ -341,10 +355,19 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 10),
-        const Text(
-          'Dashboard metrics will be loaded from the backend in P22.S03. '
-          'This home screen does not invent counts or clinical permissions.',
-        ),
+        if (dashboard == null)
+          const Text(
+            'Dashboard metrics will be loaded from the backend in P22.S03. '
+            'This home screen does not invent counts or clinical permissions.',
+          )
+        else
+          DashboardOverviewPanel(
+            key: ValueKey('p22-dashboard-${role.toLowerCase()}-${_clinicId ?? 'none'}'),
+            dataSource: dashboard,
+            expectedRole: role,
+            expectedClinicId: _clinicId,
+            sessionNavigationGuard: widget.sessionNavigationGuard,
+          ),
         if (role.trim().toLowerCase() == 'super_admin' &&
             (_clinicId == null || _clinicId! <= 0)) ...[
           const SizedBox(height: 12),

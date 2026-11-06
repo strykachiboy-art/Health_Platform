@@ -146,6 +146,25 @@ class ClinicalSafetyRemoteDataSource {
     });
   }
 
+  /// Read-only, backend-filtered open alert count. The server owns the count,
+  /// clinic authorization and status filter; the UI never counts one page.
+  Future<int> fetchOpenAlertCount() async {
+    final page = await _withSession<ClinicalAlertPage>((bearerToken) async {
+      final response = await _apiClient.getJson(
+        'api/v1/clinical-safety/alerts?status=open&per_page=1',
+        bearerToken: bearerToken,
+      );
+      final result = ClinicalAlertPage.fromJson(response);
+      if (result.page != 1 ||
+          result.perPage != 1 ||
+          result.total < result.items.length ||
+          result.items.any((item) => item.status != ClinicalAlertStatus.open)) {
+        throw const FormatException('Invalid open clinical alert count.');
+      }
+      return result;
+    });
+    return page.total;
+  }
   Future<ClinicalAlert> fetchAlert({required int alertId}) async {
     if (alertId <= 0) {
       throw ArgumentError.value(alertId, 'alertId', 'Must be positive.');

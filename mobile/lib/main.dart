@@ -28,6 +28,10 @@ import 'package:clinic_system_pro/features/auth/data/google_sign_in_provider.dar
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_remote_data_source.dart';
+import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
+import 'package:clinic_system_pro/features/status/data/scoped_sync_status_source.dart';
+import 'package:clinic_system_pro/features/status/presentation/authenticated_status_strip.dart';
+import 'package:clinic_system_pro/features/status/presentation/authenticated_clinical_emergency_indicators.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_session_scope.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_remote_data_source.dart';
@@ -72,6 +76,11 @@ void main() {
       '/clinical-safety',
     ],
   );
+  final dashboardDataSource = DashboardRemoteDataSource(
+    apiClient: apiClient,
+    loadSession: sessionCoordinator.restoreSession,
+    sessionNavigationGuard: sessionNavigationGuard,
+  );
   final clinicalSafetySessionScope = ClinicalSafetySessionScope(
     restoreSession: sessionCoordinator.restoreSession,
     navigationGuard: sessionNavigationGuard,
@@ -90,6 +99,7 @@ void main() {
   );
 
   final localDatabase = AppDatabase();
+  final syncStatusSource = ScopedSyncStatusSource(database: localDatabase);
   final queueStore = OperationQueueStore(
     localDatabase,
     payloadCrypto: OperationPayloadCrypto(secureStorage: secureStorage),
@@ -172,6 +182,24 @@ void main() {
         emergencyAccessContext: emergencyAccessContext,
         loginScreen: loginScreen,
         loadHomeSession: sessionCoordinator.restoreSession,
+        dashboardDataSource: dashboardDataSource,
+        statusStripBuilder: () => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AuthenticatedStatusStrip(
+              loadSession: sessionCoordinator.restoreSession,
+              loadSyncCounts: syncStatusSource.load,
+              sessionNavigationGuard: sessionNavigationGuard,
+            ),
+            AuthenticatedClinicalEmergencyIndicators(
+              loadSession: sessionCoordinator.restoreSession,
+              loadOpenAlertCount: clinicalSafetyDataSource.fetchOpenAlertCount,
+              loadEmergencyRequest: emergencyAccessDataSource.fetchRequest,
+              emergencyAccessContext: emergencyAccessContext,
+              sessionNavigationGuard: sessionNavigationGuard,
+            ),
+          ],
+        ),
         sessionNavigationGuard: sessionNavigationGuard,
         deviceConnectivitySource: connectivitySource,
         operationReplayScheduler: replayScheduler,
@@ -187,6 +215,8 @@ class ClinicSystemProApp extends StatefulWidget {
     required this.healthDataSource,
     required this.loginScreen,
     this.loadHomeSession,
+    this.dashboardDataSource,
+    this.statusStripBuilder,
     this.patientDataSource,
     this.emergencyAccessDataSource,
     this.clinicalSafetyDataSource,
@@ -200,6 +230,8 @@ class ClinicSystemProApp extends StatefulWidget {
   final BackendHealthRemoteDataSource healthDataSource;
   final Widget loginScreen;
   final Future<AuthSessionState> Function()? loadHomeSession;
+  final DashboardRemoteDataSource? dashboardDataSource;
+  final Widget Function()? statusStripBuilder;
   final PatientRemoteDataSource? patientDataSource;
   final EmergencyAccessRemoteDataSource? emergencyAccessDataSource;
   final ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource;
@@ -223,6 +255,8 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       healthDataSource: widget.healthDataSource,
       loginScreen: widget.loginScreen,
       loadHomeSession: widget.loadHomeSession,
+      dashboardDataSource: widget.dashboardDataSource,
+      statusStripBuilder: widget.statusStripBuilder,
       patientDataSource: widget.patientDataSource,
       emergencyAccessDataSource: widget.emergencyAccessDataSource,
       clinicalSafetyDataSource: widget.clinicalSafetyDataSource,

@@ -17,12 +17,14 @@ class AuthenticatedFeatureFrame extends StatefulWidget {
     required this.location,
     required this.loadSession,
     this.sessionNavigationGuard,
+    this.statusStripBuilder,
   });
 
   final Widget child;
   final String location;
   final Future<AuthSessionState> Function() loadSession;
   final SessionNavigationGuard? sessionNavigationGuard;
+  final Widget Function()? statusStripBuilder;
 
   @override
   State<AuthenticatedFeatureFrame> createState() =>
@@ -195,7 +197,11 @@ class _AuthenticatedFeatureFrameState extends State<AuthenticatedFeatureFrame> {
               ),
             )
           : null,
-      body: _loading
+      body: Column(
+        children: [
+          if (widget.statusStripBuilder != null) widget.statusStripBuilder!(),
+          Expanded(
+            child: _loading
           ? const Center(
               child: CircularProgressIndicator(
                 key: ValueKey('p22-feature-loading'),
@@ -233,6 +239,9 @@ class _AuthenticatedFeatureFrameState extends State<AuthenticatedFeatureFrame> {
                     Expanded(child: widget.child),
                   ],
                 ),
+          ),
+        ],
+      ),
     );
   }
 }
