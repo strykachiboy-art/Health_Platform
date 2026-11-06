@@ -93,6 +93,8 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
   bool _writeOutcomeUnknown = false;
   bool _writeReadConfirmed = false;
   String? _writeMessage;
+  bool _confirmingResolution = false;
+  bool _resolutionAttempted = false;
 
   @override
   void initState() {
@@ -131,6 +133,8 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
       _writeOutcomeUnknown = false;
       _writeReadConfirmed = false;
       _writeMessage = null;
+      _confirmingResolution = false;
+      _resolutionAttempted = false;
       _justificationController.clear();
       unawaited(_reload());
     }
@@ -228,6 +232,15 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
   /// acknowledgement or prove that a delayed write will not still complete.
   String get _writeNotice {
     if (_writeOutcomeUnknown) {
+      if (_resolutionAttempted) {
+        return _writeReadConfirmed
+            ? 'Latest alert status was fetched, but GET cannot establish '
+                  'whether the previous resolution POST committed. '
+                  'Do not retry; request backend audit reconciliation.'
+            : 'Resolution outcome UNKNOWN. Do not repeat the POST. '
+                  'Refresh online and obtain authoritative backend audit '
+                  'reconciliation before further clinical action.';
+      }
       return _writeReadConfirmed
           ? 'Latest alert status was fetched, but GET cannot establish whether '
                 'your previous acknowledgement was recorded for this user. '
@@ -265,6 +278,7 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
     final alert = _alert;
     if (_loading ||
         _sending ||
+        _confirmingResolution ||
         _writeBlocked ||
         _deviceNetworkStatus != DeviceNetworkStatus.connected ||
         alert == null ||
@@ -455,6 +469,269 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
     }
   }
 
+  /// Resolution is a distinct backend-authoritative, non-idempotent write.
+  /// A confirmation is required and an uncertain result can never be retried.
+  Future<void> _submitResolution() async {
+    final alert = _alert;
+    if (_loading ||
+        _sending ||
+        _confirmingResolution ||
+        _writeBlocked ||
+        _deviceNetworkStatus != DeviceNetworkStatus.connected ||
+        widget.sessionNavigationGuard?.canAccessProtectedRoutes == false ||
+        alert == null ||
+        alert.id != widget.alertId ||
+        alert.status == ClinicalAlertStatus.resolved ||
+        alert.status == ClinicalAlertStatus.expired) {
+      return;
+    }
+
+    final requestGeneration = _requestGeneration;
+    final writeGeneration = _writeGeneration;
+    final source = widget.dataSource;
+    setState(() => _confirmingResolution = true);
+    final bool accepted;
+    try {
+      accepted =
+          await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Resolve this clinical alert?'),
+              content: const Text(
+                'This is a separate, audited server-side resolution request. '
+                'Only an authorized member of the clinical team may resolve '
+                'this alert. It cannot be undone or automatically retried. '
+                'Resolution does not by itself authorize a blocked clinical '
+                'operation. Verify the underlying clinical issue separately.',
+              ),
+              actions: [
+                TextButton(
+                  key: const ValueKey('clinical-alert-resolve-cancel'),
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  key: const ValueKey('clinical-alert-resolve-confirm'),
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Confirm resolution'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+    } finally {
+      if (mounted && writeGeneration == _writeGeneration) {
+        setState(() => _confirmingResolution = false);
+      }
+    }
+
+    // A refresh, logout, clinic switch, or change of alert while the dialog
+    // was open invalidates the confirmation. In that case send zero POSTs.
+    if (!accepted ||
+        !mounted ||
+        writeGeneration != _writeGeneration ||
+        requestGeneration != _requestGeneration ||
+        !identical(widget.dataSource, source) ||
+        !identical(_alert, alert) ||
+        _sending ||
+        _writeBlocked ||
+        _deviceNetworkStatus != DeviceNetworkStatus.connected ||
+        widget.sessionNavigationGuard?.canAccessProtectedRoutes == false) {
+      return;
+    }
+
+    final alertId = alert.id;
+    setState(() {
+      _sending = true;
+      _resolutionAttempted = true;
+      _writeMessage = null;
+    });
+    try {
+      // Exactly one POST. The data source rechecks device network and session.
+      // Neither timeout nor unknown response may trigger a second POST.
+      await source.resolveAlert(alertId: alertId);
+      if (!mounted ||
+          writeGeneration != _writeGeneration ||
+          widget.alertId != alertId) {
+        return;
+      }
+      setState(() {
+        _writeBlocked = true;
+        _writeOutcomeUnknown = false;
+        _writeReadConfirmed = false;
+        _writeMessage =
+            'The backend reported a resolution transition. '
+            'Verifying current alert status with a fresh read. '
+            'This does not authorize blocked care.';
+      });
+      await _reload(); // Read-only: never resend the resolution POST.
+      if (!mounted ||
+          writeGeneration != _writeGeneration ||
+          widget.alertId != alertId) {
+        return;
+      }
+      setState(() {
+        if (_alert?.status == ClinicalAlertStatus.resolved &&
+            _alert?.resolvedAt != null) {
+          _writeMessage =
+              'Backend resolution confirmed by a fresh alert read. '
+              'No further submission is permitted in this screen. '
+              'Resolution does not grant permission for blocked clinical care.';
+        } else {
+          _writeOutcomeUnknown = true;
+          _writeMessage =
+              'A resolution response was received, but the latest read did '
+              'not confirm resolved status. Do not repeat the write. '
+              'Request authoritative backend audit review.';
+        }
+      });
+    } on ClinicalSafetyOfflineWriteBlockedException {
+      if (!mounted ||
+          writeGeneration != _writeGeneration ||
+          widget.alertId != alertId) {
+        return;
+      }
+      setState(() {
+        // Pre-dispatch device check rejected the write: zero HTTP POSTs.
+        _resolutionAttempted = false;
+        _writeMessage =
+            'No confirmed device network connection. No resolution POST '
+            'was sent. Reconnect and refresh before trying again.';
+      });
+    } on AuthenticatedSessionUnavailableException {
+      if (!mounted ||
+          writeGeneration != _writeGeneration ||
+          widget.alertId != alertId) {
+        return;
+      }
+      setState(() {
+        // Authentication was rejected before POST dispatch.
+        _resolutionAttempted = false;
+        _alert = null;
+        _loading = false;
+        _requiresSignIn = true;
+        _errorMessage =
+            'The authenticated session is unavailable. '
+            'Sign in again before viewing this clinical alert.';
+      });
+    } on ClinicalSafetyWriteOutcomeUnknownException {
+      if (!mounted ||
+          writeGeneration != _writeGeneration ||
+          widget.alertId != alertId) {
+        return;
+      }
+      _markWriteBlocked(
+        message:
+            'Session or clinic changed after a resolution POST may have '
+            'been dispatched. Outcome UNKNOWN. Do not retry; obtain '
+            'authoritative backend audit reconciliation.',
+        uncertain: true,
+      );
+    } on ApiException catch (error) {
+      if (!mounted ||
+          writeGeneration != _writeGeneration ||
+          widget.alertId != alertId) {
+        return;
+      }
+      final status = error.statusCode;
+      if (status == 401 || status == 403 || status == 404) {
+        _markWriteBlocked(
+          message: status == 401
+              ? 'The session was rejected (HTTP 401). Sign in again.'
+              : 'This clinical resolution is unavailable to this account '
+                    '(HTTP $status). No resolution was confirmed.',
+          requiresSignIn: status == 401,
+        );
+      } else if (status == 409 || status == 400 || status == 422) {
+        _markWriteBlocked(
+          message:
+              'The backend rejected clinical resolution (HTTP $status). '
+              'Do not retry without verifying current status and clinical '
+              'authorization with the server.',
+        );
+      } else if (error.kind == ApiFailureKind.timeout ||
+          error.kind == ApiFailureKind.connection ||
+          error.kind == ApiFailureKind.invalidResponse ||
+          (status != null && status >= 500)) {
+        _markWriteBlocked(
+          message:
+              'Resolution outcome UNKNOWN. Do not retry. Refresh online '
+              'and request authoritative backend audit reconciliation.',
+          uncertain: true,
+        );
+      } else {
+        _markWriteBlocked(
+          message:
+              'Resolution was not confirmed. Do not repeat the request '
+              'without authoritative backend status review.',
+          uncertain: true,
+        );
+      }
+    } on Object {
+      if (!mounted ||
+          writeGeneration != _writeGeneration ||
+          widget.alertId != alertId) {
+        return;
+      }
+      // A malformed success response may be hiding a committed transition.
+      _markWriteBlocked(
+        message:
+            'Resolution outcome UNKNOWN after response validation. '
+            'Do not retry. Request authoritative backend audit review.',
+        uncertain: true,
+      );
+    } finally {
+      if (mounted &&
+          writeGeneration == _writeGeneration &&
+          widget.alertId == alertId) {
+        setState(() => _sending = false);
+      }
+    }
+  }
+
+  Widget _resolutionControl() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(),
+        const SizedBox(height: 12),
+        Text(
+          'Separate clinical resolution',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Resolving changes the backend alert status and creates an audit '
+          'record. It is NOT acknowledgement, override, or permission to '
+          'continue blocked care. Confirm only after clinical review.',
+        ),
+        const SizedBox(height: 8),
+        if (_deviceNetworkStatus != DeviceNetworkStatus.connected) ...[
+          const Text(
+            'Resolution is unavailable without confirmed device connectivity.',
+            key: ValueKey('clinical-alert-resolve-offline-warning'),
+          ),
+          const SizedBox(height: 8),
+        ],
+        FilledButton.icon(
+          key: const ValueKey('clinical-alert-resolve-submit'),
+          onPressed:
+              _sending ||
+                  _confirmingResolution ||
+                  _writeBlocked ||
+                  _deviceNetworkStatus != DeviceNetworkStatus.connected ||
+                  widget.sessionNavigationGuard?.canAccessProtectedRoutes ==
+                      false
+              ? null
+              : () => unawaited(_submitResolution()),
+          icon: const Icon(Icons.task_alt_outlined),
+          label: const Text('Resolve alert'),
+        ),
+      ],
+    );
+  }
+
   Widget _writeNoticeWidget() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
@@ -517,6 +794,7 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
               key: const ValueKey('clinical-alert-acknowledge-submit'),
               onPressed:
                   _sending ||
+                      _confirmingResolution ||
                       _deviceNetworkStatus != DeviceNetworkStatus.connected
                   ? null
                   : () => unawaited(
@@ -530,6 +808,7 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
               key: const ValueKey('clinical-alert-override-submit'),
               onPressed:
                   _sending ||
+                      _confirmingResolution ||
                       _deviceNetworkStatus != DeviceNetworkStatus.connected
                   ? null
                   : () => unawaited(
@@ -694,69 +973,79 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
     }
 
     final critical = _unresolvedCritical(alert);
-    return ListView(
-      key: const ValueKey('clinical-alert-detail-list'),
-      padding: const EdgeInsets.all(16),
+    // Keep an unconfirmed clinical write visible after the user scrolls to
+    // the action at the bottom. A lazy ListView child is not a safe warning.
+    return Column(
       children: [
-        if (_writeBlocked) ...[
-          _writeNoticeWidget(),
-          const SizedBox(height: 12),
-        ],
-        Text(
-          alert.title,
-          key: const ValueKey('clinical-alert-detail-title'),
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        const SizedBox(height: 12),
-        if (critical) ...[
-          Container(
-            key: const ValueKey('clinical-alert-detail-critical-warning'),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              border: Border.all(color: Theme.of(context).colorScheme.error),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Text(
-              'Critical alert is not resolved or expired according to the latest backend response. Acknowledgement is not resolution.',
-            ),
+        if (_writeBlocked) _writeNoticeWidget(),
+        Expanded(
+          child: ListView(
+            key: const ValueKey('clinical-alert-detail-list'),
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(
+                alert.title,
+                key: const ValueKey('clinical-alert-detail-title'),
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 12),
+              if (critical) ...[
+                Container(
+                  key: const ValueKey('clinical-alert-detail-critical-warning'),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'Critical alert is not resolved or expired according to the latest backend response. Acknowledgement is not resolution.',
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (alert.action == ClinicalAlertAction.block) ...[
+                const Text(
+                  'Backend rule action: Block. Acknowledgement or override does not grant permission to perform a blocked clinical operation.',
+                  key: ValueKey('clinical-alert-detail-block-warning'),
+                ),
+                const SizedBox(height: 12),
+              ],
+              Text('Alert ID: ${alert.id}'),
+              Text('Patient ID: ${alert.patientId}'),
+              Text('Severity: ${_severity(alert.severity)}'),
+              Text('Status: ${_status(alert.status)}'),
+              Text('Action: ${_action(alert.action)}'),
+              const SizedBox(height: 12),
+              Text(
+                'Message: ${alert.message}',
+                key: const ValueKey('clinical-alert-detail-message'),
+              ),
+              const SizedBox(height: 12),
+              Text('Rule ID: ${alert.ruleId}'),
+              Text('Rule version: ${alert.ruleVersion}'),
+              Text('Source: ${alert.sourceType}'),
+              if (alert.sourceId != null) Text('Source ID: ${alert.sourceId}'),
+              Text('Generated (UTC): ${alert.generatedAt.toIso8601String()}'),
+              if (alert.resolvedAt != null)
+                Text('Resolved (UTC): ${alert.resolvedAt!.toIso8601String()}'),
+              const SizedBox(height: 16),
+              const Text(
+                'Server-reported clinical status is authoritative. '
+                'Acknowledgement never grants permission for a blocked operation.',
+              ),
+              const SizedBox(height: 16),
+              if (!_writeBlocked &&
+                  alert.status != ClinicalAlertStatus.resolved &&
+                  alert.status != ClinicalAlertStatus.expired) ...[
+                _acknowledgementControls(),
+                const SizedBox(height: 20),
+                _resolutionControl(),
+              ],
+            ],
           ),
-          const SizedBox(height: 12),
-        ],
-        if (alert.action == ClinicalAlertAction.block) ...[
-          const Text(
-            'Backend rule action: Block. Acknowledgement or override does not grant permission to perform a blocked clinical operation.',
-            key: ValueKey('clinical-alert-detail-block-warning'),
-          ),
-          const SizedBox(height: 12),
-        ],
-        Text('Alert ID: ${alert.id}'),
-        Text('Patient ID: ${alert.patientId}'),
-        Text('Severity: ${_severity(alert.severity)}'),
-        Text('Status: ${_status(alert.status)}'),
-        Text('Action: ${_action(alert.action)}'),
-        const SizedBox(height: 12),
-        Text(
-          'Message: ${alert.message}',
-          key: const ValueKey('clinical-alert-detail-message'),
         ),
-        const SizedBox(height: 12),
-        Text('Rule ID: ${alert.ruleId}'),
-        Text('Rule version: ${alert.ruleVersion}'),
-        Text('Source: ${alert.sourceType}'),
-        if (alert.sourceId != null) Text('Source ID: ${alert.sourceId}'),
-        Text('Generated (UTC): ${alert.generatedAt.toIso8601String()}'),
-        if (alert.resolvedAt != null)
-          Text('Resolved (UTC): ${alert.resolvedAt!.toIso8601String()}'),
-        const SizedBox(height: 16),
-        const Text(
-          'Server-reported clinical status is authoritative. '
-          'Acknowledgement never grants permission for a blocked operation.',
-        ),
-        const SizedBox(height: 16),
-        if (!_writeBlocked &&
-            alert.status != ClinicalAlertStatus.resolved &&
-            alert.status != ClinicalAlertStatus.expired)
-          _acknowledgementControls(),
       ],
     );
   }
