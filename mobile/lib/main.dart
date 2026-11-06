@@ -28,6 +28,7 @@ import 'package:clinic_system_pro/features/auth/data/google_sign_in_provider.dar
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_remote_data_source.dart';
+import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_session_scope.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
@@ -63,17 +64,22 @@ void main() {
     loadAccessToken: authenticatedSessionAccess.requireAccessToken,
   );
 
-  final clinicalSafetyDataSource = ClinicalSafetyRemoteDataSource(
-    apiClient: apiClient,
-    loadAccessToken: authenticatedSessionAccess.requireAccessToken,
-  );
-
   final sessionNavigationGuard = SessionNavigationGuard(
     protectedRoutePrefixes: const <String>[
       '/patients',
       '/emergency-access',
       '/clinical-safety',
     ],
+  );
+  final clinicalSafetySessionScope = ClinicalSafetySessionScope(
+    restoreSession: sessionCoordinator.restoreSession,
+    navigationGuard: sessionNavigationGuard,
+  );
+  final clinicalSafetyDataSource = ClinicalSafetyRemoteDataSource(
+    apiClient: apiClient,
+    loadAccessToken: authenticatedSessionAccess.requireAccessToken,
+    loadSessionStamp: clinicalSafetySessionScope.snapshot,
+    deviceConnectivitySource: connectivitySource,
   );
   final emergencyAccessContext = EmergencyAccessContext(
     sessionNavigationGuard: sessionNavigationGuard,

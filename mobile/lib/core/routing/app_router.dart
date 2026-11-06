@@ -115,6 +115,7 @@ GoRouter createAppRouter({
           }
           return ClinicalAlertInboxScreen(
             dataSource: source,
+            sessionNavigationGuard: sessionNavigationGuard,
             onAlertSelected: (alertId) =>
                 context.push<void>('/clinical-safety/alerts/$alertId'),
           );
@@ -132,6 +133,7 @@ GoRouter createAppRouter({
           return ClinicalAlertDetailScreen(
             dataSource: source,
             alertId: alertId,
+            sessionNavigationGuard: sessionNavigationGuard,
           );
         },
       ),

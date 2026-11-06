@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
+import 'package:clinic_system_pro/core/networking/device_connectivity_source.dart';
 import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
+import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_remote_data_source.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/models/clinical_alert.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/models/clinical_alert_acknowledgement.dart';
@@ -18,10 +20,12 @@ class ClinicalAlertDetailScreen extends StatefulWidget {
   const ClinicalAlertDetailScreen({
     super.key,
     required this.dataSource,
+    this.sessionNavigationGuard,
     required this.alertId,
   });
 
   final ClinicalSafetyRemoteDataSource dataSource;
+  final SessionNavigationGuard? sessionNavigationGuard;
   final int alertId;
 
   @override
@@ -31,6 +35,52 @@ class ClinicalAlertDetailScreen extends StatefulWidget {
 
 class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
   ClinicalAlert? _alert;
+  DeviceNetworkStatus _deviceNetworkStatus = DeviceNetworkStatus.connected;
+  StreamSubscription<DeviceNetworkStatus>? _deviceStatusSubscription;
+
+  void _startDeviceStatusMonitor() {
+    final previous = _deviceStatusSubscription;
+    if (previous != null) unawaited(previous.cancel());
+    _deviceStatusSubscription = null;
+    final device = widget.dataSource.deviceConnectivitySource;
+    _deviceNetworkStatus = device == null
+        ? DeviceNetworkStatus.connected
+        : DeviceNetworkStatus.unknown;
+    if (device == null) return;
+    _deviceStatusSubscription = device.statusChanges.listen(
+      (status) {
+        if (!mounted ||
+            !identical(widget.dataSource.deviceConnectivitySource, device)) {
+          return;
+        }
+        setState(() => _deviceNetworkStatus = status);
+      },
+      onError: (Object _, StackTrace _) {
+        if (!mounted ||
+            !identical(widget.dataSource.deviceConnectivitySource, device)) {
+          return;
+        }
+        setState(() => _deviceNetworkStatus = DeviceNetworkStatus.unknown);
+      },
+    );
+    unawaited(_checkDeviceNetwork(device));
+  }
+
+  Future<void> _checkDeviceNetwork(DeviceConnectivitySource device) async {
+    DeviceNetworkStatus status;
+    try {
+      status = await device.checkStatus();
+    } on Object {
+      status = DeviceNetworkStatus.unknown;
+    }
+    if (!mounted ||
+        !identical(widget.dataSource.deviceConnectivitySource, device)) {
+      return;
+    }
+    setState(() => _deviceNetworkStatus = status);
+  }
+
+  bool _previouslyObservedCritical = false;
   bool _loading = true;
   bool _requiresSignIn = false;
   String? _errorMessage;
@@ -47,14 +97,34 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
   @override
   void initState() {
     super.initState();
-    unawaited(_reload());
+    _startDeviceStatusMonitor();
+    widget.sessionNavigationGuard?.addListener(_onSessionChanged);
+    if (widget.sessionNavigationGuard?.canAccessProtectedRoutes == false) {
+      _loading = false;
+      _requiresSignIn = true;
+      _errorMessage = 'Clinical session unavailable. Sign in again.';
+    } else {
+      unawaited(_reload());
+    }
   }
 
   @override
   void didUpdateWidget(covariant ClinicalAlertDetailScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(widget.dataSource, oldWidget.dataSource)) {
+      _startDeviceStatusMonitor();
+    }
+    if (!identical(
+      widget.sessionNavigationGuard,
+      oldWidget.sessionNavigationGuard,
+    )) {
+      oldWidget.sessionNavigationGuard?.removeListener(_onSessionChanged);
+      widget.sessionNavigationGuard?.addListener(_onSessionChanged);
+      _onSessionChanged();
+    }
     if (widget.alertId != oldWidget.alertId ||
         !identical(widget.dataSource, oldWidget.dataSource)) {
+      _previouslyObservedCritical = false;
       _writeGeneration++;
       _sending = false;
       _writeBlocked = false;
@@ -68,11 +138,34 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
 
   @override
   void dispose() {
+    final subscription = _deviceStatusSubscription;
+    if (subscription != null) unawaited(subscription.cancel());
+    widget.sessionNavigationGuard?.removeListener(_onSessionChanged);
     _requestGeneration++;
     _writeGeneration++;
     _justificationController.dispose();
     _alert = null;
     super.dispose();
+  }
+
+  void _onSessionChanged() {
+    // A logout/rejection/context transition invalidates earlier asynchronous
+    // GET and POST completions. Never display an earlier session's PHI.
+    _requestGeneration++;
+    _writeGeneration++;
+    _sending = false;
+    _writeBlocked = true;
+    _writeOutcomeUnknown = true;
+    _writeReadConfirmed = false;
+    _justificationController.clear();
+    if (!mounted) return;
+    setState(() {
+      _alert = null;
+      _previouslyObservedCritical = false;
+      _loading = false;
+      _requiresSignIn = true;
+      _errorMessage = 'Clinical session changed. Sign in and reload.';
+    });
   }
 
   Future<void> _reload() async {
@@ -108,6 +201,7 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
 
       setState(() {
         _alert = alert;
+        _previouslyObservedCritical = _unresolvedCritical(alert);
         _loading = false;
         _writeReadConfirmed = _writeBlocked;
       });
@@ -119,6 +213,11 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
         _requiresSignIn =
             error is AuthenticatedSessionUnavailableException ||
             (error is ApiException && error.statusCode == 401);
+        if (_requiresSignIn ||
+            (error is ApiException &&
+                (error.statusCode == 403 || error.statusCode == 404))) {
+          _previouslyObservedCritical = false;
+        }
         _errorMessage = _messageFor(error);
       });
     }
@@ -167,6 +266,7 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
     if (_loading ||
         _sending ||
         _writeBlocked ||
+        _deviceNetworkStatus != DeviceNetworkStatus.connected ||
         alert == null ||
         alert.id != widget.alertId ||
         alert.status == ClinicalAlertStatus.resolved ||
@@ -207,8 +307,9 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
       );
       if (!mounted ||
           writeGeneration != _writeGeneration ||
-          widget.alertId != alertId)
+          widget.alertId != alertId) {
         return;
+      }
 
       setState(() {
         _writeBlocked = true;
@@ -223,8 +324,9 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
       await _reload();
       if (!mounted ||
           writeGeneration != _writeGeneration ||
-          widget.alertId != alertId)
+          widget.alertId != alertId) {
         return;
+      }
       setState(() {
         _writeMessage = _alert != null
             ? 'Backend acknowledgement recorded and current alert status '
@@ -234,11 +336,36 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
                   'could not be confirmed. Repeat submission is blocked. '
                   'Refresh online before further action.';
       });
+    } on ClinicalSafetyOfflineWriteBlockedException {
+      if (!mounted ||
+          writeGeneration != _writeGeneration ||
+          widget.alertId != alertId) {
+        return;
+      }
+      setState(() {
+        _writeMessage =
+            'No confirmed device network connection. '
+            'No clinical POST was sent; reconnect before trying again.';
+      });
+    } on ClinicalSafetyWriteOutcomeUnknownException {
+      if (!mounted ||
+          writeGeneration != _writeGeneration ||
+          widget.alertId != alertId) {
+        return;
+      }
+      _markWriteBlocked(
+        message:
+            'Session or clinic changed after the clinical POST may have '
+            'been dispatched. Outcome UNKNOWN: do not retry. '
+            'Request authoritative server audit reconciliation.',
+        uncertain: true,
+      );
     } on AuthenticatedSessionUnavailableException {
       if (!mounted ||
           writeGeneration != _writeGeneration ||
-          widget.alertId != alertId)
+          widget.alertId != alertId) {
         return;
+      }
       setState(() {
         // The token loader failed before an HTTP POST was sent.
         _alert = null;
@@ -251,8 +378,9 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
     } on ApiException catch (error) {
       if (!mounted ||
           writeGeneration != _writeGeneration ||
-          widget.alertId != alertId)
+          widget.alertId != alertId) {
         return;
+      }
       final status = error.statusCode;
       if (status == 401 || status == 403 || status == 404) {
         _markWriteBlocked(
@@ -297,8 +425,9 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
     } on ArgumentError {
       if (!mounted ||
           writeGeneration != _writeGeneration ||
-          widget.alertId != alertId)
+          widget.alertId != alertId) {
         return;
+      }
       // Local validation can be corrected; no HTTP was sent.
       setState(
         () =>
@@ -307,8 +436,9 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
     } on Object {
       if (!mounted ||
           writeGeneration != _writeGeneration ||
-          widget.alertId != alertId)
+          widget.alertId != alertId) {
         return;
+      }
       // A 2xx response with a malformed body may still have committed.
       _markWriteBlocked(
         message:
@@ -371,13 +501,23 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
           ),
           const SizedBox(height: 8),
         ],
+        if (_deviceNetworkStatus != DeviceNetworkStatus.connected) ...[
+          const Text(
+            'Clinical writes are disabled while device network connectivity '
+            'is disconnected or unconfirmed. No offline clinical write queue.',
+            key: ValueKey('clinical-alert-detail-offline-write-blocked'),
+          ),
+          const SizedBox(height: 8),
+        ],
         Wrap(
           spacing: 12,
           runSpacing: 8,
           children: [
             ElevatedButton(
               key: const ValueKey('clinical-alert-acknowledge-submit'),
-              onPressed: _sending
+              onPressed:
+                  _sending ||
+                      _deviceNetworkStatus != DeviceNetworkStatus.connected
                   ? null
                   : () => unawaited(
                       _submitAcknowledgement(
@@ -388,7 +528,9 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
             ),
             OutlinedButton(
               key: const ValueKey('clinical-alert-override-submit'),
-              onPressed: _sending
+              onPressed:
+                  _sending ||
+                      _deviceNetworkStatus != DeviceNetworkStatus.connected
                   ? null
                   : () => unawaited(
                       _submitAcknowledgement(
@@ -484,17 +626,28 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
     );
   }
 
+  Widget _priorCriticalWarning() => const Padding(
+    padding: EdgeInsets.all(12),
+    child: Text(
+      'This critical alert was previously unresolved. Its current state is '
+      'UNCONFIRMED. Verify online; no clinical action is authorized by stale data.',
+      key: ValueKey('clinical-alert-detail-prior-critical-unconfirmed'),
+      textAlign: TextAlign.center,
+    ),
+  );
+
   Widget _buildBody() {
     if (_loading) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(
+            const CircularProgressIndicator(
               key: ValueKey('clinical-alert-detail-loading'),
             ),
-            SizedBox(height: 12),
-            Text('Loading current clinical alert detail...'),
+            if (_previouslyObservedCritical) _priorCriticalWarning(),
+            const SizedBox(height: 12),
+            const Text('Loading current clinical alert detail...'),
           ],
         ),
       );
@@ -518,6 +671,7 @@ class _ClinicalAlertDetailScreenState extends State<ClinicalAlertDetailScreen> {
               const SizedBox(height: 8),
               if (!_writeBlocked)
                 Text(errorMessage, textAlign: TextAlign.center),
+              if (_previouslyObservedCritical) _priorCriticalWarning(),
               if (_writeBlocked) _writeNoticeWidget(),
               if (!_requiresSignIn && widget.alertId > 0) ...[
                 const SizedBox(height: 16),

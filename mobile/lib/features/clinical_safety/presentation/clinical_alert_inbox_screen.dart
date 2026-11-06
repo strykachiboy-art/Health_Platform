@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
+import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_remote_data_source.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/models/clinical_alert.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/models/clinical_alert_page.dart';
@@ -16,10 +17,12 @@ class ClinicalAlertInboxScreen extends StatefulWidget {
   const ClinicalAlertInboxScreen({
     super.key,
     required this.dataSource,
+    this.sessionNavigationGuard,
     this.onAlertSelected,
   });
 
   final ClinicalSafetyRemoteDataSource dataSource;
+  final SessionNavigationGuard? sessionNavigationGuard;
   final ValueChanged<int>? onAlertSelected;
 
   @override
@@ -29,6 +32,9 @@ class ClinicalAlertInboxScreen extends StatefulWidget {
 
 class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
   ClinicalAlertPage? _page;
+  final Set<int> _previouslyObservedCriticalIds = <int>{};
+  bool get _previouslyObservedCritical =>
+      _previouslyObservedCriticalIds.isNotEmpty;
   bool _loading = true;
   bool _requiresSignIn = false;
   String? _errorMessage;
@@ -37,21 +43,52 @@ class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
   @override
   void initState() {
     super.initState();
-    unawaited(_reload());
+    widget.sessionNavigationGuard?.addListener(_onSessionChanged);
+    if (widget.sessionNavigationGuard?.canAccessProtectedRoutes == false) {
+      _loading = false;
+      _requiresSignIn = true;
+      _errorMessage = 'Clinical session unavailable. Sign in again.';
+    } else {
+      unawaited(_reload());
+    }
   }
 
   @override
   void didUpdateWidget(covariant ClinicalAlertInboxScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(
+      widget.sessionNavigationGuard,
+      oldWidget.sessionNavigationGuard,
+    )) {
+      oldWidget.sessionNavigationGuard?.removeListener(_onSessionChanged);
+      widget.sessionNavigationGuard?.addListener(_onSessionChanged);
+      _onSessionChanged();
+    }
     if (!identical(widget.dataSource, oldWidget.dataSource)) {
+      _previouslyObservedCriticalIds.clear();
       unawaited(_reload());
     }
   }
 
   @override
   void dispose() {
+    widget.sessionNavigationGuard?.removeListener(_onSessionChanged);
     _requestGeneration++;
     super.dispose();
+  }
+
+  void _onSessionChanged() {
+    // A logout/rejection/context transition invalidates earlier asynchronous
+    // GET and POST completions. Never display an earlier session's PHI.
+    _requestGeneration++;
+    if (!mounted) return;
+    setState(() {
+      _page = null;
+      _previouslyObservedCriticalIds.clear();
+      _loading = false;
+      _requiresSignIn = true;
+      _errorMessage = 'Clinical session changed. Sign in and reload.';
+    });
   }
 
   Future<void> _reload() async {
@@ -70,6 +107,16 @@ class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
       if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _page = result;
+        // Retain prior critical IDs missing from the first-page response.
+        // Only same-ID server-reported resolved/expired status clears them.
+        for (final alert in result.items) {
+          if (_criticalNotResolved(alert)) {
+            _previouslyObservedCriticalIds.add(alert.id);
+          } else if (alert.status == ClinicalAlertStatus.resolved ||
+              alert.status == ClinicalAlertStatus.expired) {
+            _previouslyObservedCriticalIds.remove(alert.id);
+          }
+        }
         _loading = false;
       });
     } catch (error) {
@@ -80,6 +127,11 @@ class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
         _requiresSignIn =
             error is AuthenticatedSessionUnavailableException ||
             (error is ApiException && error.statusCode == 401);
+        if (_requiresSignIn ||
+            (error is ApiException &&
+                (error.statusCode == 403 || error.statusCode == 404))) {
+          _previouslyObservedCriticalIds.clear();
+        }
         _errorMessage = _messageFor(error);
       });
     }
@@ -153,17 +205,28 @@ class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
     );
   }
 
+  Widget _priorCriticalWarning() => const Padding(
+    padding: EdgeInsets.all(12),
+    child: Text(
+      'A critical alert was previously observed in this session. Its current '
+      'status is UNCONFIRMED. Reconnect and verify online before clinical action.',
+      key: ValueKey('clinical-alert-inbox-prior-critical-unconfirmed'),
+      textAlign: TextAlign.center,
+    ),
+  );
+
   Widget _buildBody() {
     if (_loading) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(
+            const CircularProgressIndicator(
               key: ValueKey('clinical-alert-inbox-loading'),
             ),
-            SizedBox(height: 12),
-            Text('Loading current clinical alerts...'),
+            if (_previouslyObservedCritical) _priorCriticalWarning(),
+            const SizedBox(height: 12),
+            const Text('Loading current clinical alerts...'),
           ],
         ),
       );
@@ -186,6 +249,7 @@ class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
               ),
               const SizedBox(height: 8),
               Text(errorMessage, textAlign: TextAlign.center),
+              if (_previouslyObservedCritical) _priorCriticalWarning(),
               if (!_requiresSignIn) ...[
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
@@ -216,6 +280,7 @@ class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
               const Icon(Icons.notifications_none, size: 44),
               const SizedBox(height: 12),
               const Text('No clinical alerts returned by the backend.'),
+              if (_previouslyObservedCritical) _priorCriticalWarning(),
               if (page.total > 0) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -236,6 +301,11 @@ class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
     }
 
     final unresolvedCritical = page.items.where(_criticalNotResolved).length;
+    final hasUnconfirmedPrior = _previouslyObservedCriticalIds.any(
+      (id) => !page.items.any(
+        (alert) => alert.id == id && _criticalNotResolved(alert),
+      ),
+    );
     final hasMore = page.total > page.items.length;
 
     return RefreshIndicator(
@@ -272,6 +342,10 @@ class _ClinicalAlertInboxScreenState extends State<ClinicalAlertInboxScreen> {
                       '$unresolvedCritical critical alert${unresolvedCritical == 1 ? '' : 's'} not resolved or expired on this page. Review authoritative backend status.',
                     ),
                   ),
+                ],
+                if (hasUnconfirmedPrior) ...[
+                  const SizedBox(height: 10),
+                  _priorCriticalWarning(),
                 ],
                 if (hasMore) ...[
                   const SizedBox(height: 10),
