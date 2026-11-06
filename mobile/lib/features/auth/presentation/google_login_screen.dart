@@ -396,6 +396,16 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         const SizedBox(height: 8),
         Text('Role: ${session.role}'),
         const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            key: const ValueKey('p22-open-home-button'),
+            onPressed: _busy ? null : () => context.push<void>('/home'),
+            icon: const Icon(Icons.home_outlined),
+            label: const Text('Open home'),
+          ),
+        ),
+        const SizedBox(height: 12),
         if (const {
           'ADMIN',
           'DOCTOR',

@@ -67,6 +67,7 @@ void main() {
   final sessionNavigationGuard = SessionNavigationGuard(
     protectedRoutePrefixes: const <String>[
       '/patients',
+      '/home',
       '/emergency-access',
       '/clinical-safety',
     ],
@@ -170,6 +171,7 @@ void main() {
         clinicalSafetyDataSource: clinicalSafetyDataSource,
         emergencyAccessContext: emergencyAccessContext,
         loginScreen: loginScreen,
+        loadHomeSession: sessionCoordinator.restoreSession,
         sessionNavigationGuard: sessionNavigationGuard,
         deviceConnectivitySource: connectivitySource,
         operationReplayScheduler: replayScheduler,
@@ -184,6 +186,7 @@ class ClinicSystemProApp extends StatefulWidget {
     super.key,
     required this.healthDataSource,
     required this.loginScreen,
+    this.loadHomeSession,
     this.patientDataSource,
     this.emergencyAccessDataSource,
     this.clinicalSafetyDataSource,
@@ -196,6 +199,7 @@ class ClinicSystemProApp extends StatefulWidget {
 
   final BackendHealthRemoteDataSource healthDataSource;
   final Widget loginScreen;
+  final Future<AuthSessionState> Function()? loadHomeSession;
   final PatientRemoteDataSource? patientDataSource;
   final EmergencyAccessRemoteDataSource? emergencyAccessDataSource;
   final ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource;
@@ -218,6 +222,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
     _router = createAppRouter(
       healthDataSource: widget.healthDataSource,
       loginScreen: widget.loginScreen,
+      loadHomeSession: widget.loadHomeSession,
       patientDataSource: widget.patientDataSource,
       emergencyAccessDataSource: widget.emergencyAccessDataSource,
       clinicalSafetyDataSource: widget.clinicalSafetyDataSource,

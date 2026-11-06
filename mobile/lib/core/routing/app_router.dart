@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
+import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
+import 'package:clinic_system_pro/features/home/presentation/authenticated_home_screen.dart';
+import 'package:clinic_system_pro/features/home/presentation/authenticated_feature_frame.dart';
 
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
 import 'package:clinic_system_pro/features/backend_health/presentation/backend_health_screen.dart';
@@ -20,6 +23,7 @@ import 'package:clinic_system_pro/features/patients/presentation/patient_registr
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
   required Widget loginScreen,
+  Future<AuthSessionState> Function()? loadHomeSession,
   PatientRemoteDataSource? patientDataSource,
   EmergencyAccessRemoteDataSource? emergencyAccessDataSource,
   ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource,
@@ -29,14 +33,52 @@ GoRouter createAppRouter({
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
-    redirect: (context, state) =>
-        sessionNavigationGuard?.redirect(state.matchedLocation),
+    redirect: (context, state) {
+      final authRedirect = sessionNavigationGuard?.redirect(state.matchedLocation);
+      if (authRedirect != null) return authRedirect;
+      // Login and saved-session restoration use the existing guard. Once
+      // ready, land on home without requiring a second manual button tap.
+      // The explicit session route remains reachable for logout/recovery.
+      if (loadHomeSession != null &&
+          sessionNavigationGuard?.canAccessProtectedRoutes == true &&
+          state.matchedLocation == '/login' &&
+          state.uri.queryParameters['session'] != '1') {
+        return '/home';
+      }
+      return null;
+    },
     routes: [
       GoRoute(
         path: '/login',
         name: 'login',
         builder: (context, state) => loginScreen,
       ),
+      GoRoute(
+        path: '/home',
+        name: 'home',
+        builder: (context, state) {
+          final loader = loadHomeSession;
+          if (loader == null) return const _HomeRouteUnavailableScreen();
+          return AuthenticatedHomeScreen(
+            loadSession: loader,
+            sessionNavigationGuard: sessionNavigationGuard,
+          );
+        },
+      ),
+      ShellRoute(
+        builder: (context, state, child) {
+          final loader = loadHomeSession;
+          // Keep the old router test seams unchanged when no home loader
+          // is configured; production always injects the session loader.
+          if (loader == null) return child;
+          return AuthenticatedFeatureFrame(
+            location: state.uri.path,
+            loadSession: loader,
+            sessionNavigationGuard: sessionNavigationGuard,
+            child: child,
+          );
+        },
+        routes: [
       GoRoute(
         path: '/patients',
         name: 'patients',
@@ -137,6 +179,8 @@ GoRouter createAppRouter({
           );
         },
       ),
+        ],
+      ),
       GoRoute(
         path: '/health',
         name: 'health',
@@ -145,6 +189,15 @@ GoRouter createAppRouter({
         },
       ),
     ],
+  );
+}
+
+class _HomeRouteUnavailableScreen extends StatelessWidget {
+  const _HomeRouteUnavailableScreen();
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+    body: Center(child: Text('Home is not configured.')),
   );
 }
 
