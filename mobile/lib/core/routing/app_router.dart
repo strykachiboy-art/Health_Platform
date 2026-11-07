@@ -23,6 +23,9 @@ import 'package:clinic_system_pro/features/emergency_access/presentation/emergen
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_review_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_detail_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_directory_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_registration_screen.dart';
@@ -39,6 +42,9 @@ GoRouter createAppRouter({
   Widget Function()? statusStripBuilder,
   PatientRemoteDataSource? patientDataSource,
   PatientAllergyRemoteDataSource? patientAllergyDataSource,
+  PatientVitalsRemoteDataSource? patientVitalsDataSource,
+  PatientAdmissionRemoteDataSource? patientAdmissionDataSource,
+  PatientConsultationRemoteDataSource? patientConsultationDataSource,
   EmergencyAccessRemoteDataSource? emergencyAccessDataSource,
   ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource,
   EmergencyAccessContext? emergencyAccessContext,
@@ -155,6 +161,9 @@ GoRouter createAppRouter({
                 dataSource: source,
                 patientId: patientId,
                 allergyDataSource: patientAllergyDataSource,
+                vitalsDataSource: patientVitalsDataSource,
+                admissionDataSource: patientAdmissionDataSource,
+                consultationDataSource: patientConsultationDataSource,
                 emergencyAccessContext: emergencyAccessContext,
               );
             },

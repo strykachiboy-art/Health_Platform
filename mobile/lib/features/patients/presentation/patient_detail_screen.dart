@@ -10,6 +10,12 @@ import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_structured_allergies_card.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_vitals_history_card.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_admission_history_card.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_consultation_history_card.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_profile_edit_screen.dart';
 
 class PatientDetailScreen extends StatefulWidget {
@@ -19,12 +25,18 @@ class PatientDetailScreen extends StatefulWidget {
     required this.patientId,
     this.emergencyAccessContext,
     this.allergyDataSource,
+    this.vitalsDataSource,
+    this.admissionDataSource,
+    this.consultationDataSource,
   });
 
   final PatientRemoteDataSource dataSource;
   final int patientId;
   final EmergencyAccessContext? emergencyAccessContext;
   final PatientAllergyRemoteDataSource? allergyDataSource;
+  final PatientVitalsRemoteDataSource? vitalsDataSource;
+  final PatientAdmissionRemoteDataSource? admissionDataSource;
+  final PatientConsultationRemoteDataSource? consultationDataSource;
 
   @override
   State<PatientDetailScreen> createState() => _PatientDetailScreenState();
@@ -313,6 +325,33 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             key: ValueKey('patient-structured-allergies-for-${patient.id}'),
             patientId: patient.id,
             dataSource: widget.allergyDataSource!,
+          ),
+        ],
+        // Clinical history is mounted only after the patient ID has
+        // been verified and the patient snapshot is current.
+        if (widget.vitalsDataSource != null && !_patientSnapshotStale) ...[
+          const SizedBox(height: 12),
+          PatientVitalsHistoryCard(
+            key: ValueKey('patient-vitals-for-${patient.id}'),
+            patientId: patient.id,
+            dataSource: widget.vitalsDataSource!,
+          ),
+        ],
+        if (widget.admissionDataSource != null && !_patientSnapshotStale) ...[
+          const SizedBox(height: 12),
+          PatientAdmissionHistoryCard(
+            key: ValueKey('patient-admissions-for-${patient.id}'),
+            patientId: patient.id,
+            dataSource: widget.admissionDataSource!,
+          ),
+        ],
+        if (widget.consultationDataSource != null &&
+            !_patientSnapshotStale) ...[
+          const SizedBox(height: 12),
+          PatientConsultationHistoryCard(
+            key: ValueKey('patient-consultations-for-${patient.id}'),
+            patientId: patient.id,
+            dataSource: widget.consultationDataSource!,
           ),
         ],
         _section('Identifiers', [
