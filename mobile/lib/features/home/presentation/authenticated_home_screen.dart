@@ -75,6 +75,19 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{'admin', 'doctor', 'nurse'}.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'consultations',
+        'Consultations',
+        '/consultations',
+        Icons.medical_information_outlined,
+      ),
+    );
+  }
   if (_patientDirectoryRoles.contains(normalizedRole)) {
     destinations.insert(
       0,

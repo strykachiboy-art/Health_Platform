@@ -41,6 +41,7 @@ import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_remote_data_source.dart';
 import 'package:clinic_system_pro/features/appointments/data/appointment_remote_data_source.dart';
+import 'package:clinic_system_pro/features/consultations/data/consultation_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
@@ -84,6 +85,7 @@ void main() {
     protectedRoutePrefixes: const <String>[
       '/patients',
       '/appointments',
+      '/consultations',
       '/home',
       '/account',
       '/emergency-access',
@@ -91,6 +93,11 @@ void main() {
     ],
   );
   final appointmentDataSource = AppointmentRemoteDataSource(
+    apiClient: apiClient,
+    loadSession: sessionCoordinator.restoreSession,
+    sessionNavigationGuard: sessionNavigationGuard,
+  );
+  final consultationDataSource = ConsultationRemoteDataSource(
     apiClient: apiClient,
     loadSession: sessionCoordinator.restoreSession,
     sessionNavigationGuard: sessionNavigationGuard,
@@ -286,6 +293,7 @@ void main() {
       child: ClinicSystemProApp(
         healthDataSource: healthDataSource,
         appointmentDataSource: appointmentDataSource,
+        consultationDataSource: consultationDataSource,
         patientDataSource: patientDataSource,
         patientAllergyDataSource: patientAllergyDataSource,
         patientVitalsDataSource: patientVitalsDataSource,
@@ -344,6 +352,7 @@ class ClinicSystemProApp extends StatefulWidget {
     this.signOutCoordinator,
     this.statusStripBuilder,
     this.appointmentDataSource,
+    this.consultationDataSource,
     this.patientDataSource,
     this.patientAllergyDataSource,
     this.patientVitalsDataSource,
@@ -371,6 +380,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final AuthenticatedSignOutCoordinator? signOutCoordinator;
   final Widget Function()? statusStripBuilder;
   final AppointmentRemoteDataSource? appointmentDataSource;
+  final ConsultationRemoteDataSource? consultationDataSource;
   final PatientRemoteDataSource? patientDataSource;
   final PatientAllergyRemoteDataSource? patientAllergyDataSource;
   final PatientVitalsRemoteDataSource? patientVitalsDataSource;
@@ -408,6 +418,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       signOutCoordinator: widget.signOutCoordinator,
       statusStripBuilder: widget.statusStripBuilder,
       appointmentDataSource: widget.appointmentDataSource,
+      consultationDataSource: widget.consultationDataSource,
       patientDataSource: widget.patientDataSource,
       patientAllergyDataSource: widget.patientAllergyDataSource,
       patientVitalsDataSource: widget.patientVitalsDataSource,

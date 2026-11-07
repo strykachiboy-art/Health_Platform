@@ -22,6 +22,10 @@ import 'package:clinic_system_pro/features/emergency_access/data/emergency_acces
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_request_screen.dart';
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_review_screen.dart';
 import 'package:clinic_system_pro/features/appointments/data/appointment_remote_data_source.dart';
+import 'package:clinic_system_pro/features/consultations/data/consultation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/consultations/presentation/consultation_start_screen.dart';
+import 'package:clinic_system_pro/features/consultations/presentation/consultation_detail_screen.dart';
+import 'package:clinic_system_pro/features/consultations/presentation/consultation_clinical_note_screen.dart';
 import 'package:clinic_system_pro/core/sync/appointment_create_queue_producer.dart';
 import 'package:clinic_system_pro/features/appointments/presentation/appointment_create_screen.dart';
 import 'package:clinic_system_pro/features/appointments/presentation/appointment_entry_screen.dart';
@@ -53,6 +57,7 @@ GoRouter createAppRouter({
   AuthenticatedSignOutCoordinator? signOutCoordinator,
   Widget Function()? statusStripBuilder,
   AppointmentRemoteDataSource? appointmentDataSource,
+  ConsultationRemoteDataSource? consultationDataSource,
   AppointmentCreateSyncPageLoader? appointmentCreateSyncPageLoader,
   PatientRemoteDataSource? patientDataSource,
   PatientAllergyRemoteDataSource? patientAllergyDataSource,
@@ -162,7 +167,93 @@ GoRouter createAppRouter({
               );
             },
           ),
-          // Only the existing encrypted queue can submit an appointment-create
+          GoRoute(
+            path: '/consultations',
+            name: 'consultations-start',
+            builder: (context, state) {
+              final source = consultationDataSource;
+              final guard = sessionNavigationGuard;
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard)) {
+                return const Scaffold(
+                  body: Center(child: Text('Consultations unavailable.')),
+                );
+              }
+              return ConsultationStartScreen(
+                dataSource: source,
+                onCreated: (patientId, consultationId) => context.go(
+                  '/consultations/patient/$patientId/$consultationId',
+                ),
+              );
+            },
+          ),
+
+          GoRoute(
+            path: '/consultations/patient/:patientId/:consultationId/note',
+            name: 'consultation-clinical-note-lifecycle',
+            builder: (context, state) {
+              final source = consultationDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              final consultationId = int.tryParse(
+                state.pathParameters['consultationId'] ?? '',
+              );
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  consultationId == null ||
+                  consultationId <= 0) {
+                return const Scaffold(
+                  body: Center(child: Text('Clinical note unavailable.')),
+                );
+              }
+              return ConsultationClinicalNoteScreen(
+                key: ValueKey('p23c-note-route-$patientId-$consultationId'),
+                consultationDataSource: source,
+                patientId: patientId,
+                consultationId: consultationId,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/consultations/patient/:patientId/:consultationId',
+            name: 'consultation-detail',
+            builder: (context, state) {
+              final source = consultationDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              final consultationId = int.tryParse(
+                state.pathParameters['consultationId'] ?? '',
+              );
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  consultationId == null ||
+                  consultationId <= 0) {
+                return const Scaffold(
+                  body: Center(child: Text('Consultation record unavailable.')),
+                );
+              }
+              return ConsultationDetailScreen(
+                key: ValueKey('p23c-consultation-$patientId-$consultationId'),
+                dataSource: source,
+                patientId: patientId,
+                consultationId: consultationId,
+                onClinicalActionsRequested: () => context.push<void>(
+                  '/consultations/patient/$patientId/$consultationId/note',
+                ),
+              );
+            },
+          ), // Only the existing encrypted queue can submit an appointment-create
           // intent. Route availability is not proof of backend authorization.
           GoRoute(
             path: '/appointments/create',
