@@ -62,10 +62,102 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   bool _statusAuthenticationRequired = false;
   String? _statusMessage;
 
+  /// The emergency grant used to initiate the current patient GET.
+  /// Clearing this grant invalidates both its pending response and view.
+  int? _emergencyBoundGrantId;
+
   @override
   void initState() {
     super.initState();
+    widget.emergencyAccessContext?.addListener(_onEmergencyAccessChanged);
     unawaited(_loadPatient());
+  }
+
+  @override
+  void didUpdateWidget(covariant PatientDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final contextChanged = !identical(
+      oldWidget.emergencyAccessContext,
+      widget.emergencyAccessContext,
+    );
+
+    final patientSourceChanged =
+        oldWidget.patientId != widget.patientId ||
+        !identical(oldWidget.dataSource, widget.dataSource);
+
+    if (contextChanged) {
+      oldWidget.emergencyAccessContext?.removeListener(
+        _onEmergencyAccessChanged,
+      );
+      widget.emergencyAccessContext?.addListener(_onEmergencyAccessChanged);
+    }
+
+    if (patientSourceChanged) {
+      // A reused State object must never retain another patient's PHI.
+      _requestGeneration++;
+      _emergencyBoundGrantId = null;
+      _patient = null;
+      _lastError = null;
+      _errorMessage = null;
+      _loading = true;
+      _statusUpdating = false;
+      _statusOutcomeUnknown = false;
+      _statusPermissionDenied = false;
+      _statusAuthenticationRequired = false;
+      _statusMessage = null;
+
+      final expectedGeneration = _requestGeneration;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _requestGeneration == expectedGeneration) {
+          unawaited(_loadPatient());
+        }
+      });
+    } else if (contextChanged && _emergencyBoundGrantId != null) {
+      // Even an equal numeric grant ID from a different context
+      // does not preserve the old emergency authorization.
+      _discardEmergencyPatient();
+    }
+  }
+
+  @override
+  void dispose() {
+    _requestGeneration++;
+    widget.emergencyAccessContext?.removeListener(_onEmergencyAccessChanged);
+    super.dispose();
+  }
+
+  void _onEmergencyAccessChanged() {
+    if (!mounted) return;
+
+    final boundGrant = _emergencyBoundGrantId;
+    if (boundGrant == null) return;
+
+    final currentGrant = widget.emergencyAccessContext
+        ?.emergencyAccessIdForPatient(widget.patientId);
+
+    if (currentGrant == boundGrant) return;
+
+    setState(_discardEmergencyPatient);
+  }
+
+  void _discardEmergencyPatient() {
+    // This helper may run during didUpdateWidget, where build follows
+    // automatically; do not call setState from the helper itself.
+    _requestGeneration++;
+    _emergencyBoundGrantId = null;
+    _patient = null;
+    _loading = false;
+    _lastError = null;
+    _errorMessage =
+        'Emergency access changed. Patient information was cleared. '
+        'Revalidate access before retrying.';
+    _statusUpdating = false;
+    _statusOutcomeUnknown = false;
+    _statusPermissionDenied = false;
+    _statusAuthenticationRequired = false;
+    _statusMessage = null;
   }
 
   Future<void> _loadPatient() async {
@@ -78,6 +170,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
 
     final emergencyAccessId = widget.emergencyAccessContext
         ?.emergencyAccessIdForPatient(widget.patientId);
+    _emergencyBoundGrantId = emergencyAccessId;
 
     try {
       final patient = await widget.dataSource.fetchPatient(
@@ -87,6 +180,20 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       if (patient.id != widget.patientId) {
         throw const FormatException('Patient identity mismatch.');
       }
+
+      // A grant can expire without emitting a context notification.
+      // Recheck it after the HTTP response before accepting any PHI.
+      if (emergencyAccessId != null &&
+          widget.emergencyAccessContext?.emergencyAccessIdForPatient(
+                widget.patientId,
+              ) !=
+              emergencyAccessId) {
+        if (mounted && generation == _requestGeneration) {
+          _onEmergencyAccessChanged();
+        }
+        return;
+      }
+
       if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _patient = patient;
@@ -164,6 +271,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   Future<void> _openEditPatient() async {
     final patient = _patient;
     if (patient == null || _loading || _patientSnapshotStale) return;
+    final generation = _requestGeneration;
 
     final updated = await Navigator.of(context).push<Patient>(
       MaterialPageRoute(
@@ -174,7 +282,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       ),
     );
 
-    if (!mounted) return;
+    if (!mounted || generation != _requestGeneration) return;
     if (updated == null) {
       // Also reconcile after cancellation: the editor may have encountered an
       // uncertain network outcome before the user returned to this screen.
@@ -528,6 +636,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       return;
     }
 
+    final generation = _requestGeneration;
     final desiredStatus = !patient.isActive;
     final actionLabel = desiredStatus
         ? 'Activate patient'
@@ -559,7 +668,9 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       ),
     );
 
-    if (!mounted || confirmed != true) return;
+    if (!mounted || confirmed != true || generation != _requestGeneration) {
+      return;
+    }
 
     setState(() {
       _statusUpdating = true;
@@ -572,7 +683,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         isActive: desiredStatus,
       );
 
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       if (updated.id != patient.id || updated.isActive != desiredStatus) {
         setState(() {
           _statusUpdating = false;
@@ -601,7 +712,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         ),
       );
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       final outcomeUnknown = _isStatusOutcomeUnknown(error);
       setState(() {
         _statusUpdating = false;
@@ -669,13 +780,17 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
 
   Future<void> _reconcilePatientStatus() async {
     if (_statusUpdating || !_statusOutcomeUnknown) return;
+    final generation = _requestGeneration;
     setState(() => _statusUpdating = true);
 
     try {
       final current = await widget.dataSource.fetchPatient(
         patientId: widget.patientId,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
+      if (current.id != widget.patientId) {
+        throw const FormatException('Patient reconciliation mismatch.');
+      }
 
       setState(() {
         _patient = current;
@@ -693,7 +808,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         ),
       );
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       final needsSignIn =
           error is AuthenticatedSessionUnavailableException ||
           (error is ApiException && error.statusCode == 401);

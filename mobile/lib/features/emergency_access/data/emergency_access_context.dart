@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
@@ -24,6 +26,37 @@ class EmergencyAccessContext extends ChangeNotifier {
   final EmergencyAccessNowUtc _nowUtc;
 
   EmergencyAccessGrant? _activeGrant;
+  Timer? _expiryTimer;
+
+  /// Only mounted consumers need an expiry notification timer.
+  /// Without listeners, all grant getters still validate expiry.
+  @override
+  void addListener(VoidCallback listener) {
+    super.addListener(listener);
+
+    final grant = _activeGrant;
+
+    if (grant == null || _expiryTimer != null) {
+      return;
+    }
+
+    if (!_isUsable(grant)) {
+      _activeGrant = null;
+      return;
+    }
+
+    _armExpiry(grant);
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    super.removeListener(listener);
+
+    if (!hasListeners) {
+      _expiryTimer?.cancel();
+      _expiryTimer = null;
+    }
+  }
 
   EmergencyAccessGrant? get activeGrant {
     final grant = _activeGrant;
@@ -71,6 +104,7 @@ class EmergencyAccessContext extends ChangeNotifier {
     }
 
     _activeGrant = grant;
+    _armExpiry(grant);
     notifyListeners();
   }
 
@@ -81,6 +115,7 @@ class EmergencyAccessContext extends ChangeNotifier {
 
     if (_isUsable(grant)) {
       _activeGrant = grant;
+      _armExpiry(grant);
       notifyListeners();
       return;
     }
@@ -95,12 +130,44 @@ class EmergencyAccessContext extends ChangeNotifier {
   }
 
   void clear() {
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
+
     if (_activeGrant == null) {
       return;
     }
 
     _activeGrant = null;
     notifyListeners();
+  }
+
+  /// Notifies idle consumers when an active emergency grant expires.
+  /// Reconciliation replaces the deadline; clearing cancels it.
+  void _armExpiry(EmergencyAccessGrant grant) {
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
+
+    if (!hasListeners) {
+      return;
+    }
+
+    final expiresAt = grant.expiresAt;
+    if (expiresAt == null) {
+      clear();
+      return;
+    }
+
+    final remaining = expiresAt.difference(_nowUtc());
+    if (remaining <= Duration.zero) {
+      clear();
+      return;
+    }
+
+    _expiryTimer = Timer(remaining, () {
+      if (identical(_activeGrant, grant)) {
+        clear();
+      }
+    });
   }
 
   bool _isUsable(EmergencyAccessGrant grant) {
@@ -121,6 +188,8 @@ class EmergencyAccessContext extends ChangeNotifier {
 
   @override
   void dispose() {
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
     _sessionNavigationGuard?.removeListener(_handleSessionNavigationChanged);
     super.dispose();
   }
