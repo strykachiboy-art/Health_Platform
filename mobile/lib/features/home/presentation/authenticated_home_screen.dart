@@ -88,6 +88,34 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{'admin', 'doctor', 'nurse'}.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'clinical_orders',
+        'Clinical orders',
+        '/clinical-orders',
+        Icons.medical_services_outlined,
+      ),
+    );
+  }
+  // Lab technicians cannot access the unified CPOE endpoint. Give them the
+  // dedicated backend-authorized blood-product order-ID lookup instead.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      normalizedRole == 'lab_technician') {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'blood_products',
+        'Blood-product verification',
+        '/clinical-orders/blood-products',
+        Icons.bloodtype_outlined,
+      ),
+    );
+  }
   if (_patientDirectoryRoles.contains(normalizedRole)) {
     destinations.insert(
       0,

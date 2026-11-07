@@ -23,6 +23,11 @@ import 'package:clinic_system_pro/features/emergency_access/presentation/emergen
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_review_screen.dart';
 import 'package:clinic_system_pro/features/appointments/data/appointment_remote_data_source.dart';
 import 'package:clinic_system_pro/features/consultations/data/consultation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/clinical_orders/data/clinical_orders_remote_data_source.dart';
+import 'package:clinic_system_pro/features/clinical_orders/presentation/clinical_orders_workspace_screen.dart';
+import 'package:clinic_system_pro/features/clinical_orders/presentation/imaging_procedure_orders_screen.dart';
+import 'package:clinic_system_pro/features/clinical_orders/presentation/diet_nursing_orders_screen.dart';
+import 'package:clinic_system_pro/features/clinical_orders/presentation/blood_product_orders_screen.dart';
 import 'package:clinic_system_pro/features/consultations/presentation/consultation_start_screen.dart';
 import 'package:clinic_system_pro/features/consultations/presentation/consultation_detail_screen.dart';
 import 'package:clinic_system_pro/features/consultations/presentation/consultation_clinical_note_screen.dart';
@@ -58,6 +63,7 @@ GoRouter createAppRouter({
   Widget Function()? statusStripBuilder,
   AppointmentRemoteDataSource? appointmentDataSource,
   ConsultationRemoteDataSource? consultationDataSource,
+  ClinicalOrdersRemoteDataSource? clinicalOrdersDataSource,
   AppointmentCreateSyncPageLoader? appointmentCreateSyncPageLoader,
   PatientRemoteDataSource? patientDataSource,
   PatientAllergyRemoteDataSource? patientAllergyDataSource,
@@ -164,6 +170,259 @@ GoRouter createAppRouter({
                 clinicContextSwitcher: switcher,
                 signOutCoordinator: signOutCoordinator,
                 sessionNavigationGuard: sessionNavigationGuard,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-orders',
+            name: 'clinical-orders-workspace',
+            builder: (context, state) {
+              final source = clinicalOrdersDataSource;
+              final guard = sessionNavigationGuard;
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Clinical orders unavailable.')),
+                );
+              }
+              return ClinicalOrdersWorkspaceScreen(
+                dataSource: source,
+                onPatientSelected: (id) =>
+                    context.push<void>('/clinical-orders/patient/$id'),
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-orders/patient/:patientId/imaging',
+            name: 'p23d-imaging-orders',
+            builder: (context, state) {
+              final source = clinicalOrdersDataSource;
+              final admissions = patientAdmissionDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (source == null ||
+                  admissions == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !identical(admissions.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const Scaffold(
+                  body: Center(child: Text('Imaging order route unavailable.')),
+                );
+              }
+              return ImagingProcedureOrdersScreen(
+                key: ValueKey('p23d-b-imaging-$patientId'),
+                unifiedSource: source,
+                admissionDataSource: admissions,
+                patientId: patientId,
+                kind: 'imaging',
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-orders/patient/:patientId/procedures',
+            name: 'p23d-procedure-orders',
+            builder: (context, state) {
+              final source = clinicalOrdersDataSource;
+              final admissions = patientAdmissionDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (source == null ||
+                  admissions == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !identical(admissions.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text('Procedure order route unavailable.'),
+                  ),
+                );
+              }
+              return ImagingProcedureOrdersScreen(
+                key: ValueKey('p23d-b-procedures-$patientId'),
+                unifiedSource: source,
+                admissionDataSource: admissions,
+                patientId: patientId,
+                kind: 'procedures',
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-orders/patient/:patientId/diets',
+            name: 'p23d-diet-orders',
+            builder: (context, state) {
+              final source = clinicalOrdersDataSource;
+              final admissions = patientAdmissionDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (source == null ||
+                  admissions == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !identical(admissions.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const Scaffold(
+                  body: Center(child: Text('Diet order route unavailable.')),
+                );
+              }
+              return DietNursingOrdersScreen(
+                key: ValueKey('p23d-c-diets-$patientId'),
+                unifiedSource: source,
+                admissionDataSource: admissions,
+                patientId: patientId,
+                kind: 'diets',
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-orders/patient/:patientId/nursing-orders',
+            name: 'p23d-nursing-orders',
+            builder: (context, state) {
+              final source = clinicalOrdersDataSource;
+              final admissions = patientAdmissionDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (source == null ||
+                  admissions == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !identical(admissions.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const Scaffold(
+                  body: Center(child: Text('Nursing order route unavailable.')),
+                );
+              }
+              return DietNursingOrdersScreen(
+                key: ValueKey('p23d-c-nursing-$patientId'),
+                unifiedSource: source,
+                admissionDataSource: admissions,
+                patientId: patientId,
+                kind: 'nursing-orders',
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-orders/blood-products',
+            name: 'p23d-d-blood-lookup',
+            builder: (context, state) {
+              final source = clinicalOrdersDataSource;
+              final guard = sessionNavigationGuard;
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text('Blood-product orders unavailable.'),
+                  ),
+                );
+              }
+              return BloodProductOrdersScreen(
+                key: const ValueKey('p23d-d-blood-lookup'),
+                unifiedSource: source,
+                admissionDataSource: patientAdmissionDataSource,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-orders/patient/:patientId/blood-products',
+            name: 'p23d-d-blood-patient',
+            builder: (context, state) {
+              final source = clinicalOrdersDataSource;
+              final admissions = patientAdmissionDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (source == null ||
+                  admissions == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !identical(admissions.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text('Blood-product orders unavailable.'),
+                  ),
+                );
+              }
+              return BloodProductOrdersScreen(
+                key: ValueKey('p23d-d-blood-patient-$patientId'),
+                unifiedSource: source,
+                admissionDataSource: admissions,
+                patientId: patientId,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-orders/patient/:patientId',
+            name: 'clinical-orders-patient',
+            builder: (context, state) {
+              final source = clinicalOrdersDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const Scaffold(
+                  body: Center(child: Text('Clinical orders unavailable.')),
+                );
+              }
+              return ClinicalOrdersWorkspaceScreen(
+                key: ValueKey('p23d-orders-patient-$patientId'),
+                dataSource: source,
+                patientId: patientId,
+                onPatientSelected: (id) =>
+                    context.push<void>('/clinical-orders/patient/$id'),
+                onConsultationSelected: (patient, consultation) =>
+                    context.push<void>(
+                      '/consultations/patient/$patient/$consultation',
+                    ),
+                onImagingRequested: (id) =>
+                    context.push<void>('/clinical-orders/patient/$id/imaging'),
+                onProcedureRequested: (id) => context.push<void>(
+                  '/clinical-orders/patient/$id/procedures',
+                ),
+                onDietRequested: (id) =>
+                    context.push<void>('/clinical-orders/patient/$id/diets'),
+                onNursingRequested: (id) => context.push<void>(
+                  '/clinical-orders/patient/$id/nursing-orders',
+                ),
+                onBloodRequested: (id) => context.push<void>(
+                  '/clinical-orders/patient/$id/blood-products',
+                ),
               );
             },
           ),

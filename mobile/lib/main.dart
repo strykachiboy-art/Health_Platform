@@ -42,6 +42,7 @@ import 'package:clinic_system_pro/features/emergency_access/data/emergency_acces
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_remote_data_source.dart';
 import 'package:clinic_system_pro/features/appointments/data/appointment_remote_data_source.dart';
 import 'package:clinic_system_pro/features/consultations/data/consultation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/clinical_orders/data/clinical_orders_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
@@ -86,6 +87,7 @@ void main() {
       '/patients',
       '/appointments',
       '/consultations',
+      '/clinical-orders',
       '/home',
       '/account',
       '/emergency-access',
@@ -98,6 +100,11 @@ void main() {
     sessionNavigationGuard: sessionNavigationGuard,
   );
   final consultationDataSource = ConsultationRemoteDataSource(
+    apiClient: apiClient,
+    loadSession: sessionCoordinator.restoreSession,
+    sessionNavigationGuard: sessionNavigationGuard,
+  );
+  final clinicalOrdersDataSource = ClinicalOrdersRemoteDataSource(
     apiClient: apiClient,
     loadSession: sessionCoordinator.restoreSession,
     sessionNavigationGuard: sessionNavigationGuard,
@@ -294,6 +301,7 @@ void main() {
         healthDataSource: healthDataSource,
         appointmentDataSource: appointmentDataSource,
         consultationDataSource: consultationDataSource,
+        clinicalOrdersDataSource: clinicalOrdersDataSource,
         patientDataSource: patientDataSource,
         patientAllergyDataSource: patientAllergyDataSource,
         patientVitalsDataSource: patientVitalsDataSource,
@@ -353,6 +361,7 @@ class ClinicSystemProApp extends StatefulWidget {
     this.statusStripBuilder,
     this.appointmentDataSource,
     this.consultationDataSource,
+    this.clinicalOrdersDataSource,
     this.patientDataSource,
     this.patientAllergyDataSource,
     this.patientVitalsDataSource,
@@ -381,6 +390,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final Widget Function()? statusStripBuilder;
   final AppointmentRemoteDataSource? appointmentDataSource;
   final ConsultationRemoteDataSource? consultationDataSource;
+  final ClinicalOrdersRemoteDataSource? clinicalOrdersDataSource;
   final PatientRemoteDataSource? patientDataSource;
   final PatientAllergyRemoteDataSource? patientAllergyDataSource;
   final PatientVitalsRemoteDataSource? patientVitalsDataSource;
@@ -419,6 +429,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       statusStripBuilder: widget.statusStripBuilder,
       appointmentDataSource: widget.appointmentDataSource,
       consultationDataSource: widget.consultationDataSource,
+      clinicalOrdersDataSource: widget.clinicalOrdersDataSource,
       patientDataSource: widget.patientDataSource,
       patientAllergyDataSource: widget.patientAllergyDataSource,
       patientVitalsDataSource: widget.patientVitalsDataSource,
