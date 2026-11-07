@@ -22,6 +22,7 @@ import 'package:clinic_system_pro/features/emergency_access/data/emergency_acces
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_request_screen.dart';
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_review_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_detail_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_directory_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_registration_screen.dart';
@@ -37,6 +38,7 @@ GoRouter createAppRouter({
   AuthenticatedSignOutCoordinator? signOutCoordinator,
   Widget Function()? statusStripBuilder,
   PatientRemoteDataSource? patientDataSource,
+  PatientAllergyRemoteDataSource? patientAllergyDataSource,
   EmergencyAccessRemoteDataSource? emergencyAccessDataSource,
   ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource,
   EmergencyAccessContext? emergencyAccessContext,
@@ -149,8 +151,10 @@ GoRouter createAppRouter({
               final patientId =
                   int.tryParse(state.pathParameters['patientId'] ?? '') ?? 0;
               return PatientDetailScreen(
+                key: ValueKey('patient-detail-route-$patientId'),
                 dataSource: source,
                 patientId: patientId,
+                allergyDataSource: patientAllergyDataSource,
                 emergencyAccessContext: emergencyAccessContext,
               );
             },

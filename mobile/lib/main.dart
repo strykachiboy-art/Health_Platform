@@ -39,6 +39,7 @@ import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 
 void main() {
   final backendConfig = BackendConfig.fromEnvironment();
@@ -80,6 +81,12 @@ void main() {
       '/clinical-safety',
     ],
   );
+  final patientAllergyDataSource = PatientAllergyRemoteDataSource(
+    apiClient: apiClient,
+    loadSession: sessionCoordinator.restoreSession,
+    sessionNavigationGuard: sessionNavigationGuard,
+  );
+
   final profileDataSource = ProfileRemoteDataSource(
     apiClient: apiClient,
     loadSession: sessionCoordinator.restoreSession,
@@ -198,6 +205,7 @@ void main() {
       child: ClinicSystemProApp(
         healthDataSource: healthDataSource,
         patientDataSource: patientDataSource,
+        patientAllergyDataSource: patientAllergyDataSource,
         emergencyAccessDataSource: emergencyAccessDataSource,
         clinicalSafetyDataSource: clinicalSafetyDataSource,
         emergencyAccessContext: emergencyAccessContext,
@@ -247,6 +255,7 @@ class ClinicSystemProApp extends StatefulWidget {
     this.signOutCoordinator,
     this.statusStripBuilder,
     this.patientDataSource,
+    this.patientAllergyDataSource,
     this.emergencyAccessDataSource,
     this.clinicalSafetyDataSource,
     this.emergencyAccessContext,
@@ -266,6 +275,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final AuthenticatedSignOutCoordinator? signOutCoordinator;
   final Widget Function()? statusStripBuilder;
   final PatientRemoteDataSource? patientDataSource;
+  final PatientAllergyRemoteDataSource? patientAllergyDataSource;
   final EmergencyAccessRemoteDataSource? emergencyAccessDataSource;
   final ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource;
   final EmergencyAccessContext? emergencyAccessContext;
@@ -295,6 +305,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       signOutCoordinator: widget.signOutCoordinator,
       statusStripBuilder: widget.statusStripBuilder,
       patientDataSource: widget.patientDataSource,
+      patientAllergyDataSource: widget.patientAllergyDataSource,
       emergencyAccessDataSource: widget.emergencyAccessDataSource,
       clinicalSafetyDataSource: widget.clinicalSafetyDataSource,
       emergencyAccessContext: widget.emergencyAccessContext,

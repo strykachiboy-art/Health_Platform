@@ -8,6 +8,8 @@ import 'package:clinic_system_pro/core/session/authenticated_session_access.dart
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_structured_allergies_card.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_profile_edit_screen.dart';
 
 class PatientDetailScreen extends StatefulWidget {
@@ -16,11 +18,13 @@ class PatientDetailScreen extends StatefulWidget {
     required this.dataSource,
     required this.patientId,
     this.emergencyAccessContext,
+    this.allergyDataSource,
   });
 
   final PatientRemoteDataSource dataSource;
   final int patientId;
   final EmergencyAccessContext? emergencyAccessContext;
+  final PatientAllergyRemoteDataSource? allergyDataSource;
 
   @override
   State<PatientDetailScreen> createState() => _PatientDetailScreenState();
@@ -60,6 +64,9 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         patientId: widget.patientId,
         emergencyAccessId: emergencyAccessId,
       );
+      if (patient.id != widget.patientId) {
+        throw const FormatException('Patient identity mismatch.');
+      }
       if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _patient = patient;
@@ -297,9 +304,17 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
           _detail('Address', patient.address),
         ]),
         _section('Clinical information', [
-          _detail('Allergies', patient.allergies),
+          _detail('Legacy allergy notes (not verified)', patient.allergies),
           _detail('Chronic conditions', patient.chronicConditions),
         ]),
+        if (widget.allergyDataSource != null && !_patientSnapshotStale) ...[
+          const SizedBox(height: 12),
+          PatientStructuredAllergiesCard(
+            key: ValueKey('patient-structured-allergies-for-${patient.id}'),
+            patientId: patient.id,
+            dataSource: widget.allergyDataSource!,
+          ),
+        ],
         _section('Identifiers', [
           _detail('Emirates ID', patient.emiratesId),
           _detail('UMRN', patient.umrn),
