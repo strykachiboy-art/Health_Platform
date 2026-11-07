@@ -21,6 +21,16 @@ import 'package:clinic_system_pro/features/emergency_access/data/emergency_acces
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_remote_data_source.dart';
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_request_screen.dart';
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_review_screen.dart';
+import 'package:clinic_system_pro/features/appointments/data/appointment_remote_data_source.dart';
+import 'package:clinic_system_pro/core/sync/appointment_create_queue_producer.dart';
+import 'package:clinic_system_pro/features/appointments/presentation/appointment_create_screen.dart';
+import 'package:clinic_system_pro/features/appointments/presentation/appointment_entry_screen.dart';
+import 'package:clinic_system_pro/features/appointments/presentation/appointment_list_screen.dart';
+import 'package:clinic_system_pro/features/appointments/presentation/appointment_mutation_screen.dart';
+import 'package:clinic_system_pro/features/appointments/presentation/appointment_create_sync_status_panel.dart';
+import 'package:clinic_system_pro/features/appointments/presentation/appointment_create_sync_status_route.dart';
+import 'package:clinic_system_pro/features/appointments/data/appointment_mutation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/appointments/data/models/appointment_record.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
@@ -42,6 +52,8 @@ GoRouter createAppRouter({
   ClinicContextSwitchCoordinator? clinicContextSwitcher,
   AuthenticatedSignOutCoordinator? signOutCoordinator,
   Widget Function()? statusStripBuilder,
+  AppointmentRemoteDataSource? appointmentDataSource,
+  AppointmentCreateSyncPageLoader? appointmentCreateSyncPageLoader,
   PatientRemoteDataSource? patientDataSource,
   PatientAllergyRemoteDataSource? patientAllergyDataSource,
   PatientVitalsRemoteDataSource? patientVitalsDataSource,
@@ -54,6 +66,22 @@ GoRouter createAppRouter({
   EmergencyAccessContext? emergencyAccessContext,
   SessionNavigationGuard? sessionNavigationGuard,
 }) {
+  // Router lifetime, not route lifetime. An uncertain mutation stays locked
+  // when the user leaves and revisits the screen during this session.
+  final mutationSource =
+      appointmentDataSource != null &&
+          sessionNavigationGuard != null &&
+          loadHomeSession != null &&
+          identical(
+            appointmentDataSource.sessionNavigationGuard,
+            sessionNavigationGuard,
+          )
+      ? AppointmentMutationRemoteDataSource(
+          apiClient: appointmentDataSource.apiClient,
+          loadSession: loadHomeSession,
+          sessionNavigationGuard: sessionNavigationGuard,
+        )
+      : null;
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
@@ -131,6 +159,190 @@ GoRouter createAppRouter({
                 clinicContextSwitcher: switcher,
                 signOutCoordinator: signOutCoordinator,
                 sessionNavigationGuard: sessionNavigationGuard,
+              );
+            },
+          ),
+          // Only the existing encrypted queue can submit an appointment-create
+          // intent. Route availability is not proof of backend authorization.
+          GoRoute(
+            path: '/appointments/create',
+            name: 'appointments-create',
+            builder: (context, state) {
+              final source = appointmentDataSource;
+              final guard = sessionNavigationGuard;
+              final loader = loadHomeSession;
+              final queueScope = context
+                  .dependOnInheritedWidgetOfExactType<
+                    AppointmentCreateQueueScope
+                  >();
+              if (source == null ||
+                  guard == null ||
+                  loader == null ||
+                  queueScope == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes) {
+                return const _AppointmentRouteUnavailableScreen();
+              }
+              return AppointmentCreateScreen(
+                key: const ValueKey('appointment-create-route'),
+                loadSession: loader,
+                sessionNavigationGuard: guard,
+                enqueue: queueScope.producer.enqueue,
+              );
+            },
+          ),
+          // A bookmarked URL alone cannot supply a verified appointment row.
+          // This route does not GET by ID (the backend has no such endpoint).
+          GoRoute(
+            path: '/appointments/change',
+            name: 'appointments-change',
+            builder: (context, state) {
+              final source = appointmentDataSource;
+              final guard = sessionNavigationGuard;
+              final mutations = mutationSource;
+              final grant = state.extra;
+              if (source == null ||
+                  guard == null ||
+                  mutations == null ||
+                  grant is! _AppointmentChangeGrant ||
+                  grant.guardRevision != guard.revision ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  grant.record.id <= 0 ||
+                  grant.record.clinicId <= 0 ||
+                  grant.record.patientId <= 0 ||
+                  grant.record.staffId <= 0 ||
+                  (grant.record.status != AppointmentRecordStatus.scheduled &&
+                      grant.record.status !=
+                          AppointmentRecordStatus.confirmed)) {
+                return const _AppointmentRouteUnavailableScreen();
+              }
+              return AppointmentMutationScreen(
+                key: ValueKey('appointment-change-route-${grant.record.id}'),
+                appointment: grant.record,
+                mutationDataSource: mutations,
+                readDataSource: source,
+              );
+            },
+          ),
+          // A direct URL does not itself authorize reading local queue metadata.
+          // Production must inject a reader bound to the active user, clinic,
+          // and navigation revision. No reader means no route availability.
+          GoRoute(
+            path: '/appointments/sync',
+            name: 'appointments-create-sync-status',
+            builder: (context, state) {
+              final source = appointmentDataSource;
+              final guard = sessionNavigationGuard;
+              final loadSession = loadHomeSession;
+              final readPage = appointmentCreateSyncPageLoader;
+              if (source == null ||
+                  guard == null ||
+                  loadSession == null ||
+                  readPage == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes) {
+                return const _AppointmentRouteUnavailableScreen();
+              }
+              return AppointmentCreateSyncStatusRoute(
+                key: const ValueKey('appointment-sync-status-route'),
+                sessionNavigationGuard: guard,
+                loadSession: loadSession,
+                loadPage: readPage,
+              );
+            },
+          ),
+          // Discoverable entry does not assume a user ID is a staff ID.
+          GoRoute(
+            path: '/appointments',
+            name: 'appointments-entry',
+            builder: (context, state) {
+              final source = appointmentDataSource;
+              final guard = sessionNavigationGuard;
+              final loader = loadHomeSession;
+              if (source == null ||
+                  guard == null ||
+                  loader == null ||
+                  !identical(source.sessionNavigationGuard, guard)) {
+                return const _AppointmentRouteUnavailableScreen();
+              }
+              return AppointmentEntryScreen(
+                loadSession: loader,
+                sessionNavigationGuard: guard,
+                onPatientSelected: (patientId) =>
+                    context.push<void>('/appointments/patient/$patientId'),
+                onSyncStatusRequested: appointmentCreateSyncPageLoader == null
+                    ? null
+                    : () => context.push<void>('/appointments/sync'),
+                onCreateRequested:
+                    context
+                            .dependOnInheritedWidgetOfExactType<
+                              AppointmentCreateQueueScope
+                            >() ==
+                        null
+                    ? null
+                    : () => context.push<void>('/appointments/create'),
+                onStaffSelected: (staffId) =>
+                    context.push<void>('/appointments/staff/$staffId'),
+              );
+            },
+          ), // Read-only appointment views require numeric scope IDs and a
+          // data source bound to this exact navigation guard.
+          GoRoute(
+            path: '/appointments/patient/:patientId',
+            name: 'appointments-patient-history',
+            builder: (context, state) {
+              final source = appointmentDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  patientId == null ||
+                  patientId <= 0) {
+                return const _AppointmentRouteUnavailableScreen();
+              }
+              return AppointmentListScreen(
+                key: ValueKey('appointment-patient-route-$patientId'),
+                dataSource: source,
+                onChangeRequested: mutationSource == null
+                    ? null
+                    : (record) => context.push<void>(
+                        '/appointments/change',
+                        extra: _AppointmentChangeGrant(record, guard.revision),
+                      ),
+                patientId: patientId,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/appointments/staff/:staffId',
+            name: 'appointments-staff-schedule',
+            builder: (context, state) {
+              final source = appointmentDataSource;
+              final guard = sessionNavigationGuard;
+              final staffId = int.tryParse(
+                state.pathParameters['staffId'] ?? '',
+              );
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  staffId == null ||
+                  staffId <= 0) {
+                return const _AppointmentRouteUnavailableScreen();
+              }
+              return AppointmentListScreen(
+                key: ValueKey('appointment-staff-route-$staffId'),
+                dataSource: source,
+                onChangeRequested: mutationSource == null
+                    ? null
+                    : (record) => context.push<void>(
+                        '/appointments/change',
+                        extra: _AppointmentChangeGrant(record, guard.revision),
+                      ),
+                staffId: staffId,
               );
             },
           ),
@@ -298,4 +510,21 @@ class _ClinicalSafetyRouteUnavailableScreen extends StatelessWidget {
       body: const Center(child: Text('Clinical safety route is unavailable.')),
     );
   }
+}
+
+class _AppointmentRouteUnavailableScreen extends StatelessWidget {
+  const _AppointmentRouteUnavailableScreen();
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+    body: Center(child: Text('Appointment route is unavailable.')),
+  );
+}
+
+// Only this router can issue a navigation grant from a loaded appointment row.
+// Direct URLs or arbitrary extras cannot forge this private capability.
+class _AppointmentChangeGrant {
+  const _AppointmentChangeGrant(this.record, this.guardRevision);
+  final AppointmentRecord record;
+  final int guardRevision;
 }

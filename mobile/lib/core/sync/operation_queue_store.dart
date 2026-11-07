@@ -303,6 +303,51 @@ class OperationQueueStore {
         );
   }
 
+  /// Lists persisted operation metadata for one authenticated owner and clinic.
+  ///
+  /// Unlike listReady and listReviewRequired, this includes not-yet-due and
+  /// non-aged entries, plus terminal outcomes still retained locally.
+  /// This does not decrypt payloads, authorize replay, or prove booking.
+  /// Callers must validate the active session before and after awaiting it.
+  Future<List<OperationQueueEntryData>> listScopedOperationPage({
+    required OperationPayloadContext context,
+    required String operationType,
+    int limit = 25,
+    int offset = 0,
+  }) async {
+    if (limit < 1 || limit > 100) {
+      throw ArgumentError.value(limit, 'limit', 'Must be between 1 and 100.');
+    }
+    if (offset < 0) {
+      throw ArgumentError.value(offset, 'offset', 'Must be non-negative.');
+    }
+    if (operationType.isEmpty ||
+        operationType != operationType.trim() ||
+        operationType.length > 120) {
+      throw ArgumentError.value(
+        operationType,
+        'operationType',
+        'Invalid type.',
+      );
+    }
+
+    final table = _database.operationQueueEntry;
+    final query = _database.select(table)
+      ..where(
+        (entry) =>
+            entry.ownerUserId.equals(context.userId) &
+            entry.clinicContextId.equals(context.clinicContextId) &
+            entry.operationType.equals(operationType),
+      )
+      ..orderBy([
+        (entry) => OrderingTerm.desc(entry.createdAt),
+        (entry) => OrderingTerm.desc(entry.operationId),
+      ])
+      ..limit(limit, offset: offset);
+
+    return query.get();
+  }
+
   /// Returns one operation by its stable ID, or null when it is absent.
   Future<OperationQueueEntryData?> findByOperationId(String operationId) {
     return (_database.select(

@@ -18,6 +18,8 @@ import 'package:clinic_system_pro/core/sync/operation_queue_store.dart';
 import 'package:clinic_system_pro/core/sync/operation_replay_worker.dart';
 import 'package:clinic_system_pro/core/sync/operation_replay_scheduler.dart';
 import 'package:clinic_system_pro/core/sync/appointment_create_queue_producer.dart';
+import 'package:clinic_system_pro/features/appointments/data/appointment_create_queue_state_read_model.dart';
+import 'package:clinic_system_pro/features/appointments/presentation/appointment_create_sync_status_panel.dart';
 import 'package:clinic_system_pro/core/security/secure_key_value_storage.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
 import 'package:clinic_system_pro/features/auth/data/clinic_context_switch_coordinator.dart';
@@ -38,6 +40,7 @@ import 'package:clinic_system_pro/features/status/presentation/authenticated_cli
 import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_session_scope.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_remote_data_source.dart';
+import 'package:clinic_system_pro/features/appointments/data/appointment_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
@@ -80,11 +83,17 @@ void main() {
   final sessionNavigationGuard = SessionNavigationGuard(
     protectedRoutePrefixes: const <String>[
       '/patients',
+      '/appointments',
       '/home',
       '/account',
       '/emergency-access',
       '/clinical-safety',
     ],
+  );
+  final appointmentDataSource = AppointmentRemoteDataSource(
+    apiClient: apiClient,
+    loadSession: sessionCoordinator.restoreSession,
+    sessionNavigationGuard: sessionNavigationGuard,
   );
   final patientAllergyDataSource = PatientAllergyRemoteDataSource(
     apiClient: apiClient,
@@ -207,6 +216,48 @@ void main() {
     },
   );
 
+  // Reuse the existing encrypted create queue, never a parallel queue.
+  // Every read revalidates the active authenticated clinic and guard revision.
+  final appointmentCreateSyncReadModel = AppointmentCreateQueueStateReadModel(
+    queueStore: queueStore,
+    loadSession: () async {
+      final revision = sessionNavigationGuard.revision;
+      if (!sessionNavigationGuard.canAccessProtectedRoutes) return null;
+      try {
+        final state = await sessionCoordinator.restoreSession();
+        if (state.disposition != AuthSessionDisposition.ready) return null;
+        final session = state.session;
+        if (session == null ||
+            session.userId <= 0 ||
+            session.clinicContextId == null ||
+            session.clinicContextId! <= 0 ||
+            session.accessToken.trim().isEmpty) {
+          return null;
+        }
+        const allowedRoles = <String>{
+          'admin',
+          'doctor',
+          'nurse',
+          'receptionist',
+        };
+        if (!allowedRoles.contains(session.role.trim().toLowerCase()) ||
+            !sessionNavigationGuard.canAccessProtectedRoutes ||
+            sessionNavigationGuard.revision != revision) {
+          return null;
+        }
+        return AppointmentCreateQueueReadSession(
+          context: OperationPayloadContext(
+            userId: session.userId.toString(),
+            clinicContextId: session.clinicContextId!.toString(),
+          ),
+          revision: revision,
+        );
+      } catch (_) {
+        // Auth/storage errors cannot expose cross-session queue metadata.
+        return null;
+      }
+    },
+  );
   final clinicContextSwitcher = ClinicContextSwitchCoordinator(
     sessionCoordinator: sessionCoordinator,
     sessionNavigationGuard: sessionNavigationGuard,
@@ -234,6 +285,7 @@ void main() {
       reconcileOperation: replayWorker.reconcileAppointmentCreate,
       child: ClinicSystemProApp(
         healthDataSource: healthDataSource,
+        appointmentDataSource: appointmentDataSource,
         patientDataSource: patientDataSource,
         patientAllergyDataSource: patientAllergyDataSource,
         patientVitalsDataSource: patientVitalsDataSource,
@@ -271,6 +323,8 @@ void main() {
         sessionNavigationGuard: sessionNavigationGuard,
         deviceConnectivitySource: connectivitySource,
         operationReplayScheduler: replayScheduler,
+        appointmentCreateSyncPageLoader:
+            appointmentCreateSyncReadModel.loadPage,
         localDatabase: localDatabase,
       ),
     ),
@@ -289,6 +343,7 @@ class ClinicSystemProApp extends StatefulWidget {
     this.clinicContextSwitcher,
     this.signOutCoordinator,
     this.statusStripBuilder,
+    this.appointmentDataSource,
     this.patientDataSource,
     this.patientAllergyDataSource,
     this.patientVitalsDataSource,
@@ -302,6 +357,7 @@ class ClinicSystemProApp extends StatefulWidget {
     this.sessionNavigationGuard,
     this.deviceConnectivitySource,
     this.operationReplayScheduler,
+    this.appointmentCreateSyncPageLoader,
     this.localDatabase,
   });
 
@@ -314,6 +370,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final ClinicContextSwitchCoordinator? clinicContextSwitcher;
   final AuthenticatedSignOutCoordinator? signOutCoordinator;
   final Widget Function()? statusStripBuilder;
+  final AppointmentRemoteDataSource? appointmentDataSource;
   final PatientRemoteDataSource? patientDataSource;
   final PatientAllergyRemoteDataSource? patientAllergyDataSource;
   final PatientVitalsRemoteDataSource? patientVitalsDataSource;
@@ -327,6 +384,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final SessionNavigationGuard? sessionNavigationGuard;
   final DeviceConnectivitySource? deviceConnectivitySource;
   final OperationReplayScheduler? operationReplayScheduler;
+  final AppointmentCreateSyncPageLoader? appointmentCreateSyncPageLoader;
   final AppDatabase? localDatabase;
 
   @override
@@ -349,6 +407,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       clinicContextSwitcher: widget.clinicContextSwitcher,
       signOutCoordinator: widget.signOutCoordinator,
       statusStripBuilder: widget.statusStripBuilder,
+      appointmentDataSource: widget.appointmentDataSource,
       patientDataSource: widget.patientDataSource,
       patientAllergyDataSource: widget.patientAllergyDataSource,
       patientVitalsDataSource: widget.patientVitalsDataSource,
@@ -360,6 +419,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       clinicalSafetyDataSource: widget.clinicalSafetyDataSource,
       emergencyAccessContext: widget.emergencyAccessContext,
       sessionNavigationGuard: widget.sessionNavigationGuard,
+      appointmentCreateSyncPageLoader: widget.appointmentCreateSyncPageLoader,
     );
 
     unawaited(widget.operationReplayScheduler?.start());

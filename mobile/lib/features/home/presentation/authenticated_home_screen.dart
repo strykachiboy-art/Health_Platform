@@ -55,6 +55,26 @@ List<HomeDestination> homeDestinationsFor({
     ),
   ];
 
+  // The backend exposes patient/staff-scoped appointments, not a global list.
+  // Only the four appointment roles with an active clinic see this entry.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{
+        'admin',
+        'doctor',
+        'nurse',
+        'receptionist',
+      }.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'appointments',
+        'Appointments',
+        '/appointments',
+        Icons.event_note_outlined,
+      ),
+    );
+  }
   if (_patientDirectoryRoles.contains(normalizedRole)) {
     destinations.insert(
       0,
