@@ -26,6 +26,8 @@ import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_prescription_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_clinical_alert_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_detail_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_directory_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_registration_screen.dart';
@@ -45,6 +47,8 @@ GoRouter createAppRouter({
   PatientVitalsRemoteDataSource? patientVitalsDataSource,
   PatientAdmissionRemoteDataSource? patientAdmissionDataSource,
   PatientConsultationRemoteDataSource? patientConsultationDataSource,
+  PatientPrescriptionRemoteDataSource? patientPrescriptionDataSource,
+  PatientClinicalAlertRemoteDataSource? patientClinicalAlertDataSource,
   EmergencyAccessRemoteDataSource? emergencyAccessDataSource,
   ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource,
   EmergencyAccessContext? emergencyAccessContext,
@@ -164,6 +168,8 @@ GoRouter createAppRouter({
                 vitalsDataSource: patientVitalsDataSource,
                 admissionDataSource: patientAdmissionDataSource,
                 consultationDataSource: patientConsultationDataSource,
+                prescriptionDataSource: patientPrescriptionDataSource,
+                clinicalAlertDataSource: patientClinicalAlertDataSource,
                 emergencyAccessContext: emergencyAccessContext,
               );
             },

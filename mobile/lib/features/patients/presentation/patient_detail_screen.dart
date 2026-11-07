@@ -16,6 +16,10 @@ import 'package:clinic_system_pro/features/patients/data/patient_consultation_re
 import 'package:clinic_system_pro/features/patients/presentation/patient_vitals_history_card.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_admission_history_card.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_consultation_history_card.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_prescription_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_clinical_alert_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_prescription_history_card.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_clinical_alerts_card.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_profile_edit_screen.dart';
 
 class PatientDetailScreen extends StatefulWidget {
@@ -28,6 +32,8 @@ class PatientDetailScreen extends StatefulWidget {
     this.vitalsDataSource,
     this.admissionDataSource,
     this.consultationDataSource,
+    this.prescriptionDataSource,
+    this.clinicalAlertDataSource,
   });
 
   final PatientRemoteDataSource dataSource;
@@ -37,6 +43,8 @@ class PatientDetailScreen extends StatefulWidget {
   final PatientVitalsRemoteDataSource? vitalsDataSource;
   final PatientAdmissionRemoteDataSource? admissionDataSource;
   final PatientConsultationRemoteDataSource? consultationDataSource;
+  final PatientPrescriptionRemoteDataSource? prescriptionDataSource;
+  final PatientClinicalAlertRemoteDataSource? clinicalAlertDataSource;
 
   @override
   State<PatientDetailScreen> createState() => _PatientDetailScreenState();
@@ -352,6 +360,26 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             key: ValueKey('patient-consultations-for-${patient.id}'),
             patientId: patient.id,
             dataSource: widget.consultationDataSource!,
+          ),
+        ],
+        // These read-only panels require the verified current patient
+        // snapshot. Backend authorization remains authoritative.
+        if (widget.prescriptionDataSource != null &&
+            !_patientSnapshotStale) ...[
+          const SizedBox(height: 12),
+          PatientPrescriptionHistoryCard(
+            key: ValueKey('patient-prescriptions-for-${patient.id}'),
+            patientId: patient.id,
+            dataSource: widget.prescriptionDataSource!,
+          ),
+        ],
+        if (widget.clinicalAlertDataSource != null &&
+            !_patientSnapshotStale) ...[
+          const SizedBox(height: 12),
+          PatientClinicalAlertsCard(
+            key: ValueKey('patient-clinical-alerts-for-${patient.id}'),
+            patientId: patient.id,
+            dataSource: widget.clinicalAlertDataSource!,
           ),
         ],
         _section('Identifiers', [
