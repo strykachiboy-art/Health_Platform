@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/data/models/clinic_chat_read_models.dart';
 
-import 'clinic_chat_conversation_screen.dart';
+import 'clinic_chat_text_conversation_screen.dart';
 
 /// CHAT-B: authenticated, in-memory, read-only inbox. Navigation wiring is
 /// reserved for CHAT-F, after text-write and realtime phases pass their gates.
@@ -192,7 +192,7 @@ class _ClinicChatInboxScreenState extends State<ClinicChatInboxScreen> {
                       ),
                       onTap: () => Navigator.of(context).push<void>(
                         MaterialPageRoute<void>(
-                          builder: (_) => ClinicChatConversationScreen(
+                          builder: (_) => ClinicChatTextConversationScreen(
                             dataSource: widget.dataSource,
                             conversationId: convo.id,
                           ),
