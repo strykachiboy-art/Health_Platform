@@ -58,6 +58,13 @@ class BloodProductOrder(db.Model):
             name="ck_blood_product_orders_emergency_evidence",
         ),
         db.CheckConstraint(
+            "emergency_release_requested = false OR "
+            "(emergency_request_reason IS NOT NULL AND "
+            "emergency_requested_by_staff_id IS NOT NULL AND "
+            "emergency_requested_at IS NOT NULL AND priority = 'stat')",
+            name="ck_blood_product_orders_emergency_request_evidence",
+        ),
+        db.CheckConstraint(
             "status != 'completed' "
             "OR (completed_at IS NOT NULL "
             "AND fulfilled_by_staff_id IS NOT NULL "
@@ -201,6 +208,23 @@ class BloodProductOrder(db.Model):
     )
     emergency_release_reason = db.Column(
         db.Text,
+        nullable=True,
+    )
+    # Doctor-authenticated emergency intent, distinct from lab verification.
+    emergency_release_requested = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=db.text("false"),
+    )
+    emergency_request_reason = db.Column(db.Text, nullable=True)
+    emergency_requested_by_staff_id = db.Column(
+        db.Integer,
+        db.ForeignKey("staff.id"),
+        nullable=True,
+    )
+    emergency_requested_at = db.Column(
+        db.DateTime(timezone=True),
         nullable=True,
     )
 

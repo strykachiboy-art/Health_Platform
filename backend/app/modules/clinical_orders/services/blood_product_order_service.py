@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from flask import current_app
 from sqlalchemy import select
 
 from app.extensions import db
@@ -38,6 +39,10 @@ _PRODUCT_TYPES = {
     "fresh_frozen_plasma",
     "cryoprecipitate",
 }
+
+# Phase E S01 supports explicitly requested emergency RED CELL issue only.
+# Other component types require separate blood-bank policy review.
+_EMERGENCY_RED_CELL_TYPES = {"packed_red_blood_cells", "whole_blood"}
 
 _MUTABLE_STATUSES = {
     ClinicalOrderLifecycleStatus.PENDING.value,
@@ -283,6 +288,9 @@ def create_blood_product_order(
     special_requirements: str | None = None,
     priority=ClinicalOrderPriority.ROUTINE,
     scheduled_at: datetime | None = None,
+    emergency_release_requested: bool = False,
+    emergency_request_reason: str | None = None,
+    emergency_risk_acknowledged: bool = False,
 ) -> BloodProductOrder:
     actor = _get_doctor(actor_staff_id, clinic_id)
     admission = _get_admission(
@@ -301,6 +309,24 @@ def create_blood_product_order(
             clinic_id,
             patient.id,
         )
+
+    if type(emergency_release_requested) is not bool or type(emergency_risk_acknowledged) is not bool:
+        raise ValidationError("Emergency request flags must be booleans")
+    emergency_intent_reason = None
+    if emergency_release_requested:
+        if current_app.config.get("EMERGENCY_BLOOD_RELEASE_ENABLED") is not True:
+            raise ConflictError("Emergency blood release remains disabled")
+        if not emergency_risk_acknowledged:
+            raise ValidationError("Explicit physician emergency risk acknowledgment is required")
+        if _normalize_priority(priority) != ClinicalOrderPriority.STAT.value:
+            raise ValidationError("Emergency blood request must have stat priority")
+        if _normalize_product_type(product_type) not in _EMERGENCY_RED_CELL_TYPES:
+            raise ValidationError("Emergency request currently supports red-cell orders only")
+        emergency_intent_reason = _required_text(
+            emergency_request_reason, "emergency_request_reason", 10000
+        )
+    elif emergency_request_reason is not None or emergency_risk_acknowledged:
+        raise ValidationError("Emergency request evidence is not allowed on standard orders")
 
     if scheduled_at is not None and not isinstance(scheduled_at, datetime):
         raise ValidationError("scheduled_at must be a datetime")
@@ -331,6 +357,12 @@ def create_blood_product_order(
             patient.blood_type
         ),
         compatibility_status="pending",
+        emergency_release_requested=emergency_release_requested,
+        emergency_request_reason=emergency_intent_reason,
+        emergency_requested_by_staff_id=(
+            actor.id if emergency_release_requested else None
+        ),
+        emergency_requested_at=(_utcnow() if emergency_release_requested else None),
         priority=_normalize_priority(priority),
         status=ClinicalOrderLifecycleStatus.ACTIVE.value,
         scheduled_at=scheduled_at,
@@ -354,6 +386,10 @@ def create_blood_product_order(
             ),
             "priority": order.priority,
             "status": order.status,
+            "emergency_release_requested": order.emergency_release_requested,
+            "emergency_requested_by_staff_id": order.emergency_requested_by_staff_id,
+            "emergency_request_reason": order.emergency_request_reason,
+            "emergency_risk_acknowledged": emergency_risk_acknowledged,
             "version": order.version,
         },
     )
@@ -450,6 +486,17 @@ def verify_blood_product_compatibility(
             ) from exc
 
     if emergency_release:
+        if current_app.config.get("EMERGENCY_BLOOD_RELEASE_ENABLED") is not True:
+            raise ConflictError("Emergency blood release remains disabled")
+        if not order.emergency_release_requested or order.emergency_requested_by_staff_id is None:
+            raise ConflictError("A signed physician emergency request is required")
+        # Revalidate the originating physician and the current clinical context.
+        _get_doctor(order.emergency_requested_by_staff_id, clinic_id)
+        _get_admission(order.admission_id, clinic_id, require_active=True)
+        if order.priority != ClinicalOrderPriority.STAT.value or order.product_type not in _EMERGENCY_RED_CELL_TYPES:
+            raise ConflictError("Emergency red-cell request evidence is invalid")
+        if normalized_product_type is None or normalized_product_type == BloodType.UNKNOWN.value:
+            raise ValidationError("Product blood type must be recorded for emergency red-cell issue")
         if emergency_release_reason is None:
             raise ValidationError(
                 "emergency_release_reason is required"
@@ -468,6 +515,8 @@ def verify_blood_product_compatibility(
             128,
         )
     else:
+        if emergency_release_reason is not None:
+            raise ValidationError("Emergency reason is not permitted in standard verification")
         if current_blood_type == BloodType.UNKNOWN.value:
             raise ConflictError(
                 "Patient blood type must be known before compatibility verification"
@@ -497,7 +546,10 @@ def verify_blood_product_compatibility(
         actor=actor,
         action=AuditAction.UPDATE,
         order=order,
-        description="Verified blood product compatibility",
+        description=(
+            "Recorded emergency red-cell release without completed crossmatch"
+            if emergency_release else "Verified blood product compatibility"
+        ),
         new_value={
             "compatibility_status": order.compatibility_status,
             "patient_blood_type_verified": (
@@ -505,6 +557,13 @@ def verify_blood_product_compatibility(
             ),
             "product_blood_type": order.product_blood_type,
             "crossmatch_reference": order.crossmatch_reference,
+            "emergency_requested_by_staff_id": order.emergency_requested_by_staff_id,
+            "emergency_request_reason": (
+                order.emergency_request_reason if emergency_release else None
+            ),
+            "emergency_release_reason": (
+                order.emergency_release_reason if emergency_release else None
+            ),
             "version": order.version,
         },
     )
@@ -538,6 +597,18 @@ def fulfill_blood_product_order(
         raise ConflictError(
             "Blood product compatibility must be verified before fulfillment"
         )
+
+    if order.compatibility_status == "emergency_release":
+        if current_app.config.get("EMERGENCY_BLOOD_RELEASE_ENABLED") is not True:
+            raise ConflictError("Emergency blood release remains disabled")
+        if (not order.emergency_release_requested
+                or order.emergency_requested_by_staff_id is None
+                or order.emergency_requested_at is None):
+            raise ConflictError("A signed physician emergency request is required")
+        _get_doctor(order.emergency_requested_by_staff_id, clinic_id)
+        _get_admission(order.admission_id, clinic_id, require_active=True)
+        if not order.product_blood_type or order.product_blood_type == BloodType.UNKNOWN.value:
+            raise ConflictError("Emergency release product blood type is missing")
 
     units_issued = _positive_units(
         units_issued,

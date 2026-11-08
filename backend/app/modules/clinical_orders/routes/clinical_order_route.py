@@ -570,6 +570,9 @@ def create_blood_product_order_route():
         special_requirements=payload.special_requirements,
         priority=payload.priority,
         scheduled_at=payload.scheduled_at,
+        emergency_release_requested=payload.emergency_release_requested,
+        emergency_request_reason=payload.emergency_request_reason,
+        emergency_risk_acknowledged=payload.emergency_risk_acknowledged,
     )
     return jsonify({
         "message": "Blood product order created",

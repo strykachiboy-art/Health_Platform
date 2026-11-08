@@ -46,6 +46,10 @@ class BloodProductOrderCreateSchema(_RequestModel):
     )
     priority: ClinicalOrderPriority = ClinicalOrderPriority.ROUTINE
     scheduled_at: datetime | None = None
+    # Doctor must explicitly request this exceptional, disabled-by-default path.
+    emergency_release_requested: bool = False
+    emergency_request_reason: str | None = Field(default=None, max_length=10000)
+    emergency_risk_acknowledged: bool = False
 
     @field_validator("product_type")
     @classmethod
@@ -114,6 +118,10 @@ class BloodProductOrderResponseSchema(_ResponseModel):
     compatibility_notes: str | None = None
     compatibility_verified_at: datetime | None = None
     emergency_release_reason: str | None = None
+    emergency_release_requested: bool = False
+    emergency_request_reason: str | None = None
+    emergency_requested_by_staff_id: int | None = Field(default=None, gt=0)
+    emergency_requested_at: datetime | None = None
 
     priority: ClinicalOrderPriority
     status: ClinicalOrderLifecycleStatus

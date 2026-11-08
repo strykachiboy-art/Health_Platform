@@ -239,6 +239,8 @@ def test_standard_compatibility_verification_requires_known_patient_type(
 def test_emergency_release_allows_unknown_patient_type_with_reason(
     monkeypatch, clinic, make_patient, make_staff
 ):
+    app_config = __import__("flask").current_app.config
+    app_config["EMERGENCY_BLOOD_RELEASE_ENABLED"] = True
     ctx = _context(
         monkeypatch=monkeypatch,
         clinic=clinic,
@@ -247,7 +249,12 @@ def test_emergency_release_allows_unknown_patient_type_with_reason(
     )
     ctx["patient"].blood_type = BloodType.UNKNOWN
     db.session.commit()
-    order = _create(ctx, clinic)
+    order = _create(
+        ctx, clinic,
+        emergency_release_requested=True,
+        emergency_request_reason="Life-threatening hemorrhage: physician request",
+        emergency_risk_acknowledged=True,
+    )
 
     verified = (
         blood_product_order_service
@@ -256,6 +263,7 @@ def test_emergency_release_allows_unknown_patient_type_with_reason(
             clinic_id=clinic.id,
             actor_staff_id=ctx["lab_tech"].id,
             emergency_release=True,
+            product_blood_type=BloodType.O_NEG,
             emergency_release_reason=(
                 "Life-threatening hemorrhage; cannot await typing"
             ),
@@ -270,13 +278,20 @@ def test_emergency_release_allows_unknown_patient_type_with_reason(
 def test_emergency_release_requires_reason(
     monkeypatch, clinic, make_patient, make_staff
 ):
+    app_config = __import__("flask").current_app.config
+    app_config["EMERGENCY_BLOOD_RELEASE_ENABLED"] = True
     ctx = _context(
         monkeypatch=monkeypatch,
         clinic=clinic,
         make_patient=make_patient,
         make_staff=make_staff,
     )
-    order = _create(ctx, clinic)
+    order = _create(
+        ctx, clinic,
+        emergency_release_requested=True,
+        emergency_request_reason="Urgent transfusion without time for crossmatch",
+        emergency_risk_acknowledged=True,
+    )
 
     with pytest.raises(
         ValidationError,
@@ -287,6 +302,7 @@ def test_emergency_release_requires_reason(
             clinic_id=clinic.id,
             actor_staff_id=ctx["lab_tech"].id,
             emergency_release=True,
+            product_blood_type=BloodType.O_NEG,
         )
 
 
