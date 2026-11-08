@@ -135,6 +135,55 @@ class ClinicChatReadRemoteDataSource {
     return result;
   }
 
+  /// CHAT-E: canonical server-owned admission link, never inferred from titles.
+  /// Double-reads the existing authorized conversation before showing PHI.
+  Future<ClinicChatConversation> getAdmissionCaseConversation({
+    required int admissionId,
+    required int patientId,
+  }) async {
+    _positive(admissionId, 'admissionId');
+    _positive(patientId, 'patientId');
+    final revision = sessionNavigationGuard.revision;
+    final before = await _session(revision);
+    final (json, session) = await _get(
+      'api/v1/chat/admissions/$admissionId/conversation',
+    );
+    if (json['success'] != true) {
+      throw const FormatException('Admission case link was not confirmed.');
+    }
+    final link = ClinicChatDecode.object(json['data']);
+    final clinicId = session.clinicContextId!;
+    if (ClinicChatDecode.id(link, 'clinic_id') != clinicId ||
+        ClinicChatDecode.id(link, 'admission_id') != admissionId ||
+        ClinicChatDecode.id(link, 'patient_id') != patientId) {
+      throw const FormatException('Admission case link scope mismatch.');
+    }
+    final linkedId = ClinicChatDecode.id(link, 'conversation_id');
+    final linked = ClinicChatConversation.fromJson(
+      ClinicChatDecode.object(link['conversation']),
+      expectedClinicId: clinicId,
+    );
+    if (linked.id != linkedId ||
+        linked.patientId != patientId ||
+        linked.kind != ClinicChatKind.patient ||
+        linked.status != ClinicChatStatus.active) {
+      throw const FormatException('Admission case conversation is invalid.');
+    }
+    final verified = await getConversation(linkedId);
+    final after = await _session(revision);
+    if (!_same(before, after) || !_current(revision)) {
+      throw const ClinicChatSessionUnavailable();
+    }
+    if (verified.id != linkedId ||
+        verified.clinicId != clinicId ||
+        verified.patientId != patientId ||
+        verified.kind != ClinicChatKind.patient ||
+        verified.status != ClinicChatStatus.active) {
+      throw const FormatException('Admission case readback scope changed.');
+    }
+    return verified;
+  }
+
   Future<ClinicChatConversation> getConversation(int conversationId) async {
     _positive(conversationId, 'conversationId');
     final (json, session) = await _get(

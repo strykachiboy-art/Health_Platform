@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_text_conversation_screen.dart';
+
 import 'package:clinic_system_pro/features/nursing/data/models/nursing_handoff_care_team.dart';
 import 'package:clinic_system_pro/features/nursing/data/nursing_handoff_care_team_remote_data_source.dart';
 
@@ -172,6 +175,79 @@ class _NursingHandoffsCareTeamScreenState
         _busy = false;
         _notice = 'Care team or handoff data unavailable. No write sent.';
       });
+    }
+  }
+
+  /// CHAT-E: only the server can identify and authorize this admission chat.
+  Future<void> _openCaseChat() async {
+    final reviewed = _review;
+    final guard = widget.dataSource.sessionNavigationGuard;
+    if (reviewed == null ||
+        _busy ||
+        widget.dataSource.writeAttempted ||
+        !guard.canAccessProtectedRoutes) {
+      return;
+    }
+    final generation = _generation;
+    final revision = guard.revision;
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
+    try {
+      final fresh = await widget.dataSource.inspect(
+        patientId: reviewed.admission.patientId,
+      );
+      if (!_valid(generation, revision)) {
+        return;
+      }
+      if (fresh == null ||
+          !fresh.admission.isActive ||
+          fresh.admission.id != reviewed.admission.id ||
+          fresh.admission.patientId != reviewed.admission.patientId) {
+        throw const FormatException('Admission context changed.');
+      }
+      final source = ClinicChatReadRemoteDataSource(
+        apiClient: widget.dataSource.apiClient,
+        loadSession: widget.dataSource.loadSession,
+        sessionNavigationGuard: guard,
+      );
+      final conversation = await source.getAdmissionCaseConversation(
+        admissionId: fresh.admission.id,
+        patientId: fresh.admission.patientId,
+      );
+      if (!_valid(generation, revision) || widget.dataSource.writeAttempted) {
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ClinicChatTextConversationScreen(
+            dataSource: source,
+            conversationId: conversation.id,
+            realtimeEnabled: true,
+          ),
+        ),
+      );
+      if (_valid(generation, revision)) {
+        setState(() {
+          _busy = false;
+          _review = null;
+          _selected = null;
+          _summary = null;
+          _notice = 'Case chat closed. Reload admission and assignments.';
+        });
+      }
+    } on Object {
+      if (_valid(generation, revision)) {
+        setState(() {
+          _busy = false;
+          _notice = 'Case conversation unavailable or assignment changed. '
+              'Refresh the active admission; no chat write was sent.';
+        });
+      }
     }
   }
 
@@ -398,6 +474,15 @@ class _NursingHandoffsCareTeamScreenState
                     'Admission ${review.admission.id} · patient ${review.admission.patientId}',
                   ),
                   const Text('Authoritative primary care team'),
+                  OutlinedButton.icon(
+                    key: const ValueKey('chat-e-open-case'),
+                    onPressed: !_busy && !locked ? _openCaseChat : null,
+                    icon: const Icon(Icons.forum_outlined),
+                    label: const Text('Open admission case chat'),
+                  ),
+                  if (_notice != null &&
+                      _notice!.startsWith('Case conversation unavailable'))
+                    Text(_notice!, key: const ValueKey('chat-e-denied')),
                   Text(
                     'Doctor: ${review.careTeam.primaryDoctor?.displayName ?? 'Unassigned'}',
                   ),
