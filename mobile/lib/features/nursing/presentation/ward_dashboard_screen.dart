@@ -8,6 +8,8 @@ import 'package:clinic_system_pro/features/nursing/data/ward_admission_workflow_
 import 'package:clinic_system_pro/features/nursing/presentation/ward_admissions_transfers_screen.dart';
 import 'package:clinic_system_pro/features/nursing/data/nursing_care_plan_task_remote_data_source.dart';
 import 'package:clinic_system_pro/features/nursing/presentation/nursing_care_plans_tasks_screen.dart';
+import 'package:clinic_system_pro/features/nursing/data/nursing_note_workflow_remote_data_source.dart';
+import 'package:clinic_system_pro/features/nursing/presentation/nursing_notes_screen.dart';
 
 /// P23E.B: online, read-only ward and bed status from the authoritative API.
 /// No automatic retries, PHI cache, offline writes, or local bed decisions.
@@ -225,6 +227,26 @@ class _WardDashboardScreenState extends State<WardDashboardScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 const Text('Online ward and bed status · read only'),
+                ListTile(
+                  key: const ValueKey('p23e-e-open'),
+                  leading: const Icon(Icons.note_alt_outlined),
+                  title: const Text('Nursing notes'),
+                  subtitle: const Text(
+                    'Drafts, signing & auditable amendments · online only',
+                  ),
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => NursingNotesScreen(
+                        dataSource: NursingNoteWorkflowRemoteDataSource(
+                          apiClient: widget.dataSource.apiClient,
+                          loadSession: widget.dataSource.loadSession,
+                          sessionNavigationGuard:
+                              widget.dataSource.sessionNavigationGuard,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
                 ListTile(
                   key: const ValueKey('p23e-d-open'),
                   leading: const Icon(Icons.assignment_turned_in_outlined),
