@@ -10,6 +10,8 @@ import 'package:clinic_system_pro/features/nursing/data/nursing_care_plan_task_r
 import 'package:clinic_system_pro/features/nursing/presentation/nursing_care_plans_tasks_screen.dart';
 import 'package:clinic_system_pro/features/nursing/data/nursing_note_workflow_remote_data_source.dart';
 import 'package:clinic_system_pro/features/nursing/presentation/nursing_notes_screen.dart';
+import 'package:clinic_system_pro/features/nursing/data/nursing_handoff_care_team_remote_data_source.dart';
+import 'package:clinic_system_pro/features/nursing/presentation/nursing_handoffs_care_team_screen.dart';
 
 /// P23E.B: online, read-only ward and bed status from the authoritative API.
 /// No automatic retries, PHI cache, offline writes, or local bed decisions.
@@ -227,6 +229,26 @@ class _WardDashboardScreenState extends State<WardDashboardScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 const Text('Online ward and bed status · read only'),
+                ListTile(
+                  key: const ValueKey('p23e-f-open'),
+                  leading: const Icon(Icons.groups_outlined),
+                  title: const Text('Nursing handoffs & care team'),
+                  subtitle: const Text(
+                    'Active admission · live responsibility & shift transfer',
+                  ),
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => NursingHandoffsCareTeamScreen(
+                        dataSource: NursingHandoffCareTeamRemoteDataSource(
+                          apiClient: widget.dataSource.apiClient,
+                          loadSession: widget.dataSource.loadSession,
+                          sessionNavigationGuard:
+                              widget.dataSource.sessionNavigationGuard,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
                 ListTile(
                   key: const ValueKey('p23e-e-open'),
                   leading: const Icon(Icons.note_alt_outlined),
