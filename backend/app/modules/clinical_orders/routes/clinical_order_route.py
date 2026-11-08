@@ -32,6 +32,7 @@ from app.modules.clinical_orders.schemas.blood_product_order_schema import (
     BloodProductCompatibilitySchema,
     BloodProductFulfillSchema,
     BloodProductEmergencyReviewSchema,
+    BloodProductLabFollowupRecordSchema,
     BloodProductOrderCreateSchema,
     BloodProductOrderListResponseSchema,
     BloodProductOrderResponseSchema,
@@ -76,6 +77,7 @@ from app.modules.clinical_orders.services.blood_product_order_service import (
     create_blood_product_order,
     fulfill_blood_product_order,
     review_emergency_blood_release,
+    record_emergency_blood_lab_followup,
     get_blood_product_order,
     list_blood_product_orders,
     verify_blood_product_compatibility,
@@ -694,6 +696,31 @@ def review_emergency_blood_release_route(blood_product_order_id: int):
     )
     return jsonify({
         "message": "Emergency blood issue review recorded",
+        "order": _serialize(BloodProductOrderResponseSchema, order),
+    }), 200
+
+
+@clinical_order_bp.post(
+    "/blood-products/<int:blood_product_order_id>/units/"
+    "<int:issued_unit_id>/lab-followup"
+)
+@role_required(*BLOOD_PRODUCT_VERIFY_ROLES)
+def record_emergency_blood_lab_followup_route(
+    blood_product_order_id: int, issued_unit_id: int,
+):
+    payload = BloodProductLabFollowupRecordSchema.model_validate(_json_body())
+    order = record_emergency_blood_lab_followup(
+        blood_product_order_id,
+        issued_unit_id=issued_unit_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        lab_order_item_id=payload.lab_order_item_id,
+        outcome=payload.outcome,
+        evidence_note=payload.evidence_note,
+        escalation_note=payload.escalation_note,
+    )
+    return jsonify({
+        "message": "Post-release laboratory evidence recorded; clearance not certified",
         "order": _serialize(BloodProductOrderResponseSchema, order),
     }), 200
 

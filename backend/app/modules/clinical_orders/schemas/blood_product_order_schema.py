@@ -86,6 +86,29 @@ class BloodProductIssuedUnitResponseSchema(_ResponseModel):
     issued_at: datetime
 
 
+class BloodProductLabFollowupRecordSchema(_RequestModel):
+    lab_order_item_id: int = Field(..., gt=0)
+    outcome: str = Field(..., pattern="^(evidence_recorded|discrepancy_escalated)$")
+    evidence_note: str = Field(..., min_length=1, max_length=10000)
+    escalation_note: str | None = Field(default=None, max_length=10000)
+
+
+class BloodProductLabFollowupResponseSchema(_ResponseModel):
+    id: int = Field(..., gt=0)
+    clinic_id: int = Field(..., gt=0)
+    patient_id: int = Field(..., gt=0)
+    admission_id: int = Field(..., gt=0)
+    order_id: int = Field(..., gt=0)
+    issued_unit_id: int = Field(..., gt=0)
+    status: str
+    lab_order_item_id: int | None = Field(default=None, gt=0)
+    recorded_by_staff_id: int | None = Field(default=None, gt=0)
+    recorded_at: datetime | None = None
+    evidence_note: str | None = None
+    escalation_note: str | None = None
+    created_at: datetime | None = None
+
+
 class BloodProductEmergencyReviewSchema(_RequestModel):
     outcome: str = Field(..., pattern="^(reviewed|escalated)$")
     note: str = Field(..., min_length=1, max_length=10000)
@@ -150,6 +173,7 @@ class BloodProductOrderResponseSchema(_ResponseModel):
     emergency_reviewed_by_staff_id: int | None = Field(default=None, gt=0)
     emergency_reviewed_at: datetime | None = None
     issued_units: list[BloodProductIssuedUnitResponseSchema] = Field(default_factory=list)
+    lab_followups: list[BloodProductLabFollowupResponseSchema] = Field(default_factory=list)
 
     priority: ClinicalOrderPriority
     status: ClinicalOrderLifecycleStatus

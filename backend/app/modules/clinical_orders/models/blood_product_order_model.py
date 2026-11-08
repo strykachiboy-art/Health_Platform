@@ -337,3 +337,8 @@ class BloodProductOrder(db.Model):
         back_populates="order",
         order_by="BloodProductIssuedUnit.id",
     )
+    lab_followups = db.relationship(
+        "BloodProductLabFollowup",
+        back_populates="order",
+        order_by="BloodProductLabFollowup.id",
+    )

@@ -107,6 +107,9 @@ from app.modules.clinical_orders.models.blood_product_order_model import (
 from app.modules.clinical_orders.models.blood_product_issued_unit_model import (
     BloodProductIssuedUnit,
 )
+from app.modules.clinical_orders.models.blood_product_lab_followup_model import (
+    BloodProductLabFollowup,
+)
 from app.modules.clinical_orders.models.diet_order_model import (
     DietOrder,
 )

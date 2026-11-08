@@ -15,6 +15,7 @@ from app.core.enums.clinical_order_enums import (
     ClinicalOrderType,
 )
 from app.core.enums.patient_enums import BloodType
+from app.core.enums.lab_enums import LabOrderStatus, LabResultFlag, SampleType
 from app.core.enums.role_enums import Role
 from app.core.enums.staff_enums import StaffStatus
 from app.core.enums.ward_enums import AdmissionStatus
@@ -34,6 +35,10 @@ from app.modules.clinical_orders.models.blood_product_order_model import (
 from app.modules.clinical_orders.models.blood_product_issued_unit_model import (
     BloodProductIssuedUnit,
 )
+from app.modules.clinical_orders.models.blood_product_lab_followup_model import (
+    BloodProductLabFollowup,
+)
+from app.modules.lab.models.lab_model import LabOrder, LabOrderItem, LabTest
 
 
 _PRODUCT_TYPES = {
@@ -672,6 +677,21 @@ def fulfill_blood_product_order(
         # across concurrent orders; transactional decorator rolls back.
         raise ConflictError("Blood unit identifier has already been issued") from exc
 
+    if order.compatibility_status == "emergency_release":
+        db.session.add_all([
+            BloodProductLabFollowup(
+                clinic_id=unit.clinic_id,
+                patient_id=unit.patient_id,
+                admission_id=unit.admission_id,
+                order_id=unit.order_id,
+                issued_unit_id=unit.id,
+                status="pending",
+                created_at=unit.issued_at,
+            )
+            for unit in order.issued_units
+        ])
+        db.session.flush()
+
     _audit(
         actor=actor,
         action=AuditAction.STATUS_CHANGE,
@@ -686,6 +706,146 @@ def fulfill_blood_product_order(
             ),
             "patient_id": order.patient_id,
             "admission_id": order.admission_id,
+            "version": order.version,
+        },
+    )
+    return order
+
+
+@transactional
+def record_emergency_blood_lab_followup(
+    blood_product_order_id: int,
+    *,
+    issued_unit_id: int,
+    clinic_id: int,
+    actor_staff_id: int,
+    lab_order_item_id: int,
+    outcome: str,
+    evidence_note: str,
+    escalation_note: str | None = None,
+) -> BloodProductOrder:
+    """Record verified lab evidence, NEVER compatibility clearance.
+
+    This retrospective path remains permitted after emergency release is
+    disabled, so turning off new emergency issue does not hide obligations.
+    """
+    actor = _get_lab_technician(actor_staff_id, clinic_id)
+    order = _get_order(blood_product_order_id, clinic_id, lock=True)
+    if (order.compatibility_status != "emergency_release"
+            or order.status != ClinicalOrderLifecycleStatus.COMPLETED.value):
+        raise ConflictError("Laboratory follow-up requires a completed emergency release")
+
+    unit = db.session.execute(
+        select(BloodProductIssuedUnit).where(
+            BloodProductIssuedUnit.id == _positive_id(issued_unit_id, "issued_unit_id"),
+            BloodProductIssuedUnit.order_id == order.id,
+            BloodProductIssuedUnit.clinic_id == clinic_id,
+            BloodProductIssuedUnit.patient_id == order.patient_id,
+            BloodProductIssuedUnit.admission_id == order.admission_id,
+        ).with_for_update()
+    ).scalar_one_or_none()
+    if unit is None:
+        raise NotFoundError("Issued blood unit not found for this order and clinic")
+
+    record = db.session.execute(
+        select(BloodProductLabFollowup).where(
+            BloodProductLabFollowup.issued_unit_id == unit.id,
+            BloodProductLabFollowup.order_id == order.id,
+            BloodProductLabFollowup.clinic_id == clinic_id,
+        ).with_for_update()
+    ).scalar_one_or_none()
+    if record is None:
+        raise ConflictError("Issued unit has no pending laboratory follow-up")
+    if record.status != "pending":
+        raise ConflictError("Laboratory follow-up has already been recorded")
+
+    if outcome not in ("evidence_recorded", "discrepancy_escalated"):
+        raise ValidationError("Invalid laboratory follow-up outcome")
+    note = _required_text(evidence_note, "evidence_note", 10000)
+    if outcome == "discrepancy_escalated":
+        escalation = _required_text(escalation_note, "escalation_note", 10000)
+    elif escalation_note is not None:
+        raise ValidationError("Escalation note is permitted only for discrepancy")
+    else:
+        escalation = None
+
+    configured = current_app.config.get("EMERGENCY_BLOOD_FOLLOWUP_TEST_CODES", ())
+    if not isinstance(configured, (tuple, list, set)) or not configured:
+        raise ConflictError("Approved laboratory follow-up test codes are not configured")
+    approved_codes = {
+        x.strip() for x in configured if isinstance(x, str) and x.strip()
+    }
+    if not approved_codes:
+        raise ConflictError("Approved laboratory follow-up test codes are not configured")
+
+    item = db.session.execute(
+        select(LabOrderItem)
+        .join(LabOrder, LabOrderItem.order_id == LabOrder.id)
+        .join(LabTest, LabOrderItem.test_id == LabTest.id)
+        .where(
+            LabOrderItem.id == _positive_id(lab_order_item_id, "lab_order_item_id"),
+            LabOrder.clinic_id == clinic_id,
+            LabOrder.patient_id == order.patient_id,
+        )
+    ).scalar_one_or_none()
+    if item is None:
+        raise NotFoundError("Laboratory evidence not found for this patient and clinic")
+
+    lab = item.order
+    if (lab.status != LabOrderStatus.COMPLETED
+            or lab.verified_by_id is None or lab.verified_at is None
+            or lab.completed_at is None
+            or lab.sample_collected_at is None
+            or lab.processed_at is None
+            or item.resulted_at is None
+            or not isinstance(item.result_value, str)
+            or not item.result_value.strip()):
+        raise ConflictError("Laboratory evidence must be fully verified and completed")
+    if item.test.code not in approved_codes or item.test.sample_type != SampleType.BLOOD:
+        raise ConflictError("Laboratory test is not an approved blood follow-up test")
+    if item.resulted_at < unit.issued_at:
+        raise ConflictError("Laboratory follow-up result predates emergency unit issue")
+    if item.flag in (LabResultFlag.ABNORMAL, LabResultFlag.CRITICAL) and outcome != "discrepancy_escalated":
+        raise ConflictError("Abnormal or critical laboratory evidence requires escalation")
+
+    already_linked = db.session.execute(
+        select(BloodProductLabFollowup.id).where(
+            BloodProductLabFollowup.lab_order_item_id == item.id,
+            BloodProductLabFollowup.issued_unit_id != unit.id,
+        )
+    ).scalar_one_or_none()
+    if already_linked is not None:
+        raise ConflictError("Laboratory evidence already linked to another issued unit")
+
+    record.status = outcome
+    record.lab_order_item_id = item.id
+    record.recorded_by_staff_id = actor.id
+    record.recorded_at = _utcnow()
+    record.evidence_note = note
+    record.escalation_note = escalation
+    order.version += 1
+    try:
+        db.session.flush()
+    except IntegrityError as exc:
+        # PostgreSQL uniqueness is authoritative if two orders race to
+        # attach the same verified lab item. Transactional rolls back.
+        raise ConflictError(
+            "Laboratory evidence already linked to another issued unit"
+        ) from exc
+    _audit(
+        actor=actor,
+        action=AuditAction.UPDATE,
+        order=order,
+        description="Post-release laboratory evidence linked to issued blood unit",
+        new_value={
+            "issued_unit_id": unit.id,
+            "unit_identifier": unit.unit_identifier,
+            "lab_order_item_id": item.id,
+            "lab_order_id": lab.id,
+            "lab_verified_by_id": lab.verified_by_id,
+            "outcome": outcome,
+            "escalation_note": escalation,
+            "compatibility_clearance_certified": False,
             "version": order.version,
         },
     )
