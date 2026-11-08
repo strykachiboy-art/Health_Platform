@@ -44,6 +44,8 @@ import 'package:clinic_system_pro/features/patients/data/patient_remote_data_sou
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
+import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
+import 'package:clinic_system_pro/features/nursing/presentation/ward_dashboard_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_prescription_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_clinical_alert_remote_data_source.dart';
@@ -170,6 +172,29 @@ GoRouter createAppRouter({
                 clinicContextSwitcher: switcher,
                 signOutCoordinator: signOutCoordinator,
                 sessionNavigationGuard: sessionNavigationGuard,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/wards',
+            name: 'p23e-b-wards',
+            builder: (context, state) {
+              final admissions = patientAdmissionDataSource;
+              final guard = sessionNavigationGuard;
+              if (admissions == null ||
+                  guard == null ||
+                  !identical(admissions.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Ward dashboard unavailable.')),
+                );
+              }
+              return WardDashboardScreen(
+                dataSource: WardDashboardRemoteDataSource(
+                  apiClient: admissions.apiClient,
+                  loadSession: admissions.loadSession,
+                  sessionNavigationGuard: guard,
+                ),
               );
             },
           ),

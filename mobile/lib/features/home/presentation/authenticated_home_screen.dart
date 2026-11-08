@@ -101,6 +101,25 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  // Server-authorized ward status is read-only in P23E.B.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{
+        'admin',
+        'doctor',
+        'nurse',
+        'receptionist',
+      }.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'wards',
+        'Wards & beds',
+        '/wards',
+        Icons.bed_outlined,
+      ),
+    );
+  }
   // Lab technicians cannot access the unified CPOE endpoint. Give them the
   // dedicated backend-authorized blood-product order-ID lookup instead.
   if (clinicContextId != null &&
