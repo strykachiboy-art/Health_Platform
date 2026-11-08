@@ -373,6 +373,52 @@ class _BloodProductOrdersScreenState extends State<BloodProductOrdersScreen> {
     unawaited(_write(() => _source.cancel(order: order, reason: reason)));
   }
 
+  Widget _emergencyStatus(BloodProductOrder order) {
+    final trace = order.emergencyTrace;
+    if (trace == null) {
+      return const Text(
+        'Emergency issue trace is unavailable on this response. '
+        'No release or clearance can be inferred.',
+      );
+    }
+    final statusByUnit = <int, String>{
+      for (final item in trace.labFollowups) item.issuedUnitId: item.status,
+    };
+    return Column(
+      key: ValueKey('p23de-s03c-emergency-panel-${order.id}'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Emergency issue follow-up — server evidence only.'),
+        const Text(
+          'Not a compatibility clearance or transfusion administration record.',
+        ),
+        Text('Requested by staff #${trace.requestedByStaffId}'),
+        Text(
+          'Independent physician review: '
+          '${trace.reviewOutcome ?? 'pending'}',
+        ),
+        Text(
+          'Laboratory follow-up: ${trace.pendingCount} pending, '
+          '${trace.recordedCount} evidence recorded, '
+          '${trace.escalatedCount} discrepancy escalated.',
+        ),
+        for (final unit in trace.issuedUnits)
+          Text(
+            'Unit ${unit.identifier}: '
+            '${statusByUnit[unit.id] == 'pending'
+                ? 'Pending laboratory follow-up'
+                : statusByUnit[unit.id] == 'evidence_recorded'
+                ? 'Laboratory evidence recorded (not clearance)'
+                : 'Laboratory discrepancy escalated'}',
+          ),
+        const Text(
+          'Mobile emergency request, emergency issue, and evidence signing '
+          'remain unavailable pending clinical authorization.',
+        ),
+      ],
+    );
+  }
+
   Widget _orderActions(BloodProductOrder order) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -383,11 +429,9 @@ class _BloodProductOrdersScreenState extends State<BloodProductOrdersScreen> {
           'Requested ${order.unitsRequested} units · '
           'Issued ${order.unitsIssued} · ${order.compatibilityStatus}',
         ),
-        if (order.compatibilityStatus == 'emergency_release')
-          const Text(
-            'Emergency release recorded by backend. '
-            'This screen does not initiate emergency release.',
-          ),
+        if (order.compatibilityStatus == 'emergency_release' ||
+            order.emergencyTrace != null)
+          _emergencyStatus(order),
         if (_lab && order.canVerify) ...[
           TextField(
             key: ValueKey('p23d-d-crossmatch-${order.id}'),

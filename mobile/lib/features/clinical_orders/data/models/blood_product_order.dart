@@ -1,3 +1,5 @@
+import 'package:clinic_system_pro/features/clinical_orders/data/models/emergency_blood_trace.dart';
+
 /// A backend-owned blood-product order. Never persist this record locally.
 /// This model validates scope and workflow state but does not determine whether
 /// blood is compatible with a patient. That decision belongs to laboratory staff.
@@ -25,6 +27,7 @@ class BloodProductOrder {
     required this.orderedAt,
     required this.completedAt,
     required this.cancelledAt,
+    this.emergencyTrace,
   });
 
   static const productTypes = <String>{
@@ -82,6 +85,7 @@ class BloodProductOrder {
   final String orderedAt;
   final String? completedAt;
   final String? cancelledAt;
+  final EmergencyBloodTrace? emergencyTrace;
 
   bool get isOpen => status != 'completed' && status != 'cancelled';
   bool get canVerify => isOpen && compatibilityStatus == 'pending';
@@ -212,6 +216,16 @@ class BloodProductOrder {
             (completedAt != null || cancelledAt != null || issued != 0))) {
       throw const FormatException('Inconsistent blood-product lifecycle.');
     }
+    final emergencyTrace = EmergencyBloodTrace.fromOrderJson(
+      json,
+      clinicId: clinic,
+      patientId: patient,
+      admissionId: admission,
+      orderId: id,
+      unitsIssued: issued,
+      orderStatus: status,
+      compatibilityStatus: compatibility,
+    );
     return BloodProductOrder(
       id: id,
       clinicId: clinic,
@@ -235,6 +249,7 @@ class BloodProductOrder {
       orderedAt: _time(json, 'ordered_at', required: true)!,
       completedAt: completedAt,
       cancelledAt: cancelledAt,
+      emergencyTrace: emergencyTrace,
     );
   }
 }
