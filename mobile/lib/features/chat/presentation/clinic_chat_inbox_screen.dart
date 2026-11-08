@@ -195,6 +195,7 @@ class _ClinicChatInboxScreenState extends State<ClinicChatInboxScreen> {
                           builder: (_) => ClinicChatTextConversationScreen(
                             dataSource: widget.dataSource,
                             conversationId: convo.id,
+                            realtimeEnabled: true,
                           ),
                         ),
                       ),

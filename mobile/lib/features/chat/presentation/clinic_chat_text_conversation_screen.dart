@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/chat/data/clinic_chat_realtime_reconciler.dart';
+import 'package:clinic_system_pro/features/chat/data/clinic_chat_socket_transport.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_text_mutation_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/data/models/clinic_chat_read_models.dart';
 
@@ -14,10 +16,18 @@ class ClinicChatTextConversationScreen extends StatefulWidget {
     super.key,
     required this.dataSource,
     required this.conversationId,
+    this.realtimeEnabled = false,
+    this.socketFactory,
   });
 
   final ClinicChatReadRemoteDataSource dataSource;
   final int conversationId;
+
+  /// Defaults to REST-only for the established CHAT-C test and call sites.
+  final bool realtimeEnabled;
+
+  /// Test seam: the production inbox uses the authenticated default factory.
+  final ClinicChatSocketFactory? socketFactory;
 
   @override
   State<ClinicChatTextConversationScreen> createState() =>
@@ -28,6 +38,9 @@ class _ClinicChatTextConversationScreenState
     extends State<ClinicChatTextConversationScreen> {
   final _draft = TextEditingController();
   late ClinicChatTextMutationRemoteDataSource _writes;
+  ClinicChatRealtimeReconciler? _live;
+  Timer? _liveWatchdog;
+  int _liveAttempt = 0;
   ClinicChatConversation? _conversation;
   ClinicChatPage<ClinicChatMessage>? _page;
   ClinicChatMessage? _replying;
@@ -45,21 +58,32 @@ class _ClinicChatTextConversationScreenState
     super.initState();
     _writes = ClinicChatTextMutationRemoteDataSource(read: widget.dataSource);
     widget.dataSource.sessionNavigationGuard.addListener(_onSessionChanged);
-    unawaited(_load());
+    if (widget.realtimeEnabled) {
+      _initLive();
+    } else {
+      unawaited(_load());
+    }
   }
 
   @override
   void didUpdateWidget(covariant ClinicChatTextConversationScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.dataSource, widget.dataSource) ||
-        oldWidget.conversationId != widget.conversationId) {
+        oldWidget.conversationId != widget.conversationId ||
+        oldWidget.realtimeEnabled != widget.realtimeEnabled ||
+        oldWidget.socketFactory != widget.socketFactory) {
+      _disposeLive();
       oldWidget.dataSource.sessionNavigationGuard.removeListener(
         _onSessionChanged,
       );
       widget.dataSource.sessionNavigationGuard.addListener(_onSessionChanged);
       _writes = ClinicChatTextMutationRemoteDataSource(read: widget.dataSource);
       _clear();
-      unawaited(_load());
+      if (widget.realtimeEnabled) {
+        _initLive();
+      } else {
+        unawaited(_load());
+      }
     }
   }
 
@@ -67,8 +91,139 @@ class _ClinicChatTextConversationScreenState
   void dispose() {
     _generation++;
     widget.dataSource.sessionNavigationGuard.removeListener(_onSessionChanged);
+    _disposeLive();
     _draft.dispose();
     super.dispose();
+  }
+
+  void _initLive() {
+    final controller = ClinicChatRealtimeReconciler(
+      read: widget.dataSource,
+      conversationId: widget.conversationId,
+      socketFactory: widget.socketFactory,
+    );
+    _live = controller;
+    controller.addListener(_onLiveChanged);
+    // Start only after the first frame; never call setState from initState.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && identical(controller, _live)) {
+        _startLive();
+      }
+    });
+  }
+
+  void _disposeLive() {
+    _liveAttempt++;
+    _liveWatchdog?.cancel();
+    _liveWatchdog = null;
+    final controller = _live;
+    _live = null;
+    controller?.removeListener(_onLiveChanged);
+    controller?.dispose();
+  }
+
+  void _startLive() {
+    final controller = _live;
+    if (!mounted ||
+        controller == null ||
+        !widget.dataSource.sessionNavigationGuard.canAccessProtectedRoutes) {
+      return;
+    }
+    _liveWatchdog?.cancel();
+    final attempt = ++_liveAttempt;
+    // A lost connect/join acknowledgement must never leave an enabled writer.
+    _liveWatchdog = Timer(const Duration(seconds: 15), () {
+      if (!mounted ||
+          attempt != _liveAttempt ||
+          !identical(_live, controller)) {
+        return;
+      }
+      if (controller.state == ClinicChatRealtimeState.connecting ||
+          controller.state == ClinicChatRealtimeState.waitingForJoin ||
+          controller.state == ClinicChatRealtimeState.syncing) {
+        controller.stop();
+      }
+    });
+    unawaited(controller.start());
+  }
+
+  void _onLiveChanged() {
+    if (!mounted || !widget.realtimeEnabled) {
+      return;
+    }
+    final controller = _live;
+    if (controller == null) {
+      return;
+    }
+    final state = controller.state;
+    if (state == ClinicChatRealtimeState.ready ||
+        state == ClinicChatRealtimeState.unavailable ||
+        state == ClinicChatRealtimeState.disposed) {
+      _liveWatchdog?.cancel();
+      _liveWatchdog = null;
+    }
+    if (state == ClinicChatRealtimeState.ready) {
+      setState(() {
+        if (!_uncertain) {
+          _conversation = controller.conversation;
+          _page = controller.messages;
+        }
+        _signedInUserId = null;
+        _loading = false;
+      });
+      unawaited(_verifyLiveActor(controller));
+    } else {
+      // Drop all rendered clinical history during resync or disconnection.
+      setState(() {
+        _conversation = null;
+        _page = null;
+        _signedInUserId = null;
+        _replying = null;
+        _editing = null;
+        if (state == ClinicChatRealtimeState.unavailable ||
+            state == ClinicChatRealtimeState.offline ||
+            state == ClinicChatRealtimeState.disposed) {
+          _draft.clear();
+        }
+      });
+    }
+  }
+
+  Future<void> _verifyLiveActor(ClinicChatRealtimeReconciler controller) async {
+    final guard = widget.dataSource.sessionNavigationGuard;
+    final revision = guard.revision;
+    try {
+      final before = await widget.dataSource.loadSession();
+      final after = await widget.dataSource.loadSession();
+      final a = before.session;
+      final b = after.session;
+      if (!mounted ||
+          !identical(_live, controller) ||
+          !controller.isReady ||
+          guard.revision != revision ||
+          !guard.canAccessProtectedRoutes) {
+        return;
+      }
+      if (before.disposition != AuthSessionDisposition.ready ||
+          after.disposition != AuthSessionDisposition.ready ||
+          a == null ||
+          b == null ||
+          a.userId <= 0 ||
+          a.userId != b.userId ||
+          a.clinicContextId != controller.conversation?.clinicId ||
+          a.clinicContextId != b.clinicContextId ||
+          a.role != b.role ||
+          a.accessToken != b.accessToken ||
+          a.refreshToken != b.refreshToken) {
+        controller.stop();
+        return;
+      }
+      setState(() => _signedInUserId = a.userId);
+    } on Object {
+      if (mounted && identical(_live, controller) && controller.isReady) {
+        controller.stop();
+      }
+    }
   }
 
   void _clear() {
@@ -90,9 +245,14 @@ class _ClinicChatTextConversationScreenState
     if (!mounted) {
       return;
     }
+    _live?.stop();
     setState(_clear);
     if (widget.dataSource.sessionNavigationGuard.canAccessProtectedRoutes) {
-      unawaited(_load());
+      if (widget.realtimeEnabled) {
+        _startLive();
+      } else {
+        unawaited(_load());
+      }
     }
   }
 
@@ -109,6 +269,8 @@ class _ClinicChatTextConversationScreenState
       !_busy &&
       !_uncertain &&
       !_writes.writeLocked &&
+      (!widget.realtimeEnabled ||
+          (_live?.isReady == true && _signedInUserId != null)) &&
       _conversation?.status == ClinicChatStatus.active;
 
   Future<void> _load({int page = 1}) async {
@@ -225,7 +387,9 @@ class _ClinicChatTextConversationScreenState
   Future<void> _execute(
     Future<ClinicChatMessage> Function(ClinicChatConversation) action,
   ) async {
-    final conversation = _conversation;
+    final conversation = widget.realtimeEnabled
+        ? _live?.conversation
+        : _conversation;
     if (!_canWrite || conversation == null) {
       return;
     }
@@ -248,11 +412,19 @@ class _ClinicChatTextConversationScreenState
         _priority = ClinicMessagePriority.normal;
         _draft.clear();
       });
-      await _load();
+      if (widget.realtimeEnabled) {
+        // A confirmed REST write is never replayed. Begin a fresh socket
+        // handshake and authoritative REST snapshot only if still connected.
+        if (_live?.isReady == true) {
+          _startLive();
+        }
+      } else {
+        await _load();
+      }
       if (mounted &&
           guard.revision == revision &&
           guard.canAccessProtectedRoutes &&
-          _conversation != null) {
+          (_conversation != null || widget.realtimeEnabled)) {
         setState(() {
           _message =
               'Server confirmed message #${confirmed.id}. '
@@ -367,7 +539,13 @@ class _ClinicChatTextConversationScreenState
             key: const ValueKey('chat-c-refresh'),
             tooltip: 'Refresh server history',
             onPressed: allowed && !_loading && !_busy
-                ? () => _load(page: page?.page ?? 1)
+                ? () {
+                    if (widget.realtimeEnabled) {
+                      _startLive();
+                    } else {
+                      unawaited(_load(page: page?.page ?? 1));
+                    }
+                  }
                 : null,
             icon: const Icon(Icons.refresh_outlined),
           ),
@@ -378,12 +556,35 @@ class _ClinicChatTextConversationScreenState
               key: ValueKey('chat-c-locked'),
               child: Text('Conversation access unavailable.'),
             )
+          : widget.realtimeEnabled && _live?.isReady != true
+          ? Center(
+              key: const ValueKey('chat-d2-live-blocked'),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Live session unavailable or resynchronizing.'),
+                  const Text('Clinical history is hidden until verified.'),
+                  if (_uncertain)
+                    const Text(
+                      'Write outcome unconfirmed. Do not resend.',
+                      key: ValueKey('chat-c-unconfirmed'),
+                    ),
+                  FilledButton(
+                    key: const ValueKey('chat-d2-reconnect'),
+                    onPressed: !_busy ? _startLive : null,
+                    child: const Text('Reconnect and verify'),
+                  ),
+                ],
+              ),
+            )
           : ListView(
               key: const ValueKey('chat-c-history'),
               padding: const EdgeInsets.all(16),
               children: [
-                const Text(
-                  'Online text messaging · no media or realtime delivery',
+                Text(
+                  widget.realtimeEnabled
+                      ? 'Live notifications · authenticated server history'
+                      : 'Online text messaging · no media or realtime delivery',
                 ),
                 if (_loading)
                   const LinearProgressIndicator(
@@ -458,7 +659,11 @@ class _ClinicChatTextConversationScreenState
                       IconButton(
                         key: const ValueKey('chat-c-previous'),
                         tooltip: 'Newer messages',
-                        onPressed: page.hasPrevious && !_loading && !_busy
+                        onPressed:
+                            !widget.realtimeEnabled &&
+                                page.hasPrevious &&
+                                !_loading &&
+                                !_busy
                             ? () => _load(page: page.page - 1)
                             : null,
                         icon: const Icon(Icons.chevron_left),
@@ -467,7 +672,11 @@ class _ClinicChatTextConversationScreenState
                       IconButton(
                         key: const ValueKey('chat-c-next'),
                         tooltip: 'Older messages',
-                        onPressed: page.hasNext && !_loading && !_busy
+                        onPressed:
+                            !widget.realtimeEnabled &&
+                                page.hasNext &&
+                                !_loading &&
+                                !_busy
                             ? () => _load(page: page.page + 1)
                             : null,
                         icon: const Icon(Icons.chevron_right),
@@ -477,7 +686,8 @@ class _ClinicChatTextConversationScreenState
                 ],
               ],
             ),
-      bottomNavigationBar: !allowed
+      bottomNavigationBar:
+          !allowed || (widget.realtimeEnabled && _live?.isReady != true)
           ? null
           : SafeArea(
               child: Padding(
