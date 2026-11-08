@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import 'package:clinic_system_pro/features/nursing/data/models/ward_overview.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
+import 'package:clinic_system_pro/features/nursing/data/ward_admission_workflow_remote_data_source.dart';
+import 'package:clinic_system_pro/features/nursing/presentation/ward_admissions_transfers_screen.dart';
 
 /// P23E.B: online, read-only ward and bed status from the authoritative API.
 /// No automatic retries, PHI cache, offline writes, or local bed decisions.
@@ -17,6 +19,7 @@ class WardDashboardScreen extends StatefulWidget {
 }
 
 class _WardDashboardScreenState extends State<WardDashboardScreen> {
+  late WardAdmissionWorkflowRemoteDataSource _clinicalSource;
   WardPage<WardRecord>? _wards;
   WardRecord? _selected;
   WardOccupancy? _occupancy;
@@ -31,6 +34,11 @@ class _WardDashboardScreenState extends State<WardDashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _clinicalSource = WardAdmissionWorkflowRemoteDataSource(
+      apiClient: widget.dataSource.apiClient,
+      loadSession: widget.dataSource.loadSession,
+      sessionNavigationGuard: widget.dataSource.sessionNavigationGuard,
+    );
     widget.dataSource.sessionNavigationGuard.addListener(_onSessionChanged);
     unawaited(_loadWards());
   }
@@ -39,6 +47,11 @@ class _WardDashboardScreenState extends State<WardDashboardScreen> {
   void didUpdateWidget(covariant WardDashboardScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.dataSource, widget.dataSource)) {
+      _clinicalSource = WardAdmissionWorkflowRemoteDataSource(
+        apiClient: widget.dataSource.apiClient,
+        loadSession: widget.dataSource.loadSession,
+        sessionNavigationGuard: widget.dataSource.sessionNavigationGuard,
+      );
       oldWidget.dataSource.sessionNavigationGuard.removeListener(
         _onSessionChanged,
       );
@@ -210,6 +223,21 @@ class _WardDashboardScreenState extends State<WardDashboardScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 const Text('Online ward and bed status · read only'),
+                ListTile(
+                  key: const ValueKey('p23e-c-open'),
+                  leading: const Icon(Icons.move_up_outlined),
+                  title: const Text('Admissions & transfers'),
+                  subtitle: const Text(
+                    'Online clinical actions · confirmation required',
+                  ),
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => WardAdmissionsTransfersScreen(
+                        dataSource: _clinicalSource,
+                      ),
+                    ),
+                  ),
+                ),
                 if (_loadingWards)
                   const LinearProgressIndicator(
                     key: ValueKey('p23e-b-loading-wards'),
