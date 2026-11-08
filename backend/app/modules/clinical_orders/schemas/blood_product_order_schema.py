@@ -74,8 +74,31 @@ class BloodProductCompatibilitySchema(_RequestModel):
     )
 
 
+class BloodProductIssuedUnitResponseSchema(_ResponseModel):
+    id: int = Field(..., gt=0)
+    clinic_id: int = Field(..., gt=0)
+    patient_id: int = Field(..., gt=0)
+    admission_id: int = Field(..., gt=0)
+    order_id: int = Field(..., gt=0)
+    unit_identifier: str = Field(..., min_length=1, max_length=128)
+    product_blood_type: str
+    issued_by_staff_id: int = Field(..., gt=0)
+    issued_at: datetime
+
+
+class BloodProductEmergencyReviewSchema(_RequestModel):
+    outcome: str = Field(..., pattern="^(reviewed|escalated)$")
+    note: str = Field(..., min_length=1, max_length=10000)
+
+
+class BloodProductIssueUnitSchema(_RequestModel):
+    unit_identifier: str = Field(..., min_length=1, max_length=128)
+    product_blood_type: BloodType
+
+
 class BloodProductFulfillSchema(_RequestModel):
     units_issued: int = Field(..., gt=0, le=100)
+    issued_units: list[BloodProductIssueUnitSchema] | None = Field(default=None, max_length=100)
     fulfillment_note: str = Field(
         ...,
         min_length=1,
@@ -122,6 +145,11 @@ class BloodProductOrderResponseSchema(_ResponseModel):
     emergency_request_reason: str | None = None
     emergency_requested_by_staff_id: int | None = Field(default=None, gt=0)
     emergency_requested_at: datetime | None = None
+    emergency_review_outcome: str | None = None
+    emergency_review_note: str | None = None
+    emergency_reviewed_by_staff_id: int | None = Field(default=None, gt=0)
+    emergency_reviewed_at: datetime | None = None
+    issued_units: list[BloodProductIssuedUnitResponseSchema] = Field(default_factory=list)
 
     priority: ClinicalOrderPriority
     status: ClinicalOrderLifecycleStatus

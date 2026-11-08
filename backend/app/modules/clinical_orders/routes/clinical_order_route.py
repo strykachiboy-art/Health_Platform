@@ -31,6 +31,7 @@ from app.modules.clinical_orders.schemas.blood_product_order_schema import (
     BloodProductCancelSchema,
     BloodProductCompatibilitySchema,
     BloodProductFulfillSchema,
+    BloodProductEmergencyReviewSchema,
     BloodProductOrderCreateSchema,
     BloodProductOrderListResponseSchema,
     BloodProductOrderResponseSchema,
@@ -74,6 +75,7 @@ from app.modules.clinical_orders.services.blood_product_order_service import (
     cancel_blood_product_order,
     create_blood_product_order,
     fulfill_blood_product_order,
+    review_emergency_blood_release,
     get_blood_product_order,
     list_blood_product_orders,
     verify_blood_product_compatibility,
@@ -665,10 +667,33 @@ def fulfill_blood_product_order_route(
         clinic_id=_clinic_id(),
         actor_staff_id=_current_staff_id(),
         units_issued=payload.units_issued,
+        issued_units=(
+            [unit.model_dump(mode="json") for unit in payload.issued_units]
+            if payload.issued_units is not None else None
+        ),
         fulfillment_note=payload.fulfillment_note,
     )
     return jsonify({
         "message": "Blood product order fulfilled",
+        "order": _serialize(BloodProductOrderResponseSchema, order),
+    }), 200
+
+
+@clinical_order_bp.post(
+    "/blood-products/<int:blood_product_order_id>/emergency-review"
+)
+@role_required(*BLOOD_PRODUCT_ORDER_ROLES)
+def review_emergency_blood_release_route(blood_product_order_id: int):
+    payload = BloodProductEmergencyReviewSchema.model_validate(_json_body())
+    order = review_emergency_blood_release(
+        blood_product_order_id,
+        clinic_id=_clinic_id(),
+        actor_staff_id=_current_staff_id(),
+        outcome=payload.outcome,
+        note=payload.note,
+    )
+    return jsonify({
+        "message": "Emergency blood issue review recorded",
         "order": _serialize(BloodProductOrderResponseSchema, order),
     }), 200
 

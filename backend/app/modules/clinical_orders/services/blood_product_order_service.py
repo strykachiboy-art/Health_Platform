@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from flask import current_app
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.core.audit.services.audit_service import create_audit_log
@@ -29,6 +30,9 @@ from app.modules.staff.models.staff_model import Staff
 from app.modules.ward.models.ward_model import Admission, Bed, Ward
 from app.modules.clinical_orders.models.blood_product_order_model import (
     BloodProductOrder,
+)
+from app.modules.clinical_orders.models.blood_product_issued_unit_model import (
+    BloodProductIssuedUnit,
 )
 
 
@@ -578,6 +582,7 @@ def fulfill_blood_product_order(
     actor_staff_id: int,
     units_issued: int,
     fulfillment_note: str,
+    issued_units: list[dict] | None = None,
 ) -> BloodProductOrder:
     actor = _get_lab_technician(
         actor_staff_id,
@@ -619,6 +624,36 @@ def fulfill_blood_product_order(
             "units_issued cannot exceed units_requested"
         )
 
+    if order.compatibility_status == "emergency_release":
+        if not isinstance(issued_units, list) or len(issued_units) != units_issued:
+            raise ValidationError("Every emergency issued unit requires an identifier and blood group")
+        normalized = []
+        for unit in issued_units:
+            if not isinstance(unit, dict) or set(unit) != {"unit_identifier", "product_blood_type"}:
+                raise ValidationError("Each issued unit needs an identifier and product blood type")
+            identifier = _required_text(unit["unit_identifier"], "unit_identifier", 128).upper()
+            if _blood_type_value(unit["product_blood_type"]) != order.product_blood_type:
+                raise ValidationError("Issued unit blood type must match the recorded verification")
+            normalized.append(identifier)
+        if len(set(normalized)) != len(normalized):
+            raise ValidationError("Emergency unit identifiers must be distinct")
+        issued_at = _utcnow()
+        db.session.add_all([
+            BloodProductIssuedUnit(
+                clinic_id=order.clinic_id,
+                patient_id=order.patient_id,
+                admission_id=order.admission_id,
+                order_id=order.id,
+                unit_identifier=identifier,
+                product_blood_type=order.product_blood_type,
+                issued_by_staff_id=actor.id,
+                issued_at=issued_at,
+            )
+            for identifier in normalized
+        ])
+    elif issued_units is not None:
+        raise ValidationError("Identified units require emergency verification")
+
     order.units_issued = units_issued
     order.fulfilled_by_staff_id = actor.id
     order.fulfillment_note = _required_text(
@@ -630,7 +665,12 @@ def fulfill_blood_product_order(
     order.completed_at = _utcnow()
     order.version += 1
 
-    db.session.flush()
+    try:
+        db.session.flush()
+    except IntegrityError as exc:
+        # Database unique index enforces per-clinic one-time unit issuance
+        # across concurrent orders; transactional decorator rolls back.
+        raise ConflictError("Blood unit identifier has already been issued") from exc
 
     _audit(
         actor=actor,
@@ -641,6 +681,61 @@ def fulfill_blood_product_order(
             "status": order.status,
             "units_issued": order.units_issued,
             "compatibility_status": order.compatibility_status,
+            "unit_identifiers": (
+                normalized if order.compatibility_status == "emergency_release" else []
+            ),
+            "patient_id": order.patient_id,
+            "admission_id": order.admission_id,
+            "version": order.version,
+        },
+    )
+    return order
+
+
+@transactional
+def review_emergency_blood_release(
+    blood_product_order_id: int,
+    *,
+    clinic_id: int,
+    actor_staff_id: int,
+    outcome: str,
+    note: str,
+) -> BloodProductOrder:
+    actor = _get_doctor(actor_staff_id, clinic_id)
+    order = _get_order(blood_product_order_id, clinic_id, lock=True)
+
+    if order.compatibility_status != "emergency_release":
+        raise ConflictError("Post-release review applies to emergency release only")
+    if order.status != ClinicalOrderLifecycleStatus.COMPLETED.value:
+        raise ConflictError("Emergency unit issue must be completed before review")
+    if order.emergency_review_outcome is not None:
+        raise ConflictError("Emergency blood issue has already been reviewed")
+    if actor.id == order.emergency_requested_by_staff_id:
+        raise ConflictError("Independent physician review is required")
+    if outcome not in ("reviewed", "escalated"):
+        raise ValidationError("Invalid emergency review outcome")
+
+    note = _required_text(note, "note", 10000)
+    if len(order.issued_units) != order.units_issued:
+        raise ConflictError("Emergency blood unit trace is incomplete")
+    order.emergency_review_outcome = outcome
+    order.emergency_review_note = note
+    order.emergency_reviewed_by_staff_id = actor.id
+    order.emergency_reviewed_at = _utcnow()
+    order.version += 1
+    db.session.flush()
+
+    _audit(
+        actor=actor,
+        action=AuditAction.UPDATE,
+        order=order,
+        description="Independent post-release emergency blood issue review",
+        new_value={
+            "outcome": outcome,
+            "reviewed_by_staff_id": actor.id,
+            "emergency_requested_by_staff_id": order.emergency_requested_by_staff_id,
+            "issued_unit_identifiers": [u.unit_identifier for u in order.issued_units],
+            "followup_testing_is_not_certified": True,
             "version": order.version,
         },
     )

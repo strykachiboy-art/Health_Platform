@@ -75,6 +75,16 @@ class BloodProductOrder(db.Model):
             name="ck_blood_product_orders_completed_evidence",
         ),
         db.CheckConstraint(
+            "emergency_review_outcome IS NULL OR "
+            "(emergency_review_outcome IN ('reviewed', 'escalated') AND "
+            "compatibility_status = 'emergency_release' AND "
+            "status = 'completed' AND "
+            "emergency_reviewed_by_staff_id IS NOT NULL AND "
+            "emergency_reviewed_at IS NOT NULL AND "
+            "emergency_review_note IS NOT NULL)",
+            name="ck_blood_product_orders_emergency_review_evidence",
+        ),
+        db.CheckConstraint(
             "status != 'cancelled' "
             "OR (cancelled_at IS NOT NULL "
             "AND cancelled_by_staff_id IS NOT NULL "
@@ -227,6 +237,15 @@ class BloodProductOrder(db.Model):
         db.DateTime(timezone=True),
         nullable=True,
     )
+    # Post-release review does not replace compatibility or serologic testing.
+    emergency_review_outcome = db.Column(db.String(20), nullable=True)
+    emergency_review_note = db.Column(db.Text, nullable=True)
+    emergency_reviewed_by_staff_id = db.Column(
+        db.Integer,
+        db.ForeignKey("staff.id"),
+        nullable=True,
+    )
+    emergency_reviewed_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     priority = db.Column(
         db.String(16),
@@ -308,4 +327,13 @@ class BloodProductOrder(db.Model):
     cancelled_by = db.relationship(
         "Staff",
         foreign_keys=[cancelled_by_staff_id],
+    )
+    emergency_reviewed_by = db.relationship(
+        "Staff",
+        foreign_keys=[emergency_reviewed_by_staff_id],
+    )
+    issued_units = db.relationship(
+        "BloodProductIssuedUnit",
+        back_populates="order",
+        order_by="BloodProductIssuedUnit.id",
     )
