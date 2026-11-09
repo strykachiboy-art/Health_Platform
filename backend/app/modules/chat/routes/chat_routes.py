@@ -46,6 +46,10 @@ from app.modules.chat.schemas.message_schema import (
 from app.modules.chat.services.chat_security_service import (
     ChatSecurityService,
 )
+from app.modules.chat.services.case_conversation_link_service import (
+    get_admission_case_conversation_link,
+    validate_case_conversation_context,
+)
 from app.modules.chat.services.conversation_service import (
     add_participant,
     create_conversation,
@@ -687,6 +691,49 @@ def create_chat_conversation():
             }
         ), 201
 
+    except DomainError as exc:
+        return _domain_error(exc)
+
+
+@chat_bp.get("/admissions/<int:admission_id>/conversation")
+@login_required
+def get_admission_case_conversation_route(admission_id: int):
+    """Read only: canonical admission link plus CURRENT case-chat authorization.
+
+    Missing links, mismatched clinic/admission/patient, expired assignment,
+    discharged case and nonmember callers fail closed. No creation or grants.
+    """
+    try:
+        clinic_id = _current_clinic_id()
+        user_id = _current_user_id()
+        link = get_admission_case_conversation_link(
+            clinic_id=clinic_id, admission_id=admission_id,
+        )
+        if link is None:
+            raise NotFoundError("Case conversation not found")
+        # Enforce live membership and case eligibility before
+        # validating the link, so discharged cases return 404.
+        conversation = get_conversation(
+            conversation_id=link.conversation_id,
+            clinic_id=clinic_id,
+            user_id=user_id,
+        )
+        admission, canonical = validate_case_conversation_context(
+            clinic_id=clinic_id, admission_id=admission_id,
+            conversation_id=link.conversation_id,
+        )
+        if conversation.id != canonical.id or conversation.patient_id != admission.patient_id:
+            raise NotFoundError("Case conversation not found")
+        return jsonify({
+            "success": True,
+            "data": {
+                "clinic_id": clinic_id,
+                "admission_id": admission.id,
+                "patient_id": admission.patient_id,
+                "conversation_id": conversation.id,
+                "conversation": _serialize_conversation(conversation),
+            },
+        }), 200
     except DomainError as exc:
         return _domain_error(exc)
 
