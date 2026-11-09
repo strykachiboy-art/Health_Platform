@@ -70,6 +70,14 @@ void main() {
             findsOneWidget,
           );
 
+          if (width < 850) {
+            await tester.scrollUntilVisible(
+              find.byKey(const ValueKey('p22-home-server-authority')),
+              250,
+            );
+            await tester.pumpAndSettle();
+          }
+
           expect(
             find.byKey(const ValueKey('p22-home-server-authority')),
             findsOneWidget,

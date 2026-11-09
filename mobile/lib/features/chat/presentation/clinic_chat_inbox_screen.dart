@@ -7,8 +7,8 @@ import 'package:clinic_system_pro/features/chat/data/models/clinic_chat_read_mod
 
 import 'clinic_chat_text_conversation_screen.dart';
 
-/// CHAT-B: authenticated, in-memory, read-only inbox. Navigation wiring is
-/// reserved for CHAT-F, after text-write and realtime phases pass their gates.
+/// CHAT-F: authenticated, in-memory inbox with server-authorized navigation.
+/// REST reads and the existing CHAT-D realtime conversation stay authoritative.
 class ClinicChatInboxScreen extends StatefulWidget {
   const ClinicChatInboxScreen({super.key, required this.dataSource});
 
@@ -151,7 +151,7 @@ class _ClinicChatInboxScreenState extends State<ClinicChatInboxScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 const Text(
-                  'Read-only preview · server-authorized conversations',
+                  'Authorized conversations · select to open live messages',
                 ),
                 TextField(
                   key: const ValueKey('chat-b-search-field'),

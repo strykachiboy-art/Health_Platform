@@ -120,6 +120,20 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  // CHAT-F: navigation suggestion only; the backend authorizes every read.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{'admin', 'doctor', 'nurse'}.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'chat',
+        'Clinic messages',
+        '/chat',
+        Icons.forum_outlined,
+      ),
+    );
+  }
   // Lab technicians cannot access the unified CPOE endpoint. Give them the
   // dedicated backend-authorized blood-product order-ID lookup instead.
   if (clinicContextId != null &&

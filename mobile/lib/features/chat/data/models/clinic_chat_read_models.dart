@@ -161,8 +161,53 @@ class ClinicChatConversation {
   }
 }
 
+class ClinicChatAttachment {
+  const ClinicChatAttachment({
+    required this.id,
+    required this.type,
+    required this.fileName,
+    required this.mimeType,
+    required this.fileSizeBytes,
+  });
+
+  final int id;
+  final String type;
+  final String? fileName;
+  final String mimeType;
+  final int? fileSizeBytes;
+
+  factory ClinicChatAttachment.fromJson(Map<String, dynamic> json) {
+    final type = ClinicChatDecode.text(json, 'attachment_type');
+    if (!const <String>{
+      'file',
+      'image',
+      'audio',
+      'video',
+      'document',
+    }.contains(type)) {
+      throw const FormatException('Unsupported chat attachment type.');
+    }
+    final size = json['file_size_bytes'];
+    if (size != null && (size is! int || size < 0 || size > 25 * 1024 * 1024)) {
+      throw const FormatException('Invalid chat attachment size.');
+    }
+    final mime = ClinicChatDecode.text(json, 'mime_type');
+    if (mime.isEmpty || mime.length > 150) {
+      throw const FormatException('Invalid chat attachment MIME.');
+    }
+    return ClinicChatAttachment(
+      id: ClinicChatDecode.id(json, 'id'),
+      type: type,
+      fileName: ClinicChatDecode.optionalText(json, 'file_name'),
+      mimeType: mime,
+      fileSizeBytes: size as int?,
+    );
+  }
+}
+
 class ClinicChatMessage {
   const ClinicChatMessage({
+    this.attachments = const <ClinicChatAttachment>[],
     required this.id,
     required this.clinicId,
     required this.conversationId,
@@ -180,6 +225,7 @@ class ClinicChatMessage {
   final int conversationId;
   final int senderId;
   final ClinicMessageKind kind;
+  final List<ClinicChatAttachment> attachments;
   final ClinicMessageStatus status;
   final ClinicMessagePriority priority;
   final String? content;
@@ -191,6 +237,14 @@ class ClinicChatMessage {
       return 'Message deleted';
     }
     if (kind != ClinicMessageKind.text) {
+      if (attachments.isNotEmpty) {
+        return switch (kind) {
+          ClinicMessageKind.image => 'Image attachment',
+          ClinicMessageKind.audio => 'Voice attachment',
+          ClinicMessageKind.file => 'Document attachment',
+          _ => 'Protected attachment',
+        };
+      }
       return 'Unsupported media message';
     }
     return content ?? '';
@@ -224,7 +278,20 @@ class ClinicChatMessage {
         (content == null || content.trim().isEmpty)) {
       throw const FormatException('Text message has no content.');
     }
+    final rawAttachments = json['attachments'];
+    if (rawAttachments != null && rawAttachments is! List) {
+      throw const FormatException('Invalid chat attachment list.');
+    }
+    final attachments = <ClinicChatAttachment>[
+      for (final raw in (rawAttachments as List? ?? const []))
+        ClinicChatAttachment.fromJson(ClinicChatDecode.object(raw)),
+    ];
+    if (attachments.map((item) => item.id).toSet().length !=
+        attachments.length) {
+      throw const FormatException('Duplicate chat attachment ID.');
+    }
     return ClinicChatMessage(
+      attachments: List.unmodifiable(attachments),
       id: ClinicChatDecode.id(json, 'id'),
       clinicId: clinicId,
       conversationId: conversationId,

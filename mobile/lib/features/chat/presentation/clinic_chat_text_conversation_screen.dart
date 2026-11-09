@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
+import 'package:clinic_system_pro/features/chat/data/clinic_chat_media_remote_data_source.dart';
+import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_media_widgets.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_realtime_reconciler.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_socket_transport.dart';
@@ -17,6 +19,7 @@ class ClinicChatTextConversationScreen extends StatefulWidget {
     required this.dataSource,
     required this.conversationId,
     this.realtimeEnabled = false,
+    this.mediaEnabled = clinicChatMediaBuildEnabled,
     this.socketFactory,
   });
 
@@ -25,6 +28,7 @@ class ClinicChatTextConversationScreen extends StatefulWidget {
 
   /// Defaults to REST-only for the established CHAT-C test and call sites.
   final bool realtimeEnabled;
+  final bool mediaEnabled;
 
   /// Test seam: the production inbox uses the authenticated default factory.
   final ClinicChatSocketFactory? socketFactory;
@@ -38,6 +42,7 @@ class _ClinicChatTextConversationScreenState
     extends State<ClinicChatTextConversationScreen> {
   final _draft = TextEditingController();
   late ClinicChatTextMutationRemoteDataSource _writes;
+  late ClinicChatMediaRemoteDataSource _media;
   ClinicChatRealtimeReconciler? _live;
   Timer? _liveWatchdog;
   int _liveAttempt = 0;
@@ -57,6 +62,7 @@ class _ClinicChatTextConversationScreenState
   void initState() {
     super.initState();
     _writes = ClinicChatTextMutationRemoteDataSource(read: widget.dataSource);
+    _media = ClinicChatMediaRemoteDataSource(read: widget.dataSource);
     widget.dataSource.sessionNavigationGuard.addListener(_onSessionChanged);
     if (widget.realtimeEnabled) {
       _initLive();
@@ -78,6 +84,8 @@ class _ClinicChatTextConversationScreenState
       );
       widget.dataSource.sessionNavigationGuard.addListener(_onSessionChanged);
       _writes = ClinicChatTextMutationRemoteDataSource(read: widget.dataSource);
+      _media.dispose();
+      _media = ClinicChatMediaRemoteDataSource(read: widget.dataSource);
       _clear();
       if (widget.realtimeEnabled) {
         _initLive();
@@ -92,6 +100,7 @@ class _ClinicChatTextConversationScreenState
     _generation++;
     widget.dataSource.sessionNavigationGuard.removeListener(_onSessionChanged);
     _disposeLive();
+    _media.dispose();
     _draft.dispose();
     super.dispose();
   }
@@ -584,6 +593,8 @@ class _ClinicChatTextConversationScreenState
                 Text(
                   widget.realtimeEnabled
                       ? 'Live notifications · authenticated server history'
+                      : widget.mediaEnabled
+                      ? 'Server-authorized chat media · online only'
                       : 'Online text messaging · no media or realtime delivery',
                 ),
                 if (_loading)
@@ -626,6 +637,18 @@ class _ClinicChatTextConversationScreenState
                           ? null
                           : Text(item.priority.name.toUpperCase()),
                     ),
+                    if (widget.mediaEnabled &&
+                        item.status != ClinicMessageStatus.deleted &&
+                        item.attachments.isNotEmpty)
+                      for (final attachment in item.attachments)
+                        ClinicChatMediaAttachmentTile(
+                          key: ValueKey(
+                            'chat-f-media-${item.id}-${attachment.id}',
+                          ),
+                          source: _media,
+                          message: item,
+                          attachment: attachment,
+                        ),
                     if (enabled && item.status != ClinicMessageStatus.deleted)
                       Wrap(
                         spacing: 8,
@@ -711,6 +734,31 @@ class _ClinicChatTextConversationScreenState
                             child: const Text('Cancel'),
                           ),
                         ],
+                      ),
+                    if (widget.mediaEnabled &&
+                        editor == null &&
+                        replying == null)
+                      ClinicChatMediaComposer(
+                        source: _media,
+                        conversationId: widget.conversationId,
+                        enabled: enabled,
+                        onConfirmed: () {
+                          if (widget.realtimeEnabled) {
+                            _startLive();
+                          } else {
+                            unawaited(_load());
+                          }
+                        },
+                        onOutcomeUnconfirmed: () {
+                          if (!mounted) return;
+                          _live?.stop();
+                          setState(() {
+                            _uncertain = true;
+                            _conversation = null;
+                            _page = null;
+                            _draft.clear();
+                          });
+                        },
                       ),
                     TextField(
                       key: const ValueKey('chat-c-compose'),

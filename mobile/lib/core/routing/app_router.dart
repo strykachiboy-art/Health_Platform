@@ -44,6 +44,8 @@ import 'package:clinic_system_pro/features/patients/data/patient_remote_data_sou
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
+import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_inbox_screen.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/nursing/presentation/ward_dashboard_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
@@ -172,6 +174,29 @@ GoRouter createAppRouter({
                 clinicContextSwitcher: switcher,
                 signOutCoordinator: signOutCoordinator,
                 sessionNavigationGuard: sessionNavigationGuard,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/chat',
+            name: 'clinic-chat-inbox',
+            builder: (context, state) {
+              final admissions = patientAdmissionDataSource;
+              final guard = sessionNavigationGuard;
+              if (admissions == null ||
+                  guard == null ||
+                  !identical(admissions.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Clinic messages unavailable.')),
+                );
+              }
+              return ClinicChatInboxScreen(
+                dataSource: ClinicChatReadRemoteDataSource(
+                  apiClient: admissions.apiClient,
+                  loadSession: admissions.loadSession,
+                  sessionNavigationGuard: guard,
+                ),
               );
             },
           ),

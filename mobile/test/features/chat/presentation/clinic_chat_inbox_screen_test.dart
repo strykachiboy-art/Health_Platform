@@ -82,7 +82,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Clinical team'), findsOneWidget);
-    expect(find.textContaining('Read-only preview'), findsOneWidget);
+    expect(find.textContaining('Authorized conversations'), findsOneWidget);
     expect(find.byKey(const ValueKey('chat-b-search')), findsOneWidget);
     expect(writes, 0);
   });
