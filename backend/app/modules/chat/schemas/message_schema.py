@@ -10,6 +10,7 @@ from pydantic import (
 )
 
 from app.core.enums.chat_enums import (
+    AttachmentType,
     MessagePriority,
     MessageStatus,
     MessageType,
@@ -136,7 +137,19 @@ class MessagePriorityUpdate(BaseModel):
 # Message Response
 # ---------------------------------------------------------------------------
 
+class MessageAttachmentResponse(BaseModel):
+    id: int
+    attachment_type: AttachmentType
+    file_name: str | None
+    mime_type: str
+    file_size_bytes: int | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
+
 class MessageResponse(BaseModel):
+    attachments: list[MessageAttachmentResponse] = Field(default_factory=list)
     id: int
     clinic_id: int
     conversation_id: int

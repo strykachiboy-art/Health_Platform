@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from io import BytesIO
+
+from flask import Blueprint, jsonify, request, send_file
 from flask_jwt_extended import get_jwt_identity
 from pydantic import ValidationError as PydanticValidationError
 
@@ -64,6 +66,10 @@ from app.modules.chat.services.conversation_service import (
 )
 from app.modules.chat.services.message_search_service import (
     search_messages,
+)
+from app.modules.chat.services.chat_media_service import (
+    create_media_message,
+    read_media_attachment,
 )
 from app.modules.chat.services.message_service import (
     create_message,
@@ -1359,5 +1365,49 @@ def delete_chat_message(
             }
         ), 200
 
+    except DomainError as exc:
+        return _domain_error(exc)
+
+# CHAT-F1/F2: the only authenticated chat-media upload/download entry points.
+# Both use the canonical message, participant, case ACL and audit/outbox flow.
+@chat_bp.post("/conversations/<int:conversation_id>/media")
+@login_required
+def upload_chat_media(conversation_id: int):
+    try:
+        clinic_id = _current_clinic_id()
+        sender_id = _current_user_id()
+        upload = request.files.get("file")
+        if upload is None:
+            raise ValidationError("A media file is required")
+        message, created = create_media_message(
+            clinic_id=clinic_id, conversation_id=conversation_id,
+            sender_id=sender_id, kind=request.form.get("kind", ""),
+            upload=upload, request_id=request.form.get("client_request_id", ""),
+            caption=request.form.get("caption"),
+        )
+        return jsonify({"success": True, "data": _serialize_message(message)}), (201 if created else 200)
+    except DomainError as exc:
+        return _domain_error(exc)
+
+
+@chat_bp.get("/messages/<int:message_id>/attachments/<int:attachment_id>")
+@login_required
+def download_chat_media(message_id: int, attachment_id: int):
+    try:
+        clinic_id = _current_clinic_id()
+        user_id = _current_user_id()
+        data, attachment = read_media_attachment(
+            clinic_id=clinic_id, user_id=user_id,
+            message_id=message_id, attachment_id=attachment_id,
+        )
+        response = send_file(
+            BytesIO(data), mimetype=attachment.mime_type, as_attachment=True,
+            download_name=attachment.file_name or "attachment",
+        )
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = "sandbox"
+        return response
     except DomainError as exc:
         return _domain_error(exc)
