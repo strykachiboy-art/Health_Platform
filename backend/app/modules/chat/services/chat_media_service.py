@@ -34,6 +34,9 @@ from app.modules.chat.services.chat_content_validation_service import (
     ChatContentValidationService,
 )
 from app.modules.chat.services.chat_policy_service import ChatPolicyService
+from app.modules.chat.services.chat_media_security_provider import (
+    scan_with_clamd, probe_audio_with_ffprobe,
+)
 from app.modules.chat.services.chat_security_service import ChatSecurityService
 from app.modules.chat.workers.chat_outbox_worker import create_outbox_event
 from app.modules.clinic.services.clinic_service import ensure_clinic_active
@@ -78,9 +81,21 @@ def _configured() -> tuple[Path, Fernet, object, object]:
     except (ValueError, TypeError) as exc:
         raise ValidationError("Invalid chat media encryption configuration") from exc
     scanner = current_app.config.get("CHAT_MEDIA_SCAN_CALLBACK")
+    if not callable(scanner) and current_app.config.get("CHAT_MEDIA_SCANNER") == "clamd":
+        scanner = lambda data, mime: scan_with_clamd(
+            data, mime,
+            socket_path=current_app.config.get("CHAT_MEDIA_CLAMD_UNIX_SOCKET"),
+            host=current_app.config.get("CHAT_MEDIA_CLAMD_HOST"),
+            port=current_app.config.get("CHAT_MEDIA_CLAMD_PORT", 3310),
+        )
     if not callable(scanner):
         raise ValidationError("Chat media scanner is not configured")
     probe = current_app.config.get("CHAT_MEDIA_AUDIO_PROBE_CALLBACK")
+    if not callable(probe) and current_app.config.get("CHAT_MEDIA_AUDIO_PROBE") == "ffprobe":
+        probe = lambda data, mime: probe_audio_with_ffprobe(
+            data, mime,
+            binary=current_app.config.get("CHAT_MEDIA_FFPROBE_BIN", "ffprobe"),
+        )
     return root, fernet, scanner, probe
 
 

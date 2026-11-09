@@ -135,6 +135,19 @@ class Config:
         "STORAGE_ROOT"
     )
 
+    # CHAT-F3.S1: media stays OFF, even when scanner/probe are configured.
+    # A separate production enablement gate will provision storage, keys,
+    # private clamd connectivity, and production-like E2E evidence.
+    CHAT_MEDIA_ENABLED = False
+    CHAT_MEDIA_PRIVATE_ROOT = os.environ.get("CHAT_MEDIA_PRIVATE_ROOT")
+    CHAT_MEDIA_FERNET_KEY = os.environ.get("CHAT_MEDIA_FERNET_KEY")
+    CHAT_MEDIA_SCANNER = os.environ.get("CHAT_MEDIA_SCANNER", "disabled")
+    CHAT_MEDIA_CLAMD_UNIX_SOCKET = os.environ.get("CHAT_MEDIA_CLAMD_UNIX_SOCKET")
+    CHAT_MEDIA_CLAMD_HOST = os.environ.get("CHAT_MEDIA_CLAMD_HOST")
+    CHAT_MEDIA_CLAMD_PORT = int(os.environ.get("CHAT_MEDIA_CLAMD_PORT", "3310"))
+    CHAT_MEDIA_AUDIO_PROBE = os.environ.get("CHAT_MEDIA_AUDIO_PROBE", "disabled")
+    CHAT_MEDIA_FFPROBE_BIN = os.environ.get("CHAT_MEDIA_FFPROBE_BIN", "ffprobe")
+
     STORAGE_PUBLIC_BASE_URL = os.environ.get(
         "STORAGE_PUBLIC_BASE_URL"
     )
