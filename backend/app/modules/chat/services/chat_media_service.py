@@ -14,7 +14,7 @@ from uuid import UUID
 import os
 import zipfile
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from flask import current_app
 from sqlalchemy import select
 from werkzeug.datastructures import FileStorage
@@ -34,6 +34,7 @@ from app.modules.chat.services.chat_content_validation_service import (
     ChatContentValidationService,
 )
 from app.modules.chat.services.chat_policy_service import ChatPolicyService
+from app.modules.chat.services.chat_media_storage_lifecycle import build_media_keyring
 from app.modules.chat.services.chat_media_security_provider import (
     scan_with_clamd, probe_audio_with_ffprobe,
 )
@@ -55,7 +56,7 @@ _TYPES = {
 }
 
 
-def _configured() -> tuple[Path, Fernet, object, object]:
+def _configured() -> tuple[Path, Fernet | MultiFernet, object, object]:
     if current_app.config.get("CHAT_MEDIA_ENABLED") is not True:
         raise ValidationError("Chat media is not enabled")
     raw = current_app.config.get("CHAT_MEDIA_PRIVATE_ROOT")
@@ -77,7 +78,9 @@ def _configured() -> tuple[Path, Fernet, object, object]:
     if not isinstance(raw_key, (str, bytes)):
         raise ValidationError("Chat media encryption is not configured")
     try:
-        fernet = Fernet(raw_key.encode("ascii") if isinstance(raw_key, str) else raw_key)
+        _primary, fernet = build_media_keyring(
+            raw_key, current_app.config.get("CHAT_MEDIA_FERNET_LEGACY_KEYS", "{}")
+        )
     except (ValueError, TypeError) as exc:
         raise ValidationError("Invalid chat media encryption configuration") from exc
     scanner = current_app.config.get("CHAT_MEDIA_SCAN_CALLBACK")

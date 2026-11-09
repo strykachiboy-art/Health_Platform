@@ -141,6 +141,10 @@ class Config:
     CHAT_MEDIA_ENABLED = False
     CHAT_MEDIA_PRIVATE_ROOT = os.environ.get("CHAT_MEDIA_PRIVATE_ROOT")
     CHAT_MEDIA_FERNET_KEY = os.environ.get("CHAT_MEDIA_FERNET_KEY")
+    # Old ciphertext remains readable only while these explicitly pinned keys exist.
+    CHAT_MEDIA_FERNET_LEGACY_KEYS = os.environ.get("CHAT_MEDIA_FERNET_LEGACY_KEYS", "{}")
+    # A separate operator action is required for physical encrypted-file cleanup.
+    CHAT_MEDIA_MAINTENANCE_ENABLED = False
     CHAT_MEDIA_SCANNER = os.environ.get("CHAT_MEDIA_SCANNER", "disabled")
     CHAT_MEDIA_CLAMD_UNIX_SOCKET = os.environ.get("CHAT_MEDIA_CLAMD_UNIX_SOCKET")
     CHAT_MEDIA_CLAMD_HOST = os.environ.get("CHAT_MEDIA_CLAMD_HOST")
