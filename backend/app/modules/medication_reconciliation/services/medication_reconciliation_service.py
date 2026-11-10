@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -822,6 +822,35 @@ def create_medication_reconciliation(
     return record
 
 
+def _utc_draft_timestamp(value: datetime | None) -> datetime:
+    if value is None:
+        raise ConflictError("Medication reconciliation draft has no update timestamp")
+    # PostgreSQL uses aware UTC; SQLite testing may return naive UTC.
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _match_draft_timestamp(
+    current: datetime | None,
+    expected: datetime | None,
+) -> datetime:
+    if (
+        not isinstance(expected, datetime)
+        or expected.tzinfo is None
+        or expected.utcoffset() is None
+    ):
+        raise ValidationError(
+            "expected_updated_at must be a timezone-aware timestamp"
+        )
+    stored = _utc_draft_timestamp(current)
+    if stored != expected.astimezone(timezone.utc):
+        raise ConflictError(
+            "Medication reconciliation draft changed; reload before saving"
+        )
+    return stored
+
+
 @transactional
 def update_medication_reconciliation_draft(
     reconciliation_id: int,
@@ -831,6 +860,7 @@ def update_medication_reconciliation_draft(
     no_medications_reported: bool,
     notes: str | None,
     items: list[dict],
+    expected_updated_at: datetime | None = None,
 ) -> MedicationReconciliation:
     record = _get_record(
         reconciliation_id,
@@ -858,6 +888,11 @@ def update_medication_reconciliation_draft(
             "immutable; use the amendment workflow"
         )
 
+    # Lock was acquired in _get_record(lock=True). Check before any mutation.
+    matched_updated_at = _match_draft_timestamp(
+        record.updated_at, expected_updated_at
+    )
+
     old_document = _event_document(
         record
     )
@@ -877,6 +912,10 @@ def update_medication_reconciliation_draft(
         new_document["no_medications_reported"]
     )
     record.notes = new_document["notes"]
+    # Preserve a distinct CAS token even for two writes within one clock tick.
+    record.updated_at = max(
+        _utcnow(), matched_updated_at + timedelta(microseconds=1)
+    )
 
     _replace_draft_items(
         record,

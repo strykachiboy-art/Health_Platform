@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timezone
+
 from flask import (
     Blueprint,
     jsonify,
@@ -184,7 +186,17 @@ def _serialize(
             record.latest_amendment_id
         ),
         "created_at": record.created_at,
-        "updated_at": record.updated_at,
+        # SQLite may return a naive UTC timestamp; always emit an aware
+        # draft CAS token on the wire (PostgreSQL already returns aware UTC).
+        "updated_at": (
+            record.updated_at.replace(tzinfo=timezone.utc)
+            if record.updated_at is not None
+            and (
+                record.updated_at.tzinfo is None
+                or record.updated_at.utcoffset() is None
+            )
+            else record.updated_at
+        ),
     }
 
     return (
@@ -273,6 +285,7 @@ def update_reconciliation_route(
             reconciliation_id,
             clinic_id=_clinic_id(),
             actor_staff_id=_staff_id(),
+            expected_updated_at=payload.expected_updated_at,
             no_medications_reported=(
                 payload.no_medications_reported
             ),

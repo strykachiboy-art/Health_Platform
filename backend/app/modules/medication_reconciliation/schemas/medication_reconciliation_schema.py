@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -102,6 +103,16 @@ class MedicationReconciliationCreateSchema(
 class MedicationReconciliationUpdateSchema(
     _RequestModel
 ):
+    # The backend's last-read, timezone-aware updated_at is the draft CAS token.
+    expected_updated_at: AwareDatetime
+
+    @field_validator("expected_updated_at", mode="before")
+    @classmethod
+    def _timestamp_must_be_string(cls, value):
+        if (not isinstance(value, str) or not value or value != value.strip()):
+            raise ValueError("expected_updated_at must be an ISO timestamp string")
+        return value
+
     no_medications_reported: bool
     notes: str | None = Field(
         default=None,
