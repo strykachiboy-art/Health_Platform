@@ -44,6 +44,7 @@ import 'package:clinic_system_pro/features/patients/data/patient_remote_data_sou
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
+import 'package:clinic_system_pro/features/emar/presentation/emar_patient_route_screen.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_inbox_screen.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
@@ -746,6 +747,34 @@ GoRouter createAppRouter({
               );
             },
           ),
+          // Server-scoped eMAR entry; a URL does not grant medication access.
+          GoRoute(
+            path: '/emar/patient/:patientId',
+            name: 'p23f-s03c-emar-patient',
+            builder: (context, state) {
+              final admissions = patientAdmissionDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (admissions == null ||
+                  guard == null ||
+                  !identical(admissions.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const Scaffold(
+                  body: Center(child: Text('eMAR navigation unavailable.')),
+                );
+              }
+              return EmarPatientRouteScreen(
+                key: ValueKey('p23f-s03c-emar-$patientId'),
+                admissions: admissions,
+                patientId: patientId,
+              );
+            },
+          ),
           GoRoute(
             path: '/patients',
             name: 'patients',
@@ -782,6 +811,10 @@ GoRouter createAppRouter({
                 consultationDataSource: patientConsultationDataSource,
                 prescriptionDataSource: patientPrescriptionDataSource,
                 clinicalAlertDataSource: patientClinicalAlertDataSource,
+                onEmarRequested: patientAdmissionDataSource == null ||
+                        sessionNavigationGuard == null
+                    ? null
+                    : () => context.push<void>('/emar/patient/$patientId'),
                 emergencyAccessContext: emergencyAccessContext,
               );
             },

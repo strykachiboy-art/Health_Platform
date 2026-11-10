@@ -31,6 +31,7 @@ class PatientDetailScreen extends StatefulWidget {
     this.allergyDataSource,
     this.vitalsDataSource,
     this.admissionDataSource,
+    this.onEmarRequested,
     this.consultationDataSource,
     this.prescriptionDataSource,
     this.clinicalAlertDataSource,
@@ -42,6 +43,7 @@ class PatientDetailScreen extends StatefulWidget {
   final PatientAllergyRemoteDataSource? allergyDataSource;
   final PatientVitalsRemoteDataSource? vitalsDataSource;
   final PatientAdmissionRemoteDataSource? admissionDataSource;
+  final VoidCallback? onEmarRequested;
   final PatientConsultationRemoteDataSource? consultationDataSource;
   final PatientPrescriptionRemoteDataSource? prescriptionDataSource;
   final PatientClinicalAlertRemoteDataSource? clinicalAlertDataSource;
@@ -460,6 +462,16 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             patientId: patient.id,
             dataSource: widget.admissionDataSource!,
           ),
+          if (widget.onEmarRequested != null)
+            ListTile(
+              key: ValueKey('p23f-s03c-patient-emar-${patient.id}'),
+              leading: const Icon(Icons.medication_outlined),
+              title: const Text('Medication administration (eMAR)'),
+              subtitle: const Text(
+                'Server-scoped schedule; barcode verification is separate.',
+              ),
+              onTap: widget.onEmarRequested,
+            ),
         ],
         if (widget.consultationDataSource != null &&
             !_patientSnapshotStale) ...[

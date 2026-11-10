@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Authorized clinical staff may capture a photo for a private chat attachment.</string>
+	<string>Authorized clinical staff may capture private chat photos or scan patient and medication barcodes.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Authorized clinical staff may select a photo for a private chat attachment.</string>
 	<key>NSMicrophoneUsageDescription</key>

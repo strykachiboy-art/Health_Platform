@@ -58,6 +58,8 @@ dependencies:
   socket_io_client: 3.1.6
   # CHAT-F1/F2: device media, private upload and in-memory audio preview.
   image_picker: 1.2.4
+  # P23F.S03.B: camera barcode capture only; does not administer medication.
+  mobile_scanner: 7.5.0
   file_picker: 13.3.2
   record: 7.1.2
   just_audio: 0.10.6
