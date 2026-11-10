@@ -1263,6 +1263,55 @@ def get_medication_reconciliation_amendments(
     )
 
 
+def list_medication_reconciliations_for_admission(
+    *,
+    clinic_id: int,
+    admission_id: int,
+    page: int = 1,
+    per_page: int = 50,
+    event_type=None,
+) -> dict:
+    _positive_id(clinic_id, "clinic_id")
+    admission = _admission(admission_id, clinic_id)
+
+    if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+        raise ValidationError("page must be a positive integer")
+
+    if (
+        isinstance(per_page, bool)
+        or not isinstance(per_page, int)
+        or not 1 <= per_page <= 100
+    ):
+        raise ValidationError("per_page must be between 1 and 100")
+
+    query = MedicationReconciliation.query.filter(
+        MedicationReconciliation.clinic_id == clinic_id,
+        MedicationReconciliation.admission_id == admission.id,
+    )
+    if event_type is not None:
+        event = _event_type(event_type)
+        query = query.filter(
+            MedicationReconciliation.event_type == event.value
+        )
+
+    total = query.count()
+    items = (
+        query.order_by(
+            MedicationReconciliation.created_at.desc(),
+            MedicationReconciliation.id.desc(),
+        )
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+        .all()
+    )
+    return {
+        "items": items,
+        "total": int(total or 0),
+        "page": page,
+        "per_page": per_page,
+    }
+
+
 def get_reconciliation_for_event(
     *,
     clinic_id: int,

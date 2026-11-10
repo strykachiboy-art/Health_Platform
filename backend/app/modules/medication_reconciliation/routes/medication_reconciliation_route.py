@@ -12,6 +12,9 @@ from flask_jwt_extended import (
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ValidationError
+from app.core.enums.medication_reconciliation_enums import (
+    MedicationReconciliationEvent,
+)
 from app.core.idempotency.services.idempotency_service import (
     normalize_idempotency_key,
 )
@@ -33,6 +36,8 @@ from app.modules.medication_reconciliation.schemas.medication_reconciliation_sch
     MedicationReconciliationFinalizeSchema,
     MedicationReconciliationResponseSchema,
     MedicationReconciliationUpdateSchema,
+    MedicationReconciliationAdmissionListQuerySchema,
+    MedicationReconciliationEventLookupQuerySchema,
 )
 from app.modules.medication_reconciliation.services.medication_reconciliation_service import (
     amend_medication_reconciliation,
@@ -41,6 +46,8 @@ from app.modules.medication_reconciliation.services.medication_reconciliation_se
     get_medication_reconciliation,
     get_medication_reconciliation_amendments,
     get_medication_reconciliation_effective_document,
+    get_reconciliation_for_event,
+    list_medication_reconciliations_for_admission,
     update_medication_reconciliation_draft,
 )
 
@@ -361,6 +368,79 @@ def amend_reconciliation_route(
         "amendment": _serialize_amendment(
             amendment
         ),
+    }), 200
+
+
+def _read_query_parameters() -> dict[str, str]:
+    # Duplicated query keys must never silently resolve to the first value.
+    for name in request.args.keys():
+        if len(request.args.getlist(name)) != 1:
+            raise ValidationError(
+                "Duplicate medication reconciliation query parameter"
+            )
+    return request.args.to_dict(flat=True)
+
+
+@medication_reconciliation_bp.get(
+    "/admissions/<int:admission_id>"
+)
+@role_required(*MED_RECON_VIEW_ROLES)
+def list_admission_reconciliations_route(
+    admission_id: int,
+):
+    query = MedicationReconciliationAdmissionListQuerySchema.model_validate(
+        _read_query_parameters()
+    )
+    result = list_medication_reconciliations_for_admission(
+        clinic_id=_clinic_id(),
+        admission_id=admission_id,
+        page=query.page,
+        per_page=query.per_page,
+        event_type=query.event_type,
+    )
+    return jsonify({
+        "items": [_serialize(row) for row in result["items"]],
+        "total": result["total"],
+        "page": result["page"],
+        "per_page": result["per_page"],
+    }), 200
+
+
+@medication_reconciliation_bp.get(
+    "/admissions/<int:admission_id>/events/<event_type>"
+)
+@emergency_aware_role_required(*MED_RECON_VIEW_ROLES)
+def get_admission_reconciliation_event_route(
+    admission_id: int,
+    event_type: str,
+):
+    query = MedicationReconciliationEventLookupQuerySchema.model_validate(
+        _read_query_parameters()
+    )
+    try:
+        verified_event = MedicationReconciliationEvent(event_type)
+    except ValueError as exc:
+        raise ValidationError(
+            "Invalid medication reconciliation event type"
+        ) from exc
+
+    record = get_reconciliation_for_event(
+        clinic_id=_clinic_id(),
+        admission_id=admission_id,
+        event_type=verified_event,
+        ward_transfer_id=query.ward_transfer_id,
+    )
+
+    emergency_denial = authorize_emergency_read_if_requested(
+        patient_id=record.patient_id,
+        resource_type="medication_reconciliation",
+        resource_id=record.id,
+    )
+    if emergency_denial is not None:
+        return emergency_denial
+
+    return jsonify({
+        "reconciliation": _serialize(record),
     }), 200
 
 

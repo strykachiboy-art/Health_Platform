@@ -25,6 +25,16 @@ class _RequestModel(BaseModel):
     )
 
 
+class MedicationReconciliationAdmissionListQuerySchema(_RequestModel):
+    page: int = Field(default=1, ge=1)
+    per_page: int = Field(default=50, ge=1, le=100)
+    event_type: MedicationReconciliationEvent | None = None
+
+
+class MedicationReconciliationEventLookupQuerySchema(_RequestModel):
+    ward_transfer_id: int | None = Field(default=None, gt=0)
+
+
 class MedicationReconciliationItemInputSchema(
     _RequestModel
 ):
