@@ -32,6 +32,7 @@ class PatientDetailScreen extends StatefulWidget {
     this.vitalsDataSource,
     this.admissionDataSource,
     this.onEmarRequested,
+    this.onMedicationReconciliationRequested,
     this.consultationDataSource,
     this.prescriptionDataSource,
     this.clinicalAlertDataSource,
@@ -44,6 +45,7 @@ class PatientDetailScreen extends StatefulWidget {
   final PatientVitalsRemoteDataSource? vitalsDataSource;
   final PatientAdmissionRemoteDataSource? admissionDataSource;
   final VoidCallback? onEmarRequested;
+  final VoidCallback? onMedicationReconciliationRequested;
   final PatientConsultationRemoteDataSource? consultationDataSource;
   final PatientPrescriptionRemoteDataSource? prescriptionDataSource;
   final PatientClinicalAlertRemoteDataSource? clinicalAlertDataSource;
@@ -471,6 +473,16 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
                 'Server-scoped schedule; barcode verification is separate.',
               ),
               onTap: widget.onEmarRequested,
+            ),
+          if (widget.onMedicationReconciliationRequested != null)
+            ListTile(
+              key: ValueKey('p23g-patient-medrec-${patient.id}'),
+              leading: const Icon(Icons.medical_information_outlined),
+              title: const Text('Medication reconciliation'),
+              subtitle: const Text(
+                'Current admission and medication decisions from the server.',
+              ),
+              onTap: widget.onMedicationReconciliationRequested,
             ),
         ],
         if (widget.consultationDataSource != null &&

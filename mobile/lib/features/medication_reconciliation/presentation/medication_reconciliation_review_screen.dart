@@ -42,12 +42,16 @@ class MedicationReconciliationReviewScreen extends StatefulWidget {
     required this.dataSource,
     required this.patientId,
     required this.admissionId,
+    this.onEditDraftRequested,
+    this.onFinalizationRequested,
   }) : assert(patientId > 0),
        assert(admissionId > 0);
 
   final MedicationReconciliationReadRemoteDataSource dataSource;
   final int patientId;
   final int admissionId;
+  final void Function(MedicationReconciliationRecord)? onEditDraftRequested;
+  final void Function(MedicationReconciliationRecord)? onFinalizationRequested;
 
   @override
   State<MedicationReconciliationReviewScreen> createState() =>
@@ -283,6 +287,19 @@ class _MedicationReconciliationReviewScreenState
             Text('Server version: ${record.version}'),
             Text('Last updated: ${_timestamp(record.updatedAt)}'),
             Text('Finalized at: ${_timestamp(record.finalizedAt)}'),
+            if (widget.onEditDraftRequested != null &&
+                record.status == MedicationReconciliationRecordStatus.draft)
+              TextButton(
+                key: ValueKey('p23g-review-edit-${record.id}'),
+                onPressed: () => widget.onEditDraftRequested!(record),
+                child: const Text('Edit reviewed draft'),
+              ),
+            if (widget.onFinalizationRequested != null)
+              TextButton(
+                key: ValueKey('p23g-review-finalize-${record.id}'),
+                onPressed: () => widget.onFinalizationRequested!(record),
+                child: const Text('Finalize or amend reviewed record'),
+              ),
             if (!record.isClinicallyFinal)
               const Text(
                 'DRAFT — review is not clinically completed.',
