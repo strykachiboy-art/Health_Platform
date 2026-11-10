@@ -4,6 +4,7 @@ import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.da
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
 
 import 'models/patient_prescription.dart';
+import 'models/patient_prescription_detail.dart';
 
 class PatientPrescriptionSessionMismatchException implements Exception {
   const PatientPrescriptionSessionMismatchException();
@@ -12,9 +13,9 @@ class PatientPrescriptionSessionMismatchException implements Exception {
   String toString() => 'Patient prescription session unavailable.';
 }
 
-/// GET-only patient prescription history.
+/// GET-only patient prescription history and server-authoritative detail.
 ///
-/// Normal list readers: doctor and pharmacist.
+/// Normal readers: doctor and pharmacist.
 /// Emergency access is not inferred from a patient-detail route.
 /// No persistent PHI cache, clinical writes or automatic retries.
 class PatientPrescriptionRemoteDataSource {
@@ -64,6 +65,46 @@ class PatientPrescriptionRemoteDataSource {
       before.role.trim().toLowerCase() == after.role.trim().toLowerCase() &&
       before.accessToken == after.accessToken &&
       before.refreshToken == after.refreshToken;
+
+  /// P23H.S01: a second authenticated GET, never using a list snapshot as
+  /// evidence for a specific medication order. The server confirms every
+  /// patient, clinic, prescription and medication item identity.
+  Future<PatientPrescriptionDetail> fetchPrescriptionDetail({
+    required int prescriptionId,
+    required int expectedPatientId,
+  }) async {
+    if (prescriptionId <= 0 ||
+        prescriptionId > 2147483647 ||
+        expectedPatientId <= 0 ||
+        expectedPatientId > 2147483647) {
+      throw ArgumentError('Invalid prescription detail identity.');
+    }
+    final revision = sessionNavigationGuard.revision;
+    if (!_current(revision)) {
+      throw const PatientPrescriptionSessionMismatchException();
+    }
+    final before = await _requireSession();
+    if (!_current(revision)) {
+      throw const PatientPrescriptionSessionMismatchException();
+    }
+    final response = await apiClient.getJson(
+      'api/v1/prescriptions/$prescriptionId',
+      bearerToken: before.accessToken,
+    );
+    if (!_current(revision)) {
+      throw const PatientPrescriptionSessionMismatchException();
+    }
+    final after = await _requireSession();
+    if (!_current(revision) || !_sameSession(before, after)) {
+      throw const PatientPrescriptionSessionMismatchException();
+    }
+    return PatientPrescriptionDetail.fromEnvelope(
+      response,
+      expectedClinicId: before.clinicContextId!,
+      expectedPatientId: expectedPatientId,
+      expectedPrescriptionId: prescriptionId,
+    );
+  }
 
   Future<PatientPrescriptionPage> fetchPrescriptions({
     required int patientId,

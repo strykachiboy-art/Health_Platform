@@ -33,6 +33,10 @@ class PatientDetailScreen extends StatefulWidget {
     this.admissionDataSource,
     this.onEmarRequested,
     this.onMedicationReconciliationRequested,
+    this.onPrescriptionDetailRequested,
+    this.onLabOrdersRequested,
+    this.onPharmacyStockRequested,
+    this.onClinicalActionsRequested,
     this.consultationDataSource,
     this.prescriptionDataSource,
     this.clinicalAlertDataSource,
@@ -46,6 +50,10 @@ class PatientDetailScreen extends StatefulWidget {
   final PatientAdmissionRemoteDataSource? admissionDataSource;
   final VoidCallback? onEmarRequested;
   final VoidCallback? onMedicationReconciliationRequested;
+  final void Function(int prescriptionId)? onPrescriptionDetailRequested;
+  final VoidCallback? onLabOrdersRequested;
+  final VoidCallback? onPharmacyStockRequested;
+  final VoidCallback? onClinicalActionsRequested;
   final PatientConsultationRemoteDataSource? consultationDataSource;
   final PatientPrescriptionRemoteDataSource? prescriptionDataSource;
   final PatientClinicalAlertRemoteDataSource? clinicalAlertDataSource;
@@ -485,6 +493,32 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
               onTap: widget.onMedicationReconciliationRequested,
             ),
         ],
+        // Only present these entry points after the patient profile is fresh.
+        // Backend role and clinic checks remain authoritative.
+        if (!_patientSnapshotStale && widget.onLabOrdersRequested != null)
+          ListTile(
+            key: ValueKey('p23h-patient-lab-orders-${patient.id}'),
+            leading: const Icon(Icons.science_outlined),
+            title: const Text('Laboratory orders and results'),
+            onTap: widget.onLabOrdersRequested,
+          ),
+        if (!_patientSnapshotStale && widget.onPharmacyStockRequested != null)
+          ListTile(
+            key: ValueKey('p23h-pharmacy-stock-${patient.id}'),
+            leading: const Icon(Icons.inventory_2_outlined),
+            title: const Text('Pharmacy stock (authorized staff)'),
+            onTap: widget.onPharmacyStockRequested,
+          ),
+        if (!_patientSnapshotStale && widget.onClinicalActionsRequested != null)
+          ListTile(
+            key: ValueKey('p23h-clinical-actions-${patient.id}'),
+            leading: const Icon(Icons.fact_check_outlined),
+            title: const Text('Clinical actions (authorized staff)'),
+            subtitle: const Text(
+              'Review server records before any clinical change.',
+            ),
+            onTap: widget.onClinicalActionsRequested,
+          ),
         if (widget.consultationDataSource != null &&
             !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
@@ -503,6 +537,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             key: ValueKey('patient-prescriptions-for-${patient.id}'),
             patientId: patient.id,
             dataSource: widget.prescriptionDataSource!,
+            onPrescriptionDetailRequested: widget.onPrescriptionDetailRequested,
           ),
         ],
         if (widget.clinicalAlertDataSource != null &&

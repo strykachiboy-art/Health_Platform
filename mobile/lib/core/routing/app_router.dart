@@ -52,6 +52,22 @@ import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_da
 import 'package:clinic_system_pro/features/nursing/presentation/ward_dashboard_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_prescription_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_prescription_detail_screen.dart';
+import 'package:clinic_system_pro/features/pharmacy/data/pharmacy_inventory_remote_data_source.dart';
+import 'package:clinic_system_pro/features/pharmacy/presentation/pharmacy_stock_screen.dart';
+import 'package:clinic_system_pro/features/lab/data/lab_order_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/lab/presentation/lab_patient_orders_screen.dart';
+import 'package:clinic_system_pro/features/p23h_navigation/p23h_clinical_action_hub.dart';
+import 'package:clinic_system_pro/features/patients/data/patient_prescription_mutation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_prescription_mutation_screen.dart';
+import 'package:clinic_system_pro/features/pharmacy/data/pharmacy_dispense_remote_data_source.dart';
+import 'package:clinic_system_pro/features/pharmacy/presentation/pharmacy_dispense_screen.dart';
+import 'package:clinic_system_pro/features/lab/data/lab_order_mutation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/lab/presentation/lab_order_mutation_screen.dart';
+import 'package:clinic_system_pro/features/lab/data/lab_technician_lifecycle_remote_data_source.dart';
+import 'package:clinic_system_pro/features/lab/presentation/lab_technician_lifecycle_screen.dart';
+import 'package:clinic_system_pro/features/lab/data/lab_result_finalization_remote_data_source.dart';
+import 'package:clinic_system_pro/features/lab/presentation/lab_result_finalization_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_clinical_alert_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_detail_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_directory_screen.dart';
@@ -83,6 +99,36 @@ GoRouter createAppRouter({
   EmergencyAccessContext? emergencyAccessContext,
   SessionNavigationGuard? sessionNavigationGuard,
 }) {
+  // P23H.S06A reuses the already-injected authenticated client/session.
+  // GET-only readers still recheck role, clinic, patient and session authority.
+  final p23hReader = patientPrescriptionDataSource;
+  final p23hGuard = sessionNavigationGuard;
+  final p23hSourceReady =
+      p23hReader != null &&
+      p23hGuard != null &&
+      identical(p23hReader.sessionNavigationGuard, p23hGuard);
+  final PharmacyInventoryRemoteDataSource? pharmacyInventorySource;
+  final LabOrderReadRemoteDataSource? labReadSource;
+  if (p23hReader != null &&
+      p23hGuard != null &&
+      identical(p23hReader.sessionNavigationGuard, p23hGuard)) {
+    pharmacyInventorySource = PharmacyInventoryRemoteDataSource(
+      apiClient: p23hReader.apiClient,
+      loadSession: p23hReader.loadSession,
+      sessionNavigationGuard: p23hGuard,
+    );
+    labReadSource = LabOrderReadRemoteDataSource(
+      apiClient: p23hReader.apiClient,
+      loadSession: p23hReader.loadSession,
+      sessionNavigationGuard: p23hGuard,
+    );
+  } else {
+    pharmacyInventorySource = null;
+    labReadSource = null;
+  }
+  // Retain one-shot clinical adapters for the router lifetime, keyed by exact
+  // patient/record/action. Route revisits cannot manufacture another POST.
+  final p23hActionAdapters = <String, Object>{};
   // Router lifetime, not route lifetime. An uncertain mutation stays locked
   // when the user leaves and revisits the screen during this session.
   final mutationSource =
@@ -107,6 +153,12 @@ GoRouter createAppRouter({
         state.matchedLocation,
       );
       if (authRedirect != null) return authRedirect;
+      // This project's default guard protects /patients only. Do not let
+      // /pharmacy/stock bypass session redirection on direct/deep links.
+      if (state.matchedLocation == '/pharmacy/stock' &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       // Login and saved-session restoration use the existing guard. Once
       // ready, land on home without requiring a second manual button tap.
       // The explicit session route remains reachable for logout/recovery.
@@ -809,6 +861,272 @@ GoRouter createAppRouter({
               );
             },
           ),
+          // P23H.S06A: no clinical writes or privileges are granted by paths.
+          // Source readers reauthenticate and enforce backend role/clinic scope.
+          GoRoute(
+            path: '/patients/:patientId/prescriptions/:prescriptionId',
+            name: 'p23h-prescription-detail-read',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final reader = patientPrescriptionDataSource;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              final prescriptionId = int.tryParse(
+                state.pathParameters['prescriptionId'] ?? '',
+              );
+              if (guard == null ||
+                  reader == null ||
+                  !identical(reader.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647 ||
+                  prescriptionId == null ||
+                  prescriptionId <= 0 ||
+                  prescriptionId > 2147483647) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text('Prescription detail navigation unavailable.'),
+                  ),
+                );
+              }
+              return PatientPrescriptionDetailScreen(
+                key: ValueKey(
+                  'p23h-route-prescription-$patientId-$prescriptionId',
+                ),
+                dataSource: reader,
+                patientId: patientId,
+                prescriptionId: prescriptionId,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/patients/:patientId/lab-orders',
+            name: 'p23h-patient-lab-orders-read',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (guard == null ||
+                  labReadSource == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text('Laboratory navigation unavailable.'),
+                  ),
+                );
+              }
+              return LabPatientOrdersScreen(
+                key: ValueKey('p23h-route-lab-orders-$patientId'),
+                patientId: patientId,
+                dataSource: labReadSource,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/pharmacy/stock',
+            name: 'p23h-pharmacy-stock-read',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              if (guard == null ||
+                  pharmacyInventorySource == null ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text('Pharmacy inventory navigation unavailable.'),
+                  ),
+                );
+              }
+              return PharmacyStockScreen(
+                key: const ValueKey('p23h-route-pharmacy-stock'),
+                dataSource: pharmacyInventorySource,
+              );
+            },
+          ),
+          // S06B: Clinical action entry exists only inside a verified patient
+          // chart. This hub performs GETs only and never grants RBAC by URL.
+          GoRoute(
+            path: '/patients/:patientId/clinical-actions',
+            name: 'p23h-patient-clinical-action-hub',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final reader = patientPrescriptionDataSource;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (guard == null ||
+                  reader == null ||
+                  labReadSource == null ||
+                  !identical(reader.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text('Clinical action navigation unavailable.'),
+                  ),
+                );
+              }
+              return P23HClinicalActionHub(
+                key: ValueKey('p23h-clinical-hub-$patientId'),
+                patientId: patientId,
+                prescriptionReader: reader,
+                labReader: labReadSource,
+                onActionRequested: (intent) {
+                  if (!guard.canAccessProtectedRoutes ||
+                      !intent.isValid ||
+                      intent.patientId != patientId) {
+                    return;
+                  }
+                  context.push<void>(
+                    '/patients/$patientId/clinical-action',
+                    extra: _P23HMutationNavigationGrant(intent, guard.revision),
+                  );
+                },
+              );
+            },
+          ),
+          // No URL can create a clinical write grant. The user must select an
+          // existing server-scoped action from the in-app hub. The destination
+          // screen then rechecks backend scope and obtains explicit consent.
+          GoRoute(
+            path: '/patients/:patientId/clinical-action',
+            name: 'p23h-granted-clinical-action',
+            builder: (context, state) {
+              const unavailable = Scaffold(
+                body: Center(child: Text('Clinical action grant unavailable.')),
+              );
+              final guard = sessionNavigationGuard;
+              final grant = state.extra;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (guard == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  grant is! _P23HMutationNavigationGrant ||
+                  grant.revision != guard.revision ||
+                  !grant.intent.isValid ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647 ||
+                  grant.intent.patientId != patientId ||
+                  patientPrescriptionDataSource == null ||
+                  labReadSource == null ||
+                  pharmacyInventorySource == null) {
+                return unavailable;
+              }
+              final intent = grant.intent;
+              final key =
+                  '${intent.kind.name}/$patientId/'
+                  '${intent.prescriptionId ?? 0}/${intent.orderId ?? 0}/'
+                  '${intent.orderItemId ?? 0}';
+              if (intent.kind == P23HClinicalActionKind.prescribe ||
+                  intent.kind == P23HClinicalActionKind.cancelPrescription ||
+                  intent.kind == P23HClinicalActionKind.completePrescription) {
+                final action = switch (intent.kind) {
+                  P23HClinicalActionKind.prescribe =>
+                    PrescriptionMutationAction.create,
+                  P23HClinicalActionKind.cancelPrescription =>
+                    PrescriptionMutationAction.cancel,
+                  _ => PrescriptionMutationAction.complete,
+                };
+                final source = p23hActionAdapters.putIfAbsent(
+                  key,
+                  () => PatientPrescriptionMutationRemoteDataSource(
+                    reader: patientPrescriptionDataSource,
+                  ),
+                ) as PatientPrescriptionMutationRemoteDataSource;
+                return PatientPrescriptionMutationScreen(
+                  key: ValueKey('p23h-clinical-$key'),
+                  source: source,
+                  patientId: patientId,
+                  action: action,
+                  prescriptionId: intent.prescriptionId,
+                );
+              }
+              if (intent.kind == P23HClinicalActionKind.dispense) {
+                final source = p23hActionAdapters.putIfAbsent(
+                  key,
+                  () => PharmacyDispenseRemoteDataSource(
+                    inventory: pharmacyInventorySource!,
+                  ),
+                ) as PharmacyDispenseRemoteDataSource;
+                return PharmacyDispenseScreen(
+                  key: ValueKey('p23h-clinical-$key'),
+                  source: source,
+                  patientId: patientId,
+                  prescriptionId: intent.prescriptionId!,
+                );
+              }
+              if (intent.kind == P23HClinicalActionKind.labCreateOrCancel) {
+                final source = p23hActionAdapters.putIfAbsent(
+                  key,
+                  () =>
+                      LabOrderMutationRemoteDataSource(reader: labReadSource!),
+                ) as LabOrderMutationRemoteDataSource;
+                return LabOrderMutationScreen(
+                  key: ValueKey('p23h-clinical-$key'),
+                  patientId: patientId,
+                  dataSource: source,
+                );
+              }
+              if (intent.kind == P23HClinicalActionKind.collectSample ||
+                  intent.kind == P23HClinicalActionKind.linkEquipment ||
+                  intent.kind == P23HClinicalActionKind.processSample) {
+                final action = switch (intent.kind) {
+                  P23HClinicalActionKind.collectSample =>
+                    LabTechnicianAction.collect,
+                  P23HClinicalActionKind.linkEquipment =>
+                    LabTechnicianAction.linkEquipment,
+                  _ => LabTechnicianAction.process,
+                };
+                final source = p23hActionAdapters.putIfAbsent(
+                  key,
+                  () => LabTechnicianLifecycleRemoteDataSource(
+                    reader: labReadSource!,
+                  ),
+                ) as LabTechnicianLifecycleRemoteDataSource;
+                return LabTechnicianLifecycleScreen(
+                  key: ValueKey('p23h-clinical-$key'),
+                  dataSource: source,
+                  patientId: patientId,
+                  orderId: intent.orderId!,
+                  action: action,
+                );
+              }
+              final action = switch (intent.kind) {
+                P23HClinicalActionKind.enterResult =>
+                  LabResultAction.enterResult,
+                P23HClinicalActionKind.verifyResults => LabResultAction.verify,
+                P23HClinicalActionKind.completeLabOrder =>
+                  LabResultAction.complete,
+                _ => null,
+              };
+              if (action == null) {
+                return unavailable;
+              }
+              final source = p23hActionAdapters.putIfAbsent(
+                key,
+                () => LabResultFinalizationRemoteDataSource(
+                  reader: labReadSource!,
+                ),
+              ) as LabResultFinalizationRemoteDataSource;
+              return LabResultFinalizationScreen(
+                key: ValueKey('p23h-clinical-$key'),
+                dataSource: source,
+                patientId: patientId,
+                orderId: intent.orderId!,
+                orderItemId: intent.orderItemId,
+                action: action,
+              );
+            },
+          ),
           GoRoute(
             path: '/patients',
             name: 'patients',
@@ -857,6 +1175,25 @@ GoRouter createAppRouter({
                     : () => context.push<void>(
                         '/patients/$patientId/medication-reconciliation',
                       ),
+                onPrescriptionDetailRequested:
+                    p23hSourceReady && patientPrescriptionDataSource != null
+                    ? (id) => context.push<void>(
+                        '/patients/$patientId/prescriptions/$id',
+                      )
+                    : null,
+                onLabOrdersRequested: labReadSource == null
+                    ? null
+                    : () =>
+                          context.push<void>('/patients/$patientId/lab-orders'),
+                onPharmacyStockRequested: pharmacyInventorySource == null
+                    ? null
+                    : () => context.push<void>('/pharmacy/stock'),
+                onClinicalActionsRequested:
+                    p23hSourceReady && labReadSource != null
+                    ? () => context.push<void>(
+                        '/patients/$patientId/clinical-actions',
+                      )
+                    : null,
                 emergencyAccessContext: emergencyAccessContext,
               );
             },
@@ -1002,4 +1339,12 @@ class _AppointmentChangeGrant {
   const _AppointmentChangeGrant(this.record, this.guardRevision);
   final AppointmentRecord record;
   final int guardRevision;
+}
+
+// Private, revision-bound navigation token. Deep links do not carry this
+// object and cannot open clinical mutation screens directly.
+class _P23HMutationNavigationGrant {
+  const _P23HMutationNavigationGrant(this.intent, this.revision);
+  final P23HClinicalActionIntent intent;
+  final int revision;
 }

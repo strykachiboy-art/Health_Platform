@@ -55,6 +55,21 @@ List<HomeDestination> homeDestinationsFor({
     ),
   ];
 
+  // P23H.S06A inventory entry is visible only to authorized pharmacy roles
+  // with a selected clinic. Backend RBAC and session guards remain binding.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{'admin', 'pharmacist'}.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'pharmacy_inventory',
+        'Pharmacy stock',
+        '/pharmacy/stock',
+        Icons.inventory_2_outlined,
+      ),
+    );
+  }
   // The backend exposes patient/staff-scoped appointments, not a global list.
   // Only the four appointment roles with an active clinic see this entry.
   if (clinicContextId != null &&

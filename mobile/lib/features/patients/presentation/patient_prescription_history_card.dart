@@ -13,12 +13,14 @@ class PatientPrescriptionHistoryCard extends StatefulWidget {
     required this.patientId,
     required this.dataSource,
     this.pageSize = 20,
+    this.onPrescriptionDetailRequested,
   }) : assert(patientId > 0),
        assert(pageSize > 0 && pageSize <= 500);
 
   final int patientId;
   final PatientPrescriptionRemoteDataSource dataSource;
   final int pageSize;
+  final void Function(int prescriptionId)? onPrescriptionDetailRequested;
 
   @override
   State<PatientPrescriptionHistoryCard> createState() =>
@@ -221,6 +223,14 @@ class _PatientPrescriptionHistoryCardState
                     Text('Instructions: ${item.instructions}'),
                 ],
               ),
+            ),
+          if (widget.onPrescriptionDetailRequested != null &&
+              widget.dataSource.sessionNavigationGuard.canAccessProtectedRoutes)
+            TextButton(
+              key: ValueKey('p23h-prescription-detail-link-${prescription.id}'),
+              onPressed: () =>
+                  widget.onPrescriptionDetailRequested!(prescription.id),
+              child: const Text('Open prescription detail'),
             ),
           const Divider(),
         ],
