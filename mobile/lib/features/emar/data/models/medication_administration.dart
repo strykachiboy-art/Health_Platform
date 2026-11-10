@@ -166,6 +166,12 @@ class EmarAdministration {
     required this.verificationResult,
     required this.verificationEventId,
     required this.sourceOrderVersion,
+    this.heldAt,
+    this.holdReason,
+    this.refusedAt,
+    this.refusalReason,
+    this.missedAt,
+    this.missedReason,
   });
 
   final int id;
@@ -185,6 +191,26 @@ class EmarAdministration {
   final EmarBarcodeResult? verificationResult;
   final int? verificationEventId;
   final int? sourceOrderVersion;
+  final DateTime? heldAt;
+  final String? holdReason;
+  final DateTime? refusedAt;
+  final String? refusalReason;
+  final DateTime? missedAt;
+  final String? missedReason;
+
+  DateTime? get terminalAt => switch (status) {
+    EmarAdministrationStatus.held => heldAt,
+    EmarAdministrationStatus.refused => refusedAt,
+    EmarAdministrationStatus.missed => missedAt,
+    _ => null,
+  };
+
+  String? get terminalReason => switch (status) {
+    EmarAdministrationStatus.held => holdReason,
+    EmarAdministrationStatus.refused => refusalReason,
+    EmarAdministrationStatus.missed => missedReason,
+    _ => null,
+  };
 
   bool get isPending =>
       status == EmarAdministrationStatus.scheduled ||
@@ -233,6 +259,12 @@ class EmarAdministration {
           : _enumValue(rawVerification, _barcodeResults, 'verification_result'),
       verificationEventId: _optionalId(json, 'barcode_verification_event_id'),
       sourceOrderVersion: _optionalId(json, 'source_order_version'),
+      heldAt: _utcTime(json, 'held_at'),
+      holdReason: _optionalString(json, 'hold_reason', maxLength: 500),
+      refusedAt: _utcTime(json, 'refused_at'),
+      refusalReason: _optionalString(json, 'refusal_reason', maxLength: 500),
+      missedAt: _utcTime(json, 'missed_at'),
+      missedReason: _optionalString(json, 'missed_reason', maxLength: 500),
     );
   }
 }

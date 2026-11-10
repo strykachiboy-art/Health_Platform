@@ -8,6 +8,9 @@ import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
 import 'package:clinic_system_pro/features/emar/data/emar_barcode_verification_remote_data_source.dart';
+import 'package:clinic_system_pro/features/emar/data/emar_medication_administration_remote_data_source.dart';
+import 'package:clinic_system_pro/features/emar/data/emar_terminal_outcome_remote_data_source.dart';
+import 'package:clinic_system_pro/features/emar/presentation/emar_terminal_outcome_panel.dart';
 import 'package:clinic_system_pro/features/emar/data/emar_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/emar/data/models/medication_administration.dart';
 import 'package:clinic_system_pro/features/emar/presentation/emar_barcode_verification_screen.dart';
@@ -38,6 +41,7 @@ class _EmarPatientRouteScreenState extends State<EmarPatientRouteScreen> {
   bool _loading = true;
   bool _opening = false;
   bool _verificationOpened = false;
+  bool _terminalOpened = false;
   bool _mustReopen = false;
   String? _message;
   int _generation = 0;
@@ -81,6 +85,7 @@ class _EmarPatientRouteScreenState extends State<EmarPatientRouteScreen> {
       _nurse = false;
       _opening = false;
       _verificationOpened = false;
+      _terminalOpened = false;
       _message = null;
       _mustReopen = false;
       _scheduleEpoch++;
@@ -102,6 +107,7 @@ class _EmarPatientRouteScreenState extends State<EmarPatientRouteScreen> {
     _loading = false;
     _opening = false;
     _verificationOpened = true;
+    _terminalOpened = true;
     _message = null;
     _mustReopen = true;
     if (mounted) {
@@ -225,6 +231,7 @@ class _EmarPatientRouteScreenState extends State<EmarPatientRouteScreen> {
         !_nurse ||
         _opening ||
         _verificationOpened ||
+        _terminalOpened ||
         _loading ||
         _currentAdmission == null ||
         !selected.isPending) {
@@ -286,6 +293,12 @@ class _EmarPatientRouteScreenState extends State<EmarPatientRouteScreen> {
               loadSession: widget.admissions.loadSession,
               sessionNavigationGuard: _guard,
             ),
+            administrationAdapter: EmarMedicationAdministrationRemoteDataSource(
+              apiClient: widget.admissions.apiClient,
+              readSource: _emar,
+              loadSession: widget.admissions.loadSession,
+              sessionNavigationGuard: _guard,
+            ),
             reviewed: fresh,
           ),
         ),
@@ -303,6 +316,96 @@ class _EmarPatientRouteScreenState extends State<EmarPatientRouteScreen> {
         if (entered) {
           // Always re-read the admission and schedule after a verification
           // screen closes; never retain a potentially changed clinical row.
+          _scheduleEpoch++;
+          unawaited(_load());
+        } else {
+          setState(() => _opening = false);
+        }
+      }
+    }
+  }
+
+  /// The selected schedule row is only a hint. A nurse must revalidate the
+  /// current admission, exact eMAR detail and session before seeing an action.
+  Future<void> _openTerminal(EmarAdministration selected) async {
+    if (!_available ||
+        !_nurse ||
+        _opening ||
+        _verificationOpened ||
+        _terminalOpened ||
+        _loading ||
+        _currentAdmission == null ||
+        !selected.isPending) {
+      return;
+    }
+    final admission = _currentAdmission!;
+    final revision = _guard.revision;
+    final generation = _generation;
+    if (selected.patientId != widget.patientId ||
+        selected.admissionId != admission.id) {
+      return;
+    }
+    setState(() => _opening = true);
+    bool entered = false;
+    try {
+      final before = await _authorized();
+      if (!_valid(generation, revision) ||
+          before.role.trim().toLowerCase() != 'nurse' ||
+          before.clinicContextId != selected.clinicId) {
+        throw const EmarReadSessionException();
+      }
+      final active = await widget.admissions.fetchCurrentAdmission(
+        patientId: widget.patientId,
+      );
+      if (!_valid(generation, revision) ||
+          active == null ||
+          !active.isActive ||
+          active.id != admission.id) {
+        throw const FormatException('Patient admission changed.');
+      }
+      final fresh = await _emar.getAdministration(
+        administrationId: selected.id,
+        expectedPatientId: widget.patientId,
+        expectedAdmissionId: admission.id,
+      );
+      if (!_valid(generation, revision) ||
+          !fresh.isPending ||
+          !_sameClinical(selected, fresh)) {
+        throw const FormatException('Clinical record changed.');
+      }
+      final after = await _authorized();
+      if (!_valid(generation, revision) || !_sameSession(before, after)) {
+        throw const EmarReadSessionException();
+      }
+      if (!mounted) {
+        return;
+      }
+      _terminalOpened = true;
+      entered = true;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => EmarTerminalOutcomePanel(
+            key: ValueKey('p23f-s05-terminal-${fresh.id}-$revision'),
+            reviewed: fresh,
+            adapter: EmarTerminalOutcomeRemoteDataSource(
+              apiClient: widget.admissions.apiClient,
+              readSource: _emar,
+              loadSession: widget.admissions.loadSession,
+              sessionNavigationGuard: _guard,
+            ),
+          ),
+        ),
+      );
+    } on Object {
+      if (_valid(generation, revision)) {
+        setState(() {
+          _message = 'Medication outcome context changed or unavailable. '
+              'Reopen the current clinical record.';
+        });
+      }
+    } finally {
+      if (_valid(generation, revision)) {
+        if (entered) {
           _scheduleEpoch++;
           unawaited(_load());
         } else {
@@ -351,8 +454,11 @@ class _EmarPatientRouteScreenState extends State<EmarPatientRouteScreen> {
           dataSource: _emar,
           patientId: widget.patientId,
           admissionId: admission.id,
-          onVerifyRequested: _nurse && !_verificationOpened
+          onVerifyRequested: _nurse && !_verificationOpened && !_terminalOpened
               ? _openVerification
+              : null,
+          onTerminalRequested: _nurse && !_terminalOpened && !_verificationOpened
+              ? _openTerminal
               : null,
         ),
         if (_message != null)

@@ -11,6 +11,8 @@ import 'package:clinic_system_pro/features/emar/data/emar_barcode_verification_r
 import 'package:clinic_system_pro/features/emar/data/models/emar_barcode_verification.dart';
 import 'package:clinic_system_pro/features/emar/data/models/medication_administration.dart';
 import 'package:clinic_system_pro/features/emar/presentation/emar_camera_barcode_capture.dart';
+import 'package:clinic_system_pro/features/emar/data/emar_medication_administration_remote_data_source.dart';
+import 'package:clinic_system_pro/features/emar/presentation/emar_administration_confirmation_panel.dart';
 
 class EmarBarcodeVerificationScreen extends StatefulWidget {
   const EmarBarcodeVerificationScreen({
@@ -18,11 +20,13 @@ class EmarBarcodeVerificationScreen extends StatefulWidget {
     required this.adapter,
     required this.reviewed,
     this.capture = captureEmarBarcode,
+    this.administrationAdapter,
   });
 
   final EmarBarcodeVerificationRemoteDataSource adapter;
   final EmarAdministration reviewed;
   final EmarBarcodeCapture capture;
+  final EmarMedicationAdministrationRemoteDataSource? administrationAdapter;
 
   @override
   State<EmarBarcodeVerificationScreen> createState() =>
@@ -307,8 +311,8 @@ class _EmarBarcodeVerificationScreenState
               padding: const EdgeInsets.all(16),
               children: [
                 const Text(
-                  'Camera scan + server verification only. '
-                  'This screen never administers a dose.',
+                  'Camera scan and barcode verification. '
+                  'Recording a dose requires separate nurse confirmation.',
                 ),
                 if (_loading)
                   const LinearProgressIndicator(
@@ -376,6 +380,22 @@ class _EmarBarcodeVerificationScreenState
                   Text(
                     'Verification event #${_result!.id}',
                     key: const ValueKey('p23f-s03b-event'),
+                  ),
+                if (_result != null && _result!.verified &&
+                    _fresh != null && widget.administrationAdapter != null)
+                  EmarAdministrationConfirmationPanel(
+                    key: ValueKey('p23f-s04-panel-${_result!.id}'),
+                    adapter: widget.administrationAdapter!,
+                    reviewed: _fresh!,
+                    verification: _result!,
+                    onConfirmed: (administration) {
+                      if (mounted && _available) {
+                        setState(() {
+                          _message = 'Server confirmed medication administration '
+                              '#${administration.id}. Reopen for another dose.';
+                        });
+                      }
+                    },
                   ),
                 if (_message != null)
                   Text(_message!, key: const ValueKey('p23f-s03b-message')),

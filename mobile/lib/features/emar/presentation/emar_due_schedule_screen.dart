@@ -51,6 +51,7 @@ class EmarDueScheduleScreen extends StatefulWidget {
     required this.patientId,
     required this.admissionId,
     this.onVerifyRequested,
+    this.onTerminalRequested,
   }) : assert(patientId > 0),
        assert(admissionId > 0);
 
@@ -58,6 +59,7 @@ class EmarDueScheduleScreen extends StatefulWidget {
   final int patientId;
   final int admissionId;
   final ValueChanged<EmarAdministration>? onVerifyRequested;
+  final ValueChanged<EmarAdministration>? onTerminalRequested;
 
   @override
   State<EmarDueScheduleScreen> createState() => _EmarDueScheduleScreenState();
@@ -374,6 +376,12 @@ class _EmarDueScheduleScreenState extends State<EmarDueScheduleScreen> {
                     Text(_dose(_detail!)),
                     Text('Scheduled: ${_date(_detail!.scheduledAt)}'),
                     Text('Administered: ${_date(_detail!.administeredAt)}'),
+                    if (_detail!.terminalAt != null) ...[
+                      Text('Outcome recorded: ${_date(_detail!.terminalAt)}',
+                          key: const ValueKey('p23f-s05-history-time')),
+                      Text('Clinical reason: ${_detail!.terminalReason ?? 'Unavailable'}',
+                          key: const ValueKey('p23f-s05-history-reason')),
+                    ],
                     if (widget.onVerifyRequested == null)
                       const Text(
                         'Barcode verification and administration actions are '
@@ -384,6 +392,15 @@ class _EmarDueScheduleScreenState extends State<EmarDueScheduleScreen> {
                         'This is a read-only schedule. Barcode verification '
                         'is separate and does NOT administer medication.',
                       ),
+                      if (_detail!.isPending && widget.onTerminalRequested != null)
+                        OutlinedButton.icon(
+                          key: const ValueKey('p23f-s05-terminal-entry'),
+                          onPressed: _available && !_loading && !_detailLoading
+                              ? () => widget.onTerminalRequested?.call(_detail!)
+                              : null,
+                          icon: const Icon(Icons.assignment_outlined),
+                          label: const Text('Document hold/refusal/missed dose'),
+                        ),
                       if (_detail!.isPending)
                         OutlinedButton.icon(
                           key: const ValueKey('p23f-s03c-verify-entry'),

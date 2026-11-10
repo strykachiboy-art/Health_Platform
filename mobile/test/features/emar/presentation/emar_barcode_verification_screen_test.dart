@@ -31,6 +31,7 @@ Map<String, dynamic> administration({
   int patientId = 5,
   int version = 2,
   int? eventId,
+  bool verifiedResult = false,
 }) => {
   'id': 11,
   'clinic_id': 3,
@@ -47,7 +48,7 @@ Map<String, dynamic> administration({
   'route_code': 'oral',
   'scheduled_at': '2026-11-09T11:00:00Z',
   'barcode_verification_event_id': eventId,
-  'verification_result': eventId == null ? null : 'barcode_verified',
+  'verification_result': eventId != null || verifiedResult ? 'barcode_verified' : null,
 };
 
 EmarAdministration selected() => EmarAdministration.fromJson(
@@ -151,12 +152,25 @@ void main() {
       var posts = 0;
       var administered = 0;
       final client = MockClient((request) async {
+        if (request.url.path == '/api/v1/emar/11/barcode-events') {
+          gets++;
+        return http.Response(jsonEncode({'history': {'total': 1, 'items': [{
+          'id': 41, 'clinic_id': 3, 'medication_administration_id': 11,
+          'actor_staff_id': 17, 'verification_result': 'barcode_verified',
+          'failure_code': null, 'failure_reason': null,
+          'patient_match': true, 'medication_match': true,
+          'dose_match': true, 'route_match': true,
+          'time_window_match': true,
+          'scan_timestamp': '2026-11-09T11:00:00Z',
+          'verification_policy_version': 1,
+        }]}}), 200);
+      }
         if (request.method == 'GET') {
           gets++;
           expect(request.url.path, '/api/v1/emar/11');
           return http.Response(
             jsonEncode({
-              'administration': administration(eventId: gets == 3 ? 41 : null),
+              'administration': administration(verifiedResult: gets == 3),
             }),
             200,
           );
@@ -204,7 +218,7 @@ void main() {
       expect(find.textContaining('MED-3'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('p23f-s03b-verify-once')));
       await tester.pumpAndSettle();
-      expect(gets, 3);
+      expect(gets, 4);
       expect(posts, 1);
       expect(administered, 0);
       expect(

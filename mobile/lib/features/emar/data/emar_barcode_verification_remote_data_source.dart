@@ -169,13 +169,18 @@ class EmarBarcodeVerificationRemoteDataSource {
         expectedPatientId: fresh.patientId,
         expectedAdmissionId: fresh.admissionId,
       );
+      final history = await readSource.getBarcodeHistory(
+        administrationId: fresh.id,
+      );
       final finalSession = await _nurse(revision);
       if (!_same(still, finalSession) ||
           !_current(revision) ||
-          readback.verificationEventId != event.id ||
+          readback.verificationEventId != null ||
           readback.verificationResult != EmarBarcodeResult.barcodeVerified ||
           !readback.isPending ||
-          readback.sourceOrderVersion != fresh.sourceOrderVersion) {
+          readback.sourceOrderVersion != fresh.sourceOrderVersion ||
+          history.items.isEmpty || history.items.first.id != event.id ||
+          !history.items.first.isVerified) {
         throw const EmarVerificationOutcomeUnconfirmed();
       }
       return event;
