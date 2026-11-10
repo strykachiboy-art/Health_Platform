@@ -633,6 +633,7 @@ def test_ward_ambulance_e2e(
         clinic_id=clinic.id,
         actor_staff_id=doctor_staff.id,
         expected_version=1,
+        expected_updated_at=med_recon_service._utc_draft_timestamp(reconciliation.updated_at),
     )
 
     discharge_response = client.post(

@@ -330,6 +330,7 @@ def finalize_reconciliation_route(
         clinic_id=_clinic_id(),
         actor_staff_id=current_user.staff.id,
         expected_version=payload.expected_version,
+        expected_updated_at=payload.expected_updated_at,
         idempotency_key=_required_idempotency_key(),
         idempotency_user_id=current_user.id,
     )

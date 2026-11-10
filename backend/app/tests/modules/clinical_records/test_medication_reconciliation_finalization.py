@@ -384,6 +384,7 @@ def test_finalize_rejects_unresolved_decisions(
             clinic_id=clinic.id,
             actor_staff_id=ctx["doctor"].id,
             expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
         )
 
 
@@ -407,6 +408,7 @@ def test_finalize_requires_items_or_explicit_no_medications(
             clinic_id=clinic.id,
             actor_staff_id=ctx["doctor"].id,
             expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
         )
 
 
@@ -427,6 +429,7 @@ def test_explicit_no_medications_can_finalize(
             clinic_id=clinic.id,
             actor_staff_id=ctx["doctor"].id,
             expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
         )
     )
 
@@ -488,6 +491,7 @@ def test_resolved_reconciliation_finalizes_version_one(
             clinic_id=clinic.id,
             actor_staff_id=ctx["doctor"].id,
             expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
         )
     )
 
@@ -512,6 +516,7 @@ def test_finalized_record_cannot_be_silently_edited(
         clinic_id=clinic.id,
         actor_staff_id=ctx["doctor"].id,
         expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
     )
 
     with pytest.raises(
@@ -547,6 +552,7 @@ def test_first_amendment_preserves_original_items(
         clinic_id=clinic.id,
         actor_staff_id=ctx["doctor"].id,
         expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
     )
 
     original_name = (
@@ -604,6 +610,7 @@ def test_second_amendment_links_previous(
         clinic_id=clinic.id,
         actor_staff_id=ctx["doctor"].id,
         expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
     )
 
     first_doc = (
@@ -667,6 +674,7 @@ def test_stale_amendment_version_is_rejected(
         clinic_id=clinic.id,
         actor_staff_id=ctx["doctor"].id,
         expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
     )
 
     document = (
@@ -714,6 +722,7 @@ def test_amendment_cannot_reintroduce_unresolved_decision(
         clinic_id=clinic.id,
         actor_staff_id=ctx["doctor"].id,
         expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
     )
 
     document = (
@@ -822,6 +831,7 @@ def test_finalized_event_lookup_is_gate12_ready(
         clinic_id=clinic.id,
         actor_staff_id=ctx["doctor"].id,
         expected_version=1,
+            expected_updated_at=service._utc_draft_timestamp(record.updated_at),
     )
 
     result = (

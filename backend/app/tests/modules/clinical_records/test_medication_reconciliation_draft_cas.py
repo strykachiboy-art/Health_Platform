@@ -202,6 +202,7 @@ def test_finalized_draft_cannot_be_modified(ctx, clinic, client, auth_headers_fo
         clinic_id=clinic.id,
         actor_staff_id=ctx["doctor"].id,
         expected_version=1,
+        expected_updated_at=service._utc_draft_timestamp(record.updated_at),
     )
     reply = client.patch(
         f"{BASE}/{record.id}",

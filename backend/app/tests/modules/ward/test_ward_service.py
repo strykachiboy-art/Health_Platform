@@ -231,6 +231,7 @@ def _finalize_empty_discharge_reconciliation(
         clinic_id=clinic.id,
         actor_staff_id=actor.id,
         expected_version=1,
+        expected_updated_at=med_recon_service._utc_draft_timestamp(record.updated_at),
     )
 
 

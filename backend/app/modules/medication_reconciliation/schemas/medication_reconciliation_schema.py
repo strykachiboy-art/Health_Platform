@@ -133,12 +133,33 @@ class MedicationReconciliationFinalizeSchema(
         ...,
         ge=1,
     )
+    # Bind sign-off to the exact draft last reviewed by the author.
+    expected_updated_at: AwareDatetime
+
+    @field_validator("expected_updated_at", mode="before")
+    @classmethod
+    def _timestamp_must_be_string(cls, value):
+        if (not isinstance(value, str) or not value or value != value.strip()):
+            raise ValueError("expected_updated_at must be an ISO timestamp string")
+        return value
 
 
 class MedicationReconciliationDocumentSchema(
-    MedicationReconciliationUpdateSchema
+    _RequestModel
 ):
-    pass
+    # Amendment is versioned, not draft timestamp-CAS. Do not inherit
+    # MedicationReconciliationUpdateSchema's expected_updated_at.
+    no_medications_reported: bool
+    notes: str | None = Field(
+        default=None,
+        max_length=10000,
+    )
+    items: list[
+        MedicationReconciliationItemInputSchema
+    ] = Field(
+        default_factory=list,
+        max_length=500,
+    )
 
 
 class MedicationReconciliationAmendmentSchema(

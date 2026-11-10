@@ -1027,6 +1027,7 @@ def _seed_discharge_ready_admission(
             clinic_id=clinic.id,
             actor_staff_id=doctor.id,
             expected_version=1,
+            expected_updated_at=med_recon_service._utc_draft_timestamp(reconciliation.updated_at),
         )
 
         return {
@@ -1433,6 +1434,7 @@ def test_reconciliation_finalize_racing_with_update_is_serially_valid(
             doctor_id = doctor.id
             doctor_user_id = doctor.user_id
             reconciliation_id = reconciliation.id
+            reviewed_stamp = med_recon_service._utc_draft_timestamp(reconciliation.updated_at)
 
         gate = Barrier(
             2
@@ -1477,6 +1479,7 @@ def test_reconciliation_finalize_racing_with_update_is_serially_valid(
                             clinic_id=clinic_id,
                             actor_staff_id=doctor_id,
                             expected_version=1,
+                            expected_updated_at=reviewed_stamp,
                             idempotency_key=(
                                 "gate19-medrec-finalize"
                             ),
@@ -1512,6 +1515,7 @@ def test_reconciliation_finalize_racing_with_update_is_serially_valid(
                         no_medications_reported=True,
                         notes="Concurrent draft update",
                         items=[],
+                        expected_updated_at=reviewed_stamp,
                     )
                 )
 
@@ -1558,39 +1562,17 @@ def test_reconciliation_finalize_racing_with_update_is_serially_valid(
             == "update"
         )
 
-        assert finalize[
-            "outcome"
-        ] == "accepted"
-        assert finalize[
-            "status"
-        ] == ClinicalRecordStatus.FINAL.value
-
-        if (
-            update[
-                "outcome"
-            ]
-            == "accepted"
-        ):
-            assert (
-                update[
-                    "completed_ns"
-                ]
-                <= finalize[
-                    "completed_ns"
-                ]
-            )
+        # Exactly one of the competing operations may succeed. A draft
+        # edited after the reviewed CAS token must not be finalized.
+        assert {finalize["outcome"], update["outcome"]} == {
+            "accepted", "rejected"
+        }
+        if finalize["outcome"] == "accepted":
+            assert finalize["status"] == ClinicalRecordStatus.FINAL.value
+            assert update["error_type"] == ConflictError.__name__
         else:
-            assert update[
-                "error_type"
-            ] == ConflictError.__name__
-            assert (
-                finalize[
-                    "completed_ns"
-                ]
-                <= update[
-                    "completed_ns"
-                ]
-            )
+            assert finalize["error_type"] == ConflictError.__name__
+            assert update["outcome"] == "accepted"
 
         with app.app_context():
             record = db.session.get(
@@ -1598,27 +1580,13 @@ def test_reconciliation_finalize_racing_with_update_is_serially_valid(
                 reconciliation_id,
             )
 
-            assert (
-                record.record_status
-                == ClinicalRecordStatus.FINAL.value
-            )
             assert record.record_version == 1
-
-            if (
-                update[
-                    "outcome"
-                ]
-                == "accepted"
-            ):
-                assert (
-                    record.notes
-                    == "Concurrent draft update"
-                )
+            if finalize["outcome"] == "accepted":
+                assert record.record_status == ClinicalRecordStatus.FINAL.value
+                assert record.notes == "Original draft"
             else:
-                assert (
-                    record.notes
-                    == "Original draft"
-                )
+                assert record.record_status == ClinicalRecordStatus.DRAFT.value
+                assert record.notes == "Concurrent draft update"
 
             ledger_count = (
                 db.session.execute(
@@ -1641,7 +1609,7 @@ def test_reconciliation_finalize_racing_with_update_is_serially_valid(
                 ).scalar_one()
             )
 
-            assert ledger_count == 1
+            assert ledger_count == (1 if finalize["outcome"] == "accepted" else 0)
 
     finally:
         if harness is not None:

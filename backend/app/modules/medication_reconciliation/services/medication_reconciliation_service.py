@@ -986,6 +986,7 @@ def finalize_medication_reconciliation(
     clinic_id: int,
     actor_staff_id: int,
     expected_version: int,
+    expected_updated_at: datetime,
     idempotency_key: str | None = None,
     idempotency_user_id: int | None = None,
 ) -> MedicationReconciliation:
@@ -1009,6 +1010,7 @@ def finalize_medication_reconciliation(
                     "reconciliation_id": reconciliation_id,
                     "actor_staff_id": actor_staff_id,
                     "expected_version": expected_version,
+                    "expected_updated_at": expected_updated_at,
                 },
             )
         )
@@ -1063,6 +1065,11 @@ def finalize_medication_reconciliation(
             record
         )
     )
+
+    # A record version of 1 does not prove draft freshness: PATCH
+    # advances updated_at but keeps record_version at 1.
+    # This check happens under the existing row lock, before mutation.
+    _match_draft_timestamp(record.updated_at, expected_updated_at)
 
     document = _normalize_document(
         clinic_id=record.clinic_id,

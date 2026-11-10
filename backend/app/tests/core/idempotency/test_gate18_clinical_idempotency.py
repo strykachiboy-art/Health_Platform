@@ -283,12 +283,14 @@ def test_medication_reconciliation_finalization_replays_same_result(
     )
 
     key = "gate18-medrec-finalize"
+    reviewed_stamp = med_recon_service._utc_draft_timestamp(record.updated_at)
 
     first = med_recon_service.finalize_medication_reconciliation(
         record.id,
         clinic_id=clinic.id,
         actor_staff_id=doctor.id,
         expected_version=1,
+        expected_updated_at=reviewed_stamp,
         idempotency_key=key,
         idempotency_user_id=doctor.user_id,
     )
@@ -297,6 +299,7 @@ def test_medication_reconciliation_finalization_replays_same_result(
         clinic_id=clinic.id,
         actor_staff_id=doctor.id,
         expected_version=1,
+        expected_updated_at=reviewed_stamp,
         idempotency_key=key,
         idempotency_user_id=doctor.user_id,
     )
@@ -342,12 +345,14 @@ def test_medication_reconciliation_finalization_payload_conflict(
     )
 
     key = "gate18-medrec-conflict"
+    reviewed_stamp = med_recon_service._utc_draft_timestamp(record.updated_at)
 
     med_recon_service.finalize_medication_reconciliation(
         record.id,
         clinic_id=clinic.id,
         actor_staff_id=doctor.id,
         expected_version=1,
+        expected_updated_at=reviewed_stamp,
         idempotency_key=key,
         idempotency_user_id=doctor.user_id,
     )
@@ -361,6 +366,7 @@ def test_medication_reconciliation_finalization_payload_conflict(
             clinic_id=clinic.id,
             actor_staff_id=doctor.id,
             expected_version=2,
+        expected_updated_at=reviewed_stamp,
             idempotency_key=key,
             idempotency_user_id=doctor.user_id,
         )
@@ -411,6 +417,7 @@ def _prepare_discharge(
         clinic_id=clinic.id,
         actor_staff_id=doctor.id,
         expected_version=1,
+        expected_updated_at=med_recon_service._utc_draft_timestamp(reconciliation.updated_at),
     )
 
     return patient, doctor, admission
