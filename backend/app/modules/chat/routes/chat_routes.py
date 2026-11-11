@@ -1333,3 +1333,7 @@ def delete_chat_message(
 
     except DomainError as exc:
         return _domain_error(exc)
+
+# P24G final: existing chat blueprint, no parallel registration system.
+from app.modules.chat.routes.chat_engagement_routes import register_chat_engagement_routes
+register_chat_engagement_routes(chat_bp, _current_user_id, _current_clinic_id)
