@@ -57,6 +57,8 @@ import 'package:clinic_system_pro/features/devices/data/device_registration_coor
 import 'package:clinic_system_pro/features/devices/data/device_registration_remote_data_source.dart';
 import 'package:clinic_system_pro/features/devices/data/device_token_provider.dart';
 import 'package:clinic_system_pro/features/devices/presentation/device_registration_screen.dart';
+import 'package:clinic_system_pro/features/devices/data/device_management_remote_data_source.dart';
+import 'package:clinic_system_pro/features/devices/presentation/device_management_screen.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/nursing/presentation/ward_dashboard_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
@@ -280,6 +282,29 @@ GoRouter createAppRouter({
           provider: deviceTokenProvider,
         )
       : null;
+  // P24E: device list is usable even if push registration is not configured.
+  // It shares the existing JWT-owner/session-revision guard, not a new auth stack.
+  final DeviceManagementRemoteDataSource? managementSource =
+      admissionsForNotifications != null &&
+          notificationGuard != null &&
+          identical(
+            admissionsForNotifications.sessionNavigationGuard,
+            notificationGuard,
+          )
+      ? DeviceManagementRemoteDataSource(
+          registrationScope:
+              registrationCoordinator?.source ??
+              DeviceRegistrationRemoteDataSource(
+                apiClient: admissionsForNotifications.apiClient,
+                loadSession: admissionsForNotifications.loadSession,
+                sessionNavigationGuard: notificationGuard,
+                connectivity:
+                    deviceRegistrationConnectivitySource ??
+                    ConnectivityPlusDeviceConnectivitySource(),
+              ),
+          registrationCoordinator: registrationCoordinator,
+        )
+      : null;
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
@@ -307,8 +332,10 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
-      // P24B route is guarded separately from the default /patients prefix.
-      if (state.matchedLocation == '/devices/register' &&
+      // P24E device management and P24B registration are always guarded,
+      // including in tests that use the default /patients-only guard.
+      if ((state.matchedLocation == '/devices' ||
+              state.matchedLocation == '/devices/register') &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -417,6 +444,23 @@ GoRouter createAppRouter({
                   await context.push<void>(NotificationDeepLink.pathForId(id));
                 },
               );
+            },
+          ),
+          GoRoute(
+            path: '/devices',
+            name: 'p24e-device-management',
+            builder: (context, state) {
+              final source = managementSource;
+              if (source == null ||
+                  !source
+                      .registrationScope
+                      .sessionNavigationGuard
+                      .canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Device management unavailable.')),
+                );
+              }
+              return DeviceManagementScreen(source: source);
             },
           ),
           GoRoute(

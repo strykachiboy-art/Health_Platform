@@ -74,6 +74,20 @@ List<HomeDestination> homeDestinationsFor({
     ),
   ];
 
+  // P24E: account-owned device management works without a push SDK or clinic.
+  // This is navigation only; the authenticated backend remains authoritative.
+  if (normalizedRole != 'super_admin' &&
+      _notificationRoles.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'device_management',
+        'My devices',
+        '/devices',
+        Icons.devices_outlined,
+      ),
+    );
+  }
   // P24D: Android-only opt-in registration. Super admin is not authorized
   // by the existing backend device routes. This is navigation, not a grant.
   if (deviceRegistrationConfigured &&

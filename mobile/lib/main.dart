@@ -116,6 +116,7 @@ Future<void> main() async {
       '/consultations',
       '/clinical-orders',
       '/home',
+      '/devices',
       '/account',
       '/emergency-access',
       '/clinical-safety',

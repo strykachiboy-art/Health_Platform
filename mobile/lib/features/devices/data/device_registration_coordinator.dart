@@ -43,6 +43,18 @@ class DeviceRegistrationCoordinator {
   bool _lastCleanupConfirmed = true;
   bool _inFlight = false;
 
+  /// Do not infer the current handset from platform or device name.
+  /// A P24B receipt is evidence only for the exact authenticated session.
+  int? confirmedDeviceIdForSession(DeviceRegistrationSession session) {
+    final receipt = _lastReceipt;
+    if (receipt == null ||
+        _lastSessionKey != session.key ||
+        receipt.userId != session.tokenSession.userId) {
+      return null;
+    }
+    return receipt.id;
+  }
+
   Future<DeviceRegistrationResult> registerLatestToken() async {
     if (_inFlight) {
       throw const DeviceRegistrationBusy();

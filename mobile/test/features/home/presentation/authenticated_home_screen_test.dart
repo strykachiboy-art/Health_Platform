@@ -31,17 +31,23 @@ void main() {
       clinicContextId: clinic,
     ).map((destination) => destination.id).toList();
 
-    expect(ids('PATIENT'), ['health']);
-    expect(ids('accountant'), ['health']);
-    expect(ids('driver'), ['health']);
+    expect(ids('PATIENT'), ['device_management', 'health']);
+    expect(ids('accountant'), ['device_management', 'health']);
+    expect(ids('driver'), ['device_management', 'health']);
     expect(ids('doctor'), [
       'clinical_safety',
       'patients',
+      'device_management',
       'health',
       'emergency_request',
     ]);
-    expect(ids('RECEPTIONIST'), ['patients', 'health']);
-    expect(ids('ADMIN'), ['clinical_safety', 'patients', 'health']);
+    expect(ids('RECEPTIONIST'), ['patients', 'device_management', 'health']);
+    expect(ids('ADMIN'), [
+      'clinical_safety',
+      'patients',
+      'device_management',
+      'health',
+    ]);
     expect(ids('SUPER_ADMIN'), ['health']);
     expect(ids('SUPER_ADMIN', clinic: 3), [
       'clinical_safety',
