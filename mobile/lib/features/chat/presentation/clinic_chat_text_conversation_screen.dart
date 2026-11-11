@@ -6,6 +6,8 @@ import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.da
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_media_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_media_widgets.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_state_remote_data_source.dart';
+import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_read_state_screen.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_realtime_reconciler.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_socket_transport.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_text_mutation_remote_data_source.dart';
@@ -544,6 +546,23 @@ class _ClinicChatTextConversationScreenState
       appBar: AppBar(
         title: const Text('Clinic conversation'),
         actions: [
+          IconButton(
+            key: const ValueKey('p24g-view-read-state'),
+            tooltip: 'View server read state',
+            onPressed: allowed && !_busy
+                ? () => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ClinicChatReadStateScreen(
+                        source: ClinicChatReadStateRemoteDataSource(
+                          read: widget.dataSource,
+                        ),
+                        conversationId: widget.conversationId,
+                      ),
+                    ),
+                  )
+                : null,
+            icon: const Icon(Icons.mark_chat_read_outlined),
+          ),
           IconButton(
             key: const ValueKey('chat-c-refresh'),
             tooltip: 'Refresh server history',
