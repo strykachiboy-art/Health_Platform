@@ -235,6 +235,19 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  // P24H: a selected clinic is required to display feedback navigation.
+  // This link never grants server feedback visibility or management roles.
+  if (clinicContextId != null && clinicContextId > 0) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'feedback',
+        'Feedback',
+        '/feedback',
+        Icons.rate_review_outlined,
+      ),
+    );
+  }
   // CHAT-F: navigation suggestion only; the backend authorizes every read.
   if (clinicContextId != null &&
       clinicContextId > 0 &&

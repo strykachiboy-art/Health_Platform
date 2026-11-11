@@ -48,6 +48,8 @@ import 'package:clinic_system_pro/features/emar/presentation/emar_patient_route_
 import 'package:clinic_system_pro/features/medication_reconciliation/presentation/medication_reconciliation_patient_route_screen.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_inbox_screen.dart';
+import 'package:clinic_system_pro/features/feedback/data/feedback_remote_data_source.dart';
+import 'package:clinic_system_pro/features/feedback/presentation/feedback_workspace_screen.dart';
 import 'package:clinic_system_pro/features/notifications/data/notification_remote_data_source.dart';
 import 'package:clinic_system_pro/features/notifications/data/notification_read_actions.dart';
 import 'package:clinic_system_pro/features/notifications/presentation/notification_inbox_screen.dart';
@@ -257,6 +259,21 @@ GoRouter createAppRouter({
           sessionNavigationGuard: notificationGuard,
         )
       : null;
+  // P24H reuses the authenticated admission HTTP/session scope.
+  // This one writer survives route revisits to retain unknown-outcome locks.
+  final FeedbackRemoteDataSource? feedbackSource =
+      admissionsForNotifications != null &&
+          notificationGuard != null &&
+          identical(
+            admissionsForNotifications.sessionNavigationGuard,
+            notificationGuard,
+          )
+      ? FeedbackRemoteDataSource(
+          apiClient: admissionsForNotifications.apiClient,
+          loadSession: admissionsForNotifications.loadSession,
+          sessionNavigationGuard: notificationGuard,
+        )
+      : null;
   final NotificationReadActions? notificationActions =
       notificationSource == null
       ? null
@@ -337,6 +354,11 @@ GoRouter createAppRouter({
       // including in tests that use the default /patients-only guard.
       if ((state.matchedLocation == '/devices' ||
               state.matchedLocation == '/devices/register') &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
+      // P24H is guarded even when the default navigation guard protects only /patients.
+      if (state.matchedLocation == '/feedback' &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -545,6 +567,20 @@ GoRouter createAppRouter({
                 source: source,
                 actions: actions,
               );
+            },
+          ),
+          GoRoute(
+            path: '/feedback',
+            name: 'p24h-feedback-workspace',
+            builder: (context, state) {
+              final source = feedbackSource;
+              if (source == null ||
+                  !source.sessionNavigationGuard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Feedback unavailable.')),
+                );
+              }
+              return FeedbackWorkspaceScreen(source: source);
             },
           ),
           GoRoute(

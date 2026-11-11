@@ -51,10 +51,44 @@ void main() {
     expect(ids('SUPER_ADMIN'), ['health']);
     expect(ids('SUPER_ADMIN', clinic: 3), [
       'clinical_safety',
+      'feedback',
       'notifications',
       'health',
     ]);
+    expect(ids('PATIENT', clinic: 3), contains('feedback'));
+    expect(ids('doctor', clinic: 3), contains('feedback'));
+    expect(ids('PATIENT'), isNot(contains('feedback')));
     expect(ids('not_a_role'), ['health']);
+  });
+
+  testWidgets('P24H feedback route redirects without session authority', (
+    tester,
+  ) async {
+    final client = MockClient((request) async {
+      throw StateError('Unexpected feedback request: ${request.url}');
+    });
+    addTearDown(client.close);
+    final guard = SessionNavigationGuard();
+    addTearDown(guard.dispose);
+    final api = ApiClient(
+      config: const BackendConfig(
+        baseUrl: 'http://127.0.0.1:5000',
+        allowInsecureHttp: true,
+      ),
+      client: client,
+    );
+    final router = createAppRouter(
+      healthDataSource: BackendHealthRemoteDataSource(apiClient: api),
+      loginScreen: const Scaffold(body: Center(child: Text('Login sentinel'))),
+      sessionNavigationGuard: guard,
+      loadHomeSession: () async => _ready('patient', clinic: 3),
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    router.go('/feedback');
+    await tester.pumpAndSettle();
+    expect(find.text('Login sentinel'), findsOneWidget);
+    expect(find.byKey(const ValueKey('p24h-feedback-workspace')), findsNothing);
   });
 
   testWidgets('P22.S01 /home route redirects before auth and on invalidation', (
