@@ -55,6 +55,41 @@ List<HomeDestination> homeDestinationsFor({
     ),
   ];
 
+  // P23I.S09 exposes navigation only; all billing/transport authority
+  // is rechecked by the backend and source-bound session guards.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      normalizedRole == 'admin') {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'billing',
+        'Billing & invoices',
+        '/billing',
+        Icons.receipt_long_outlined,
+      ),
+    );
+  }
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{
+        'admin',
+        'ambulance_coordinator',
+        'ambulance_dispatcher',
+        'driver',
+        'paramedic',
+        'emt',
+      }.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'ambulance',
+        'Ambulance & trips',
+        '/ambulance',
+        Icons.emergency_outlined,
+      ),
+    );
+  }
   // P23H.S06A inventory entry is visible only to authorized pharmacy roles
   // with a selected clinic. Backend RBAC and session guards remain binding.
   if (clinicContextId != null &&

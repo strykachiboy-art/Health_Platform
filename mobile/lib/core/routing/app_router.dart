@@ -58,6 +58,14 @@ import 'package:clinic_system_pro/features/pharmacy/presentation/pharmacy_stock_
 import 'package:clinic_system_pro/features/lab/data/lab_order_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/lab/presentation/lab_patient_orders_screen.dart';
 import 'package:clinic_system_pro/features/p23h_navigation/p23h_clinical_action_hub.dart';
+import 'package:clinic_system_pro/features/billing/data/billing_outstanding_remote_data_source.dart';
+import 'package:clinic_system_pro/features/billing/data/billing_invoice_create_remote_data_source.dart';
+import 'package:clinic_system_pro/features/billing/data/billing_payment_remote_data_source.dart';
+import 'package:clinic_system_pro/features/ambulance/data/ambulance_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/ambulance/data/ambulance_dispatch_remote_data_source.dart';
+import 'package:clinic_system_pro/features/ambulance/data/ambulance_lifecycle_remote_data_source.dart';
+import 'package:clinic_system_pro/features/ambulance/data/ambulance_invoice_link_remote_data_source.dart';
+import 'package:clinic_system_pro/features/p23i_navigation/p23i_workspaces.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_prescription_mutation_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_prescription_mutation_screen.dart';
 import 'package:clinic_system_pro/features/pharmacy/data/pharmacy_dispense_remote_data_source.dart';
@@ -129,6 +137,79 @@ GoRouter createAppRouter({
   // Retain one-shot clinical adapters for the router lifetime, keyed by exact
   // patient/record/action. Route revisits cannot manufacture another POST.
   final p23hActionAdapters = <String, Object>{};
+  // P23I.S09 shares the authenticated P23H HTTP client and session guard.
+  // No additional transport, token store, or backend grant is created here.
+  final BillingOutstandingRemoteDataSource? p23iBillingReader;
+  final AmbulanceReadRemoteDataSource? p23iAmbulanceReader;
+  if (p23hSourceReady) {
+    p23iBillingReader = BillingOutstandingRemoteDataSource(
+      apiClient: p23hReader.apiClient,
+      loadSession: p23hReader.loadSession,
+      sessionNavigationGuard: p23hGuard,
+    );
+    p23iAmbulanceReader = AmbulanceReadRemoteDataSource(
+      apiClient: p23hReader.apiClient,
+      loadSession: p23hReader.loadSession,
+      sessionNavigationGuard: p23hGuard,
+    );
+  } else {
+    p23iBillingReader = null;
+    p23iAmbulanceReader = null;
+  }
+  // Retain each P23I one-shot writer across route revisits. Closing a screen
+  // cannot manufacture a fresh attempt after an uncertain financial/dispatch POST.
+  final p23iActionAdapters = <String, Object>{};
+  Widget p23iWorkspace(P23IWorkspaceMode mode) {
+    final guard = sessionNavigationGuard;
+    final billing = p23iBillingReader;
+    final ambulance = p23iAmbulanceReader;
+    if (guard == null ||
+        !guard.canAccessProtectedRoutes ||
+        billing == null ||
+        ambulance == null) {
+      return Scaffold(
+        body: Center(
+          child: Text(
+            mode == P23IWorkspaceMode.billing
+                ? 'Billing navigation unavailable.'
+                : 'Ambulance navigation unavailable.',
+          ),
+        ),
+      );
+    }
+    return P23IWorkspaceScreen(
+      key: ValueKey('p23i-workspace-route-${mode.name}'),
+      mode: mode,
+      guard: guard,
+      loadSession: billing.loadSession,
+      billingReader: billing,
+      ambulanceReader: ambulance,
+      invoiceCreationSource: (patientId) => p23iActionAdapters.putIfAbsent(
+        'invoice-create/${guard.revision}/$patientId',
+        () => BillingInvoiceCreateRemoteDataSource(reader: billing),
+      ) as BillingInvoiceCreateRemoteDataSource,
+      paymentSource: (invoiceId) => p23iActionAdapters.putIfAbsent(
+        'payment/${guard.revision}/$invoiceId',
+        () => BillingPaymentRemoteDataSource(reader: billing),
+      ) as BillingPaymentRemoteDataSource,
+      dispatchSource: () => p23iActionAdapters.putIfAbsent(
+        'dispatch/${guard.revision}',
+        () => AmbulanceDispatchRemoteDataSource(reader: ambulance),
+      ) as AmbulanceDispatchRemoteDataSource,
+      lifecycleSource: () => p23iActionAdapters.putIfAbsent(
+        'lifecycle/${guard.revision}',
+        () => AmbulanceLifecycleRemoteDataSource(reader: ambulance),
+      ) as AmbulanceLifecycleRemoteDataSource,
+      invoiceLinkSource: () => p23iActionAdapters.putIfAbsent(
+        'invoice-link/${guard.revision}',
+        () => AmbulanceInvoiceLinkRemoteDataSource(
+          ambulanceReader: ambulance,
+          billingReader: billing,
+        ),
+      ) as AmbulanceInvoiceLinkRemoteDataSource,
+    );
+  }
+
   // Router lifetime, not route lifetime. An uncertain mutation stays locked
   // when the user leaves and revisits the screen during this session.
   final mutationSource =
@@ -156,6 +237,12 @@ GoRouter createAppRouter({
       // This project's default guard protects /patients only. Do not let
       // /pharmacy/stock bypass session redirection on direct/deep links.
       if (state.matchedLocation == '/pharmacy/stock' &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
+      // P23I destinations lie outside the default /patients route guard.
+      if ((state.matchedLocation == '/billing' ||
+              state.matchedLocation == '/ambulance') &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -205,6 +292,18 @@ GoRouter createAppRouter({
           );
         },
         routes: [
+          GoRoute(
+            path: '/billing',
+            name: 'p23i-billing-workspace',
+            builder: (context, state) =>
+                p23iWorkspace(P23IWorkspaceMode.billing),
+          ),
+          GoRoute(
+            path: '/ambulance',
+            name: 'p23i-ambulance-workspace',
+            builder: (context, state) =>
+                p23iWorkspace(P23IWorkspaceMode.ambulance),
+          ),
           GoRoute(
             path: '/account',
             name: 'account-clinic',
