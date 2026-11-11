@@ -239,6 +239,7 @@ def _get_user(
     if (
         clinic_id is not None
         and user.clinic_id != clinic_id
+        and user.role is not Role.SUPER_ADMIN
     ):
         raise NotFoundError(
             f"User {user_id} not found"

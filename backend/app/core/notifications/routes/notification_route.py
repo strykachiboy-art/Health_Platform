@@ -22,7 +22,7 @@ from app.core.notifications.services.notification_service import (
     mark_all_notifications_read,
     mark_notification_read,
 )
-from app.core.utils.decorators import role_required
+from app.core.utils.decorators import get_current_clinic_id, role_required
 from app.extensions import db
 
 
@@ -49,6 +49,9 @@ NOTIFICATION_ROLES = (
     Role.AMBULANCE_COORDINATOR,
     Role.OTHER,
 )
+
+# Read access for a super admin is clinic-context scoped, never global.
+NOTIFICATION_INBOX_ROLES = (*NOTIFICATION_ROLES, Role.SUPER_ADMIN)
 
 
 def _payload(schema):
@@ -93,12 +96,23 @@ def _get_authenticated_user():
             "Authenticated user is inactive"
         )
 
-    if user.clinic_id is None:
+    if user.clinic_id is None and user.role is not Role.SUPER_ADMIN:
         raise ValidationError(
             "Authenticated user is not assigned to a clinic"
         )
 
     return user
+
+
+def _inbox_clinic_id(user):
+    if user.role is Role.SUPER_ADMIN:
+        # This is a selected, active clinic verified through JWT context.
+        # Never use a client-supplied clinic or a cross-clinic global feed.
+        from flask import g
+        if g.current_user_role != Role.SUPER_ADMIN.value:
+            raise ValidationError("Super admin role context mismatch")
+        return get_current_clinic_id(required=True)
+    return user.clinic_id
 
 
 def _serialize_notification(notification):
@@ -193,6 +207,11 @@ def create():
     try:
         user = _get_authenticated_user()
 
+        # No untrusted client can send a notification to a platform administrator.
+        target = db.session.get(User, payload.user_id)
+        if target is not None and target.role is Role.SUPER_ADMIN:
+            raise NotFoundError("Notification recipient not found")
+
         notification = create_notification(
             clinic_id=user.clinic_id,
             actor_user_id=user.id,
@@ -215,7 +234,7 @@ def create():
 
 
 @notification_bp.get("/")
-@role_required(*NOTIFICATION_ROLES)
+@role_required(*NOTIFICATION_INBOX_ROLES)
 def list_notifications():
     query_payload = _query_payload(
         NotificationListQuerySchema
@@ -226,7 +245,7 @@ def list_notifications():
 
         result = get_user_notifications(
             user_id=user.id,
-            clinic_id=user.clinic_id,
+            clinic_id=_inbox_clinic_id(user),
             unread_only=False,
             page=query_payload.page,
             per_page=query_payload.per_page,
@@ -248,7 +267,7 @@ def list_notifications():
 
 
 @notification_bp.get("/unread")
-@role_required(*NOTIFICATION_ROLES)
+@role_required(*NOTIFICATION_INBOX_ROLES)
 def unread_notifications():
     query_payload = _query_payload(
         NotificationListQuerySchema
@@ -259,7 +278,7 @@ def unread_notifications():
 
         result = get_user_notifications(
             user_id=user.id,
-            clinic_id=user.clinic_id,
+            clinic_id=_inbox_clinic_id(user),
             unread_only=True,
             page=query_payload.page,
             per_page=query_payload.per_page,
@@ -281,7 +300,7 @@ def unread_notifications():
 
 
 @notification_bp.get("/<int:notification_id>")
-@role_required(*NOTIFICATION_ROLES)
+@role_required(*NOTIFICATION_INBOX_ROLES)
 def get(notification_id: int):
     try:
         user = _get_authenticated_user()
@@ -289,7 +308,7 @@ def get(notification_id: int):
         notification = get_notification_for_user(
             notification_id=notification_id,
             user_id=user.id,
-            clinic_id=user.clinic_id,
+            clinic_id=_inbox_clinic_id(user),
         )
 
         return jsonify({
@@ -308,7 +327,7 @@ def get(notification_id: int):
 
 
 @notification_bp.post("/<int:notification_id>/read")
-@role_required(*NOTIFICATION_ROLES)
+@role_required(*NOTIFICATION_INBOX_ROLES)
 def read(notification_id: int):
     payload = _payload(
         NotificationReadSchema
@@ -320,7 +339,7 @@ def read(notification_id: int):
         notification = mark_notification_read(
             notification_id=notification_id,
             user_id=user.id,
-            clinic_id=user.clinic_id,
+            clinic_id=_inbox_clinic_id(user),
         )
 
         return jsonify({
@@ -339,7 +358,7 @@ def read(notification_id: int):
 
 
 @notification_bp.post("/read-all")
-@role_required(*NOTIFICATION_ROLES)
+@role_required(*NOTIFICATION_INBOX_ROLES)
 def read_all():
     payload = _payload(
         NotificationReadSchema
@@ -350,7 +369,7 @@ def read_all():
 
         count = mark_all_notifications_read(
             user_id=user.id,
-            clinic_id=user.clinic_id,
+            clinic_id=_inbox_clinic_id(user),
         )
 
         return jsonify({
