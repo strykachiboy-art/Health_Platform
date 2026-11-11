@@ -65,6 +65,8 @@ dependencies:
   just_audio: 0.10.6
   uuid: 4.6.0
   http_parser: ^4.1.2
+  firebase_core: ^5.1.0
+  firebase_messaging: ^17.0.1
 
 dev_dependencies:
   flutter_test:

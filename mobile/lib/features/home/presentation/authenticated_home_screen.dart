@@ -62,6 +62,7 @@ const _patientDirectoryRoles = <String>{
 List<HomeDestination> homeDestinationsFor({
   required String role,
   required int? clinicContextId,
+  bool deviceRegistrationConfigured = false,
 }) {
   final normalizedRole = role.trim().toLowerCase();
   final destinations = <HomeDestination>[
@@ -73,6 +74,23 @@ List<HomeDestination> homeDestinationsFor({
     ),
   ];
 
+  // P24D: Android-only opt-in registration. Super admin is not authorized
+  // by the existing backend device routes. This is navigation, not a grant.
+  if (deviceRegistrationConfigured &&
+      clinicContextId != null &&
+      clinicContextId > 0 &&
+      normalizedRole != 'super_admin' &&
+      _notificationRoles.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'device_registration',
+        'Register push notifications',
+        '/devices/register',
+        Icons.phonelink_setup_outlined,
+      ),
+    );
+  }
   // P24A: a selected clinic is mandatory, including for super admin.
   // Home navigation is not a backend authorization grant.
   if (clinicContextId != null &&
@@ -302,12 +320,14 @@ class AuthenticatedHomeScreen extends StatefulWidget {
     this.dashboardDataSource,
     this.statusStripBuilder,
     this.sessionNavigationGuard,
+    this.deviceRegistrationConfigured = false,
   });
 
   final Future<AuthSessionState> Function() loadSession;
   final DashboardRemoteDataSource? dashboardDataSource;
   final Widget Function()? statusStripBuilder;
   final SessionNavigationGuard? sessionNavigationGuard;
+  final bool deviceRegistrationConfigured;
 
   @override
   State<AuthenticatedHomeScreen> createState() =>
@@ -430,7 +450,11 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
     final role = _role;
     final destinations = role == null
         ? const <HomeDestination>[]
-        : homeDestinationsFor(role: role, clinicContextId: _clinicId);
+        : homeDestinationsFor(
+            role: role,
+            clinicContextId: _clinicId,
+            deviceRegistrationConfigured: widget.deviceRegistrationConfigured,
+          );
     final wideScreen = MediaQuery.sizeOf(context).width >= 850;
     return Scaffold(
       key: const ValueKey('p22-home-shell'),

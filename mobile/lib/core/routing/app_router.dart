@@ -340,6 +340,7 @@ GoRouter createAppRouter({
             dashboardDataSource: dashboardDataSource,
             statusStripBuilder: statusStripBuilder,
             sessionNavigationGuard: sessionNavigationGuard,
+            deviceRegistrationConfigured: registrationCoordinator != null,
           );
         },
       ),

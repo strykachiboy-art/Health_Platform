@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1048169803659",
+    "project_id": "hospitalplatform-23541",
+    "storage_bucket": "hospitalplatform-23541.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1048169803659:android:08db73573e65ba76a7498e",
+        "android_client_info": {
+          "package_name": "com.example.clinic_system_pro"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBxfsL1hEFKa93D9hpfyP979Ccx6zodx0c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

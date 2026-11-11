@@ -1,6 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform, kIsWeb;
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:clinic_system_pro/firebase_options.dart';
+import 'package:clinic_system_pro/features/devices/data/device_token_provider.dart';
+import 'package:clinic_system_pro/features/devices/data/firebase_installation_token_provider.dart';
+import 'package:clinic_system_pro/features/notifications/data/fcm_notification_receiver.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
@@ -51,7 +59,26 @@ import 'package:clinic_system_pro/features/patients/data/patient_consultation_re
 import 'package:clinic_system_pro/features/patients/data/patient_prescription_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_clinical_alert_remote_data_source.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // P24D: Android Firebase bootstrap only. Other targets remain disabled.
+  final firebaseReady =
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  if (firebaseReady) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    FirebaseMessaging.onBackgroundMessage(clinicFcmBackgroundHandler);
+  }
+  final FirebaseMessaging? messaging = firebaseReady
+      ? FirebaseMessaging.instance
+      : null;
+  final DeviceTokenProvider? tokenProvider = messaging == null
+      ? null
+      : FirebaseInstallationTokenProvider(messaging);
+  final FcmNotificationReceiver? pushReceiver = messaging == null
+      ? null
+      : FcmNotificationReceiver(messaging);
   final backendConfig = BackendConfig.fromEnvironment();
   final apiClient = ApiClient(
     config: backendConfig,
@@ -337,6 +364,8 @@ void main() {
           ],
         ),
         sessionNavigationGuard: sessionNavigationGuard,
+        deviceTokenProvider: tokenProvider,
+        pushReceiver: pushReceiver,
         deviceConnectivitySource: connectivitySource,
         operationReplayScheduler: replayScheduler,
         appointmentCreateSyncPageLoader:
@@ -373,6 +402,8 @@ class ClinicSystemProApp extends StatefulWidget {
     this.clinicalSafetyDataSource,
     this.emergencyAccessContext,
     this.sessionNavigationGuard,
+    this.deviceTokenProvider,
+    this.pushReceiver,
     this.deviceConnectivitySource,
     this.operationReplayScheduler,
     this.appointmentCreateSyncPageLoader,
@@ -402,6 +433,8 @@ class ClinicSystemProApp extends StatefulWidget {
   final ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource;
   final EmergencyAccessContext? emergencyAccessContext;
   final SessionNavigationGuard? sessionNavigationGuard;
+  final DeviceTokenProvider? deviceTokenProvider;
+  final FcmNotificationReceiver? pushReceiver;
   final DeviceConnectivitySource? deviceConnectivitySource;
   final OperationReplayScheduler? operationReplayScheduler;
   final AppointmentCreateSyncPageLoader? appointmentCreateSyncPageLoader;
@@ -441,14 +474,27 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       clinicalSafetyDataSource: widget.clinicalSafetyDataSource,
       emergencyAccessContext: widget.emergencyAccessContext,
       sessionNavigationGuard: widget.sessionNavigationGuard,
+      deviceTokenProvider: widget.deviceTokenProvider,
+      deviceRegistrationConnectivitySource: widget.deviceConnectivitySource,
       appointmentCreateSyncPageLoader: widget.appointmentCreateSyncPageLoader,
     );
 
+    widget.pushReceiver?.start(
+      router: _router,
+      guard: widget.sessionNavigationGuard,
+    );
     unawaited(widget.operationReplayScheduler?.start());
   }
 
   @override
   void dispose() {
+    unawaited(widget.pushReceiver?.dispose());
+    if (widget.deviceTokenProvider is FirebaseInstallationTokenProvider) {
+      unawaited(
+        (widget.deviceTokenProvider! as FirebaseInstallationTokenProvider)
+            .dispose(),
+      );
+    }
     _router.dispose();
     unawaited(_disposeReplayResources());
     super.dispose();
