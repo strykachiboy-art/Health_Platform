@@ -7,6 +7,7 @@ from app.extensions import db
 from app.core.enums.chat_enums import (
     ConversationStatus,
     ConversationType,
+    MessageStatus,
     ParticipantRole,
     ParticipantStatus,
 )
@@ -1361,6 +1362,7 @@ def test_read_state_updates_last_read_message(
         clinic=clinic,
         conversation=conversation,
         sender=user,
+        status=MessageStatus.SENT,
     )
 
     updated = update_participant_read_state(
