@@ -241,6 +241,7 @@ class _AuthenticatedFeatureFrameState extends State<AuthenticatedFeatureFrame> {
                     children: [
                       if (wide) ...[
                         NavigationRail(
+                          scrollable: true,
                           selectedIndex: selected < 0 ? null : selected + 1,
                           labelType: NavigationRailLabelType.all,
                           destinations: [

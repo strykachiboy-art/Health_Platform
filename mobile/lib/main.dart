@@ -24,6 +24,8 @@ import 'package:clinic_system_pro/core/storage/app_database.dart';
 import 'package:clinic_system_pro/core/sync/operation_payload_crypto.dart';
 import 'package:clinic_system_pro/core/sync/operation_queue_store.dart';
 import 'package:clinic_system_pro/core/sync/operation_replay_worker.dart';
+import 'package:clinic_system_pro/core/sync/operation_discard_service.dart';
+import 'package:clinic_system_pro/features/pending_work/data/pending_work_source.dart';
 import 'package:clinic_system_pro/core/sync/operation_replay_scheduler.dart';
 import 'package:clinic_system_pro/core/sync/appointment_create_queue_producer.dart';
 import 'package:clinic_system_pro/features/appointments/data/appointment_create_queue_state_read_model.dart';
@@ -300,6 +302,25 @@ Future<void> main() async {
       }
     },
   );
+  // P25: existing appointment-create queue/worker + server-disposition policy.
+  // One adapter survives route revisits and blocks uncertain duplicate actions.
+  final pendingWorkDiscard = OperationDiscardService.withApiClient(
+    queueStore: queueStore,
+    apiClient: apiClient,
+    loadSession: () async {
+      final state = await sessionCoordinator.restoreSession();
+      return state.disposition == AuthSessionDisposition.ready
+          ? state.session
+          : null;
+    },
+  );
+  final pendingWorkSource = PendingWorkSource(
+    guard: sessionNavigationGuard,
+    loadSession: sessionCoordinator.restoreSession,
+    readPage: appointmentCreateSyncReadModel.loadPage,
+    reconcileAppointment: replayWorker.reconcileAppointmentCreate,
+    discardAppointment: pendingWorkDiscard.discard,
+  );
   final clinicContextSwitcher = ClinicContextSwitchCoordinator(
     sessionCoordinator: sessionCoordinator,
     sessionNavigationGuard: sessionNavigationGuard,
@@ -371,6 +392,7 @@ Future<void> main() async {
         operationReplayScheduler: replayScheduler,
         appointmentCreateSyncPageLoader:
             appointmentCreateSyncReadModel.loadPage,
+        pendingWorkSource: pendingWorkSource,
         localDatabase: localDatabase,
       ),
     ),
@@ -408,6 +430,7 @@ class ClinicSystemProApp extends StatefulWidget {
     this.deviceConnectivitySource,
     this.operationReplayScheduler,
     this.appointmentCreateSyncPageLoader,
+    this.pendingWorkSource,
     this.localDatabase,
   });
 
@@ -439,6 +462,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final DeviceConnectivitySource? deviceConnectivitySource;
   final OperationReplayScheduler? operationReplayScheduler;
   final AppointmentCreateSyncPageLoader? appointmentCreateSyncPageLoader;
+  final PendingWorkAccess? pendingWorkSource;
   final AppDatabase? localDatabase;
 
   @override
@@ -478,6 +502,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       deviceTokenProvider: widget.deviceTokenProvider,
       deviceRegistrationConnectivitySource: widget.deviceConnectivitySource,
       appointmentCreateSyncPageLoader: widget.appointmentCreateSyncPageLoader,
+      pendingWorkSource: widget.pendingWorkSource,
     );
 
     widget.pushReceiver?.start(

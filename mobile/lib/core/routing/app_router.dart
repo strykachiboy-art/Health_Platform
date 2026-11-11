@@ -48,6 +48,8 @@ import 'package:clinic_system_pro/features/emar/presentation/emar_patient_route_
 import 'package:clinic_system_pro/features/medication_reconciliation/presentation/medication_reconciliation_patient_route_screen.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_inbox_screen.dart';
+import 'package:clinic_system_pro/features/pending_work/data/pending_work_source.dart';
+import 'package:clinic_system_pro/features/pending_work/presentation/pending_work_center_screen.dart';
 import 'package:clinic_system_pro/features/feedback/data/feedback_remote_data_source.dart';
 import 'package:clinic_system_pro/features/feedback/presentation/feedback_workspace_screen.dart';
 import 'package:clinic_system_pro/features/notifications/data/notification_remote_data_source.dart';
@@ -109,6 +111,7 @@ GoRouter createAppRouter({
   ConsultationRemoteDataSource? consultationDataSource,
   ClinicalOrdersRemoteDataSource? clinicalOrdersDataSource,
   AppointmentCreateSyncPageLoader? appointmentCreateSyncPageLoader,
+  PendingWorkAccess? pendingWorkSource,
   PatientRemoteDataSource? patientDataSource,
   PatientAllergyRemoteDataSource? patientAllergyDataSource,
   PatientVitalsRemoteDataSource? patientVitalsDataSource,
@@ -357,6 +360,11 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
+      // P25 pending-work is guarded even under the default /patients-only policy.
+      if (state.matchedLocation == '/pending-work' &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       // P24H is guarded even when the default navigation guard protects only /patients.
       if (state.matchedLocation == '/feedback' &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
@@ -567,6 +575,23 @@ GoRouter createAppRouter({
                 source: source,
                 actions: actions,
               );
+            },
+          ),
+          GoRoute(
+            path: '/pending-work',
+            name: 'p25-pending-work-center',
+            builder: (context, state) {
+              final source = pendingWorkSource;
+              final guard = sessionNavigationGuard;
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.guard, guard) ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Pending work unavailable.')),
+                );
+              }
+              return PendingWorkCenterScreen(source: source);
             },
           ),
           GoRoute(

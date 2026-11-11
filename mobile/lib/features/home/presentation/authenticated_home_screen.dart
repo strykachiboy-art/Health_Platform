@@ -235,6 +235,26 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  // P25: only appointment-create staff roles have a verified durable queue.
+  // This navigation is not backend authorization.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{
+        'admin',
+        'doctor',
+        'nurse',
+        'receptionist',
+      }.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'pending_work',
+        'Pending Work',
+        '/pending-work',
+        Icons.pending_actions_outlined,
+      ),
+    );
+  }
   // P24H: a selected clinic is required to display feedback navigation.
   // This link never grants server feedback visibility or management roles.
   if (clinicContextId != null && clinicContextId > 0) {
@@ -540,6 +560,7 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
                   children: [
                     if (wide) ...[
                       NavigationRail(
+                        scrollable: true,
                         selectedIndex: 0,
                         labelType: NavigationRailLabelType.all,
                         destinations: [
