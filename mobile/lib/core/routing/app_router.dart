@@ -59,6 +59,7 @@ import 'package:clinic_system_pro/features/devices/data/device_token_provider.da
 import 'package:clinic_system_pro/features/devices/presentation/device_registration_screen.dart';
 import 'package:clinic_system_pro/features/devices/data/device_management_remote_data_source.dart';
 import 'package:clinic_system_pro/features/devices/presentation/device_management_screen.dart';
+import 'package:clinic_system_pro/features/auth/presentation/session_security_screen.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/nursing/presentation/ward_dashboard_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
@@ -339,6 +340,12 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
+      // P24F is a separate privileged route even under a default
+      // /patients-only test guard; URLs are not authentication grants.
+      if (state.matchedLocation == '/account/security' &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       // Login and saved-session restoration use the existing guard. Once
       // ready, land on home without requiring a second manual button tap.
       // The explicit session route remains reachable for logout/recovery.
@@ -421,6 +428,29 @@ GoRouter createAppRouter({
                 clinicContextSwitcher: switcher,
                 signOutCoordinator: signOutCoordinator,
                 sessionNavigationGuard: sessionNavigationGuard,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/account/security',
+            name: 'p24f-session-security',
+            builder: (context, state) {
+              final loader = loadHomeSession;
+              final guard = sessionNavigationGuard;
+              final signOut = signOutCoordinator;
+              if (loader == null ||
+                  guard == null ||
+                  signOut == null ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Session security unavailable.')),
+                );
+              }
+              return SessionSecurityScreen(
+                loadSession: loader,
+                sessionNavigationGuard: guard,
+                performSignOut: signOut.signOut,
+                deviceManagementConfigured: managementSource != null,
               );
             },
           ),

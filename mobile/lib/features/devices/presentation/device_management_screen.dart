@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/features/devices/data/device_management_models.dart';
@@ -173,6 +174,15 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen> {
               'Turning off push delivery does not revoke a login session.',
             ),
             const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: const ValueKey('p24f-open-session-security'),
+              onPressed: !_busy && activeGuard
+                  ? () => context.push<void>('/account/security')
+                  : null,
+              icon: const Icon(Icons.security_outlined),
+              label: const Text('Security and login sessions'),
+            ),
+            const SizedBox(height: 8),
             OutlinedButton.icon(
               key: const ValueKey('p24e-refresh'),
               onPressed: !_busy && activeGuard

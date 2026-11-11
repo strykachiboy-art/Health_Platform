@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
@@ -249,6 +250,20 @@ class _AccountClinicScreenState extends State<AccountClinicScreen> {
                   key: const ValueKey('p22-s05-account-user'),
                 ),
                 const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  key: const ValueKey('p24f-account-security'),
+                  onPressed:
+                      _changing ||
+                          widget
+                                  .sessionNavigationGuard
+                                  ?.canAccessProtectedRoutes ==
+                              false
+                      ? null
+                      : () => context.push<void>('/account/security'),
+                  icon: const Icon(Icons.security_outlined),
+                  label: const Text('Security and sessions'),
+                ),
+                const SizedBox(height: 8),
                 OutlinedButton.icon(
                   key: const ValueKey('p22-s05-account-sign-out'),
                   onPressed: _changing || widget.signOutCoordinator == null
