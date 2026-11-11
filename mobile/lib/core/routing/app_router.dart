@@ -51,6 +51,11 @@ import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_inbox_s
 import 'package:clinic_system_pro/features/notifications/data/notification_remote_data_source.dart';
 import 'package:clinic_system_pro/features/notifications/data/notification_read_actions.dart';
 import 'package:clinic_system_pro/features/notifications/presentation/notification_inbox_screen.dart';
+import 'package:clinic_system_pro/core/networking/device_connectivity_source.dart';
+import 'package:clinic_system_pro/features/devices/data/device_registration_coordinator.dart';
+import 'package:clinic_system_pro/features/devices/data/device_registration_remote_data_source.dart';
+import 'package:clinic_system_pro/features/devices/data/device_token_provider.dart';
+import 'package:clinic_system_pro/features/devices/presentation/device_registration_screen.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/nursing/presentation/ward_dashboard_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
@@ -109,6 +114,8 @@ GoRouter createAppRouter({
   ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource,
   EmergencyAccessContext? emergencyAccessContext,
   SessionNavigationGuard? sessionNavigationGuard,
+  DeviceTokenProvider? deviceTokenProvider,
+  DeviceConnectivitySource? deviceRegistrationConnectivitySource,
 }) {
   // P23H.S06A reuses the already-injected authenticated client/session.
   // GET-only readers still recheck role, clinic, patient and session authority.
@@ -250,6 +257,28 @@ GoRouter createAppRouter({
       notificationSource == null
       ? null
       : NotificationReadActions(notificationSource);
+  // P24B: no push SDK is installed. P24D supplies the verified provider.
+  // Keep registration one-shot state alive across route revisits.
+  final DeviceRegistrationCoordinator? registrationCoordinator =
+      deviceTokenProvider != null &&
+          admissionsForNotifications != null &&
+          notificationGuard != null &&
+          identical(
+            admissionsForNotifications.sessionNavigationGuard,
+            notificationGuard,
+          )
+      ? DeviceRegistrationCoordinator(
+          source: DeviceRegistrationRemoteDataSource(
+            apiClient: admissionsForNotifications.apiClient,
+            loadSession: admissionsForNotifications.loadSession,
+            sessionNavigationGuard: notificationGuard,
+            connectivity:
+                deviceRegistrationConnectivitySource ??
+                ConnectivityPlusDeviceConnectivitySource(),
+          ),
+          provider: deviceTokenProvider,
+        )
+      : null;
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
@@ -273,6 +302,11 @@ GoRouter createAppRouter({
       // P24A notifications are protected even when the default guard only
       // protects /patients. A URL never grants notification permission.
       if (state.matchedLocation == '/notifications' &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
+      // P24B route is guarded separately from the default /patients prefix.
+      if (state.matchedLocation == '/devices/register' &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -374,6 +408,27 @@ GoRouter createAppRouter({
                 );
               }
               return NotificationInboxScreen(source: source, actions: actions);
+            },
+          ),
+          GoRoute(
+            path: '/devices/register',
+            name: 'p24b-device-registration',
+            builder: (context, state) {
+              final coordinator = registrationCoordinator;
+              if (coordinator == null ||
+                  !coordinator
+                      .source
+                      .sessionNavigationGuard
+                      .canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text(
+                      'Device registration unavailable: provider not configured.',
+                    ),
+                  ),
+                );
+              }
+              return DeviceRegistrationScreen(coordinator: coordinator);
             },
           ),
           GoRoute(
