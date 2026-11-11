@@ -30,10 +30,12 @@ class NotificationInboxScreen extends StatefulWidget {
     super.key,
     required this.source,
     required this.actions,
+    this.onOpenLink,
   });
 
   final NotificationRemoteDataSource source;
   final NotificationReadActions actions;
+  final Future<void> Function(int)? onOpenLink;
 
   @override
   State<NotificationInboxScreen> createState() =>
@@ -140,15 +142,21 @@ class _NotificationInboxScreenState extends State<NotificationInboxScreen> {
 
   Future<void> _openDetail(int id) async {
     if (_loading || _writing) return;
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => NotificationDetailScreen(
-          id: id,
-          source: widget.source,
-          actions: widget.actions,
+    final openLink = widget.onOpenLink;
+    if (openLink != null) {
+      await openLink(id);
+    } else {
+      // Keep the older standalone widget contract unchanged.
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => NotificationDetailScreen(
+            id: id,
+            source: widget.source,
+            actions: widget.actions,
+          ),
         ),
-      ),
-    );
+      );
+    }
     if (mounted &&
         widget.source.sessionNavigationGuard.canAccessProtectedRoutes) {
       await _load(_pageNumber);
@@ -303,7 +311,7 @@ class _NotificationInboxScreenState extends State<NotificationInboxScreen> {
   }
 }
 
-/// Detail is opened from the authenticated inbox, not from a raw deep link.
+/// Detail can open from the inbox or a validated ID-only deep link.
 /// It always performs a fresh owner/clinic-checked backend GET before showing PHI.
 class NotificationDetailScreen extends StatefulWidget {
   const NotificationDetailScreen({

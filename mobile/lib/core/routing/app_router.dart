@@ -51,6 +51,7 @@ import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_inbox_s
 import 'package:clinic_system_pro/features/notifications/data/notification_remote_data_source.dart';
 import 'package:clinic_system_pro/features/notifications/data/notification_read_actions.dart';
 import 'package:clinic_system_pro/features/notifications/presentation/notification_inbox_screen.dart';
+import 'package:clinic_system_pro/features/notifications/data/notification_deep_link_contract.dart';
 import 'package:clinic_system_pro/core/networking/device_connectivity_source.dart';
 import 'package:clinic_system_pro/features/devices/data/device_registration_coordinator.dart';
 import 'package:clinic_system_pro/features/devices/data/device_registration_remote_data_source.dart';
@@ -299,9 +300,10 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
-      // P24A notifications are protected even when the default guard only
-      // protects /patients. A URL never grants notification permission.
-      if (state.matchedLocation == '/notifications' &&
+      // P24C: both inbox and ID-only deep links are session protected.
+      // The target itself still checks role, selected clinic, and owner.
+      if ((state.uri.path == '/notifications' ||
+              state.uri.path.startsWith('/notifications/')) &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -407,7 +409,13 @@ GoRouter createAppRouter({
                   body: Center(child: Text('Notification inbox unavailable.')),
                 );
               }
-              return NotificationInboxScreen(source: source, actions: actions);
+              return NotificationInboxScreen(
+                source: source,
+                actions: actions,
+                onOpenLink: (id) async {
+                  await context.push<void>(NotificationDeepLink.pathForId(id));
+                },
+              );
             },
           ),
           GoRoute(
@@ -429,6 +437,39 @@ GoRouter createAppRouter({
                 );
               }
               return DeviceRegistrationScreen(coordinator: coordinator);
+            },
+          ),
+          GoRoute(
+            path: '/notifications/:notificationId',
+            name: 'p24c-notification-deep-link',
+            builder: (context, state) {
+              // No ID, clinic, token, content or reference in a query.
+              final link = NotificationDeepLink.parse(state.uri.toString());
+              if (link == null ||
+                  state.pathParameters['notificationId'] !=
+                      link.notificationId.toString()) {
+                return const Scaffold(
+                  body: Center(
+                    child: Text('Invalid or unsupported notification link.'),
+                  ),
+                );
+              }
+              final source = notificationSource;
+              final actions = notificationActions;
+              if (source == null ||
+                  actions == null ||
+                  !source.sessionNavigationGuard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Notification link unavailable.')),
+                );
+              }
+              // Detail always re-fetches and verifies role, user and clinic.
+              // Its reference fields never authorize a clinical route.
+              return NotificationDetailScreen(
+                id: link.notificationId,
+                source: source,
+                actions: actions,
+              );
             },
           ),
           GoRoute(
