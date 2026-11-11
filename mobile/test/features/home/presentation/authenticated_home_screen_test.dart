@@ -43,7 +43,11 @@ void main() {
     expect(ids('RECEPTIONIST'), ['patients', 'health']);
     expect(ids('ADMIN'), ['clinical_safety', 'patients', 'health']);
     expect(ids('SUPER_ADMIN'), ['health']);
-    expect(ids('SUPER_ADMIN', clinic: 3), ['clinical_safety', 'health']);
+    expect(ids('SUPER_ADMIN', clinic: 3), [
+      'clinical_safety',
+      'notifications',
+      'health',
+    ]);
     expect(ids('not_a_role'), ['health']);
   });
 
@@ -102,7 +106,10 @@ void main() {
     expect(find.text('Patient workspace'), findsOneWidget);
     expect(find.byKey(const ValueKey('p22-home-health')), findsOneWidget);
     expect(find.byKey(const ValueKey('p22-home-patients')), findsNothing);
-    expect(find.byKey(const ValueKey('p22-home-clinical_safety')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('p22-home-clinical_safety')),
+      findsNothing,
+    );
     expect(find.textContaining('does not invent counts'), findsOneWidget);
   });
 
@@ -121,9 +128,15 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Clinic management'), findsOneWidget);
-    expect(find.byKey(const ValueKey('p22-home-clinical_safety')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('p22-home-clinical_safety')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('p22-home-patients')), findsOneWidget);
-    expect(find.byKey(const ValueKey('p22-home-emergency_request')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('p22-home-emergency_request')),
+      findsNothing,
+    );
   });
 
   testWidgets('P22.S01 guard invalidation removes role-specific navigation', (
@@ -144,7 +157,10 @@ void main() {
     guard.invalidate();
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('p22-home-patients')), findsNothing);
-    expect(find.byKey(const ValueKey('p22-home-session-unavailable')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('p22-home-session-unavailable')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('P22.S01 stale async restore cannot re-open invalidated shell', (
@@ -166,24 +182,37 @@ void main() {
     guard.invalidate();
     pending.complete(_ready('admin'));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('p22-home-clinical_safety')), findsNothing);
-    expect(find.byKey(const ValueKey('p22-home-session-unavailable')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('p22-home-clinical_safety')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('p22-home-session-unavailable')),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('P22.S01 super admin without clinic context is not shown alert entry', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AuthenticatedHomeScreen(
-          loadSession: () async => _ready('super_admin'),
+  testWidgets(
+    'P22.S01 super admin without clinic context is not shown alert entry',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AuthenticatedHomeScreen(
+            loadSession: () async => _ready('super_admin'),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('p22-home-clinic-required')), findsOneWidget);
-    expect(find.byKey(const ValueKey('p22-home-clinical_safety')), findsNothing);
-  });
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('p22-home-clinic-required')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('p22-home-clinical_safety')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('P22.S01 failed secure-store restore exposes no role routes', (
     tester,
@@ -196,7 +225,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('p22-home-session-unavailable')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('p22-home-session-unavailable')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('p22-home-patients')), findsNothing);
     expect(find.textContaining('secret test error'), findsNothing);
   });

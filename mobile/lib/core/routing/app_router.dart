@@ -48,6 +48,9 @@ import 'package:clinic_system_pro/features/emar/presentation/emar_patient_route_
 import 'package:clinic_system_pro/features/medication_reconciliation/presentation/medication_reconciliation_patient_route_screen.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_inbox_screen.dart';
+import 'package:clinic_system_pro/features/notifications/data/notification_remote_data_source.dart';
+import 'package:clinic_system_pro/features/notifications/data/notification_read_actions.dart';
+import 'package:clinic_system_pro/features/notifications/presentation/notification_inbox_screen.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/nursing/presentation/ward_dashboard_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
@@ -226,6 +229,27 @@ GoRouter createAppRouter({
           sessionNavigationGuard: sessionNavigationGuard,
         )
       : null;
+  // P24A reuses the already-injected authenticated admission transport.
+  // The reader and one-shot action gate live for the router lifetime.
+  final admissionsForNotifications = patientAdmissionDataSource;
+  final notificationGuard = sessionNavigationGuard;
+  final NotificationRemoteDataSource? notificationSource =
+      admissionsForNotifications != null &&
+          notificationGuard != null &&
+          identical(
+            admissionsForNotifications.sessionNavigationGuard,
+            notificationGuard,
+          )
+      ? NotificationRemoteDataSource(
+          apiClient: admissionsForNotifications.apiClient,
+          loadSession: admissionsForNotifications.loadSession,
+          sessionNavigationGuard: notificationGuard,
+        )
+      : null;
+  final NotificationReadActions? notificationActions =
+      notificationSource == null
+      ? null
+      : NotificationReadActions(notificationSource);
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
@@ -243,6 +267,12 @@ GoRouter createAppRouter({
       // P23I destinations lie outside the default /patients route guard.
       if ((state.matchedLocation == '/billing' ||
               state.matchedLocation == '/ambulance') &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
+      // P24A notifications are protected even when the default guard only
+      // protects /patients. A URL never grants notification permission.
+      if (state.matchedLocation == '/notifications' &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -328,6 +358,22 @@ GoRouter createAppRouter({
                 signOutCoordinator: signOutCoordinator,
                 sessionNavigationGuard: sessionNavigationGuard,
               );
+            },
+          ),
+          GoRoute(
+            path: '/notifications',
+            name: 'p24a-notification-inbox',
+            builder: (context, state) {
+              final source = notificationSource;
+              final actions = notificationActions;
+              if (source == null ||
+                  actions == null ||
+                  !source.sessionNavigationGuard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Notification inbox unavailable.')),
+                );
+              }
+              return NotificationInboxScreen(source: source, actions: actions);
             },
           ),
           GoRoute(

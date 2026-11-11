@@ -28,6 +28,24 @@ const _clinicalRoles = <String>{
   'emt',
 };
 
+const _notificationRoles = <String>{
+  'super_admin',
+  'admin',
+  'doctor',
+  'nurse',
+  'patient',
+  'pharmacist',
+  'lab_technician',
+  'receptionist',
+  'accountant',
+  'paramedic',
+  'emt',
+  'driver',
+  'ambulance_dispatcher',
+  'ambulance_coordinator',
+  'other',
+};
+
 const _patientDirectoryRoles = <String>{
   'admin',
   'doctor',
@@ -55,6 +73,21 @@ List<HomeDestination> homeDestinationsFor({
     ),
   ];
 
+  // P24A: a selected clinic is mandatory, including for super admin.
+  // Home navigation is not a backend authorization grant.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      _notificationRoles.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'notifications',
+        'Notifications',
+        '/notifications',
+        Icons.notifications_outlined,
+      ),
+    );
+  }
   // P23I.S09 exposes navigation only; all billing/transport authority
   // is rechecked by the backend and source-bound session guards.
   if (clinicContextId != null &&
