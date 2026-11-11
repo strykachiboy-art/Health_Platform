@@ -8,6 +8,7 @@ import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_media_w
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_read_state_remote_data_source.dart';
 import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_read_state_screen.dart';
+import 'package:clinic_system_pro/features/chat/presentation/clinic_chat_final_engagement_screen.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_realtime_reconciler.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_socket_transport.dart';
 import 'package:clinic_system_pro/features/chat/data/clinic_chat_text_mutation_remote_data_source.dart';
@@ -533,6 +534,21 @@ class _ClinicChatTextConversationScreenState
     );
   }
 
+  void _openFinalEngagement(int? messageId) {
+    if (!widget.dataSource.sessionNavigationGuard.canAccessProtectedRoutes) {
+      return;
+    }
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ClinicChatFinalEngagementScreen(
+          read: widget.dataSource,
+          conversationId: widget.conversationId,
+          messageId: messageId,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final guard = widget.dataSource.sessionNavigationGuard;
@@ -546,6 +562,14 @@ class _ClinicChatTextConversationScreenState
       appBar: AppBar(
         title: const Text('Clinic conversation'),
         actions: [
+          IconButton(
+            key: const ValueKey('p24g-final-open-unread'),
+            tooltip: 'Authoritative unread messages',
+            onPressed: allowed && !_busy && !_uncertain
+                ? () => _openFinalEngagement(null)
+                : null,
+            icon: const Icon(Icons.markunread_mailbox_outlined),
+          ),
           IconButton(
             key: const ValueKey('p24g-view-read-state'),
             tooltip: 'View server read state',
@@ -672,6 +696,13 @@ class _ClinicChatTextConversationScreenState
                       Wrap(
                         spacing: 8,
                         children: [
+                          TextButton(
+                            key: ValueKey('p24g-final-message-${item.id}'),
+                            onPressed: !_uncertain
+                                ? () => _openFinalEngagement(item.id)
+                                : null,
+                            child: const Text('Read / react / mention'),
+                          ),
                           TextButton(
                             key: ValueKey('chat-c-reply-${item.id}'),
                             onPressed: () => _reply(item),
