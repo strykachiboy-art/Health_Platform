@@ -150,6 +150,10 @@ from app.modules.surgery.models.operative_report_model import (
     SurgicalOperativeSignature,
 )
 
+from app.modules.surgery.models.surgical_clinical_reference_model import (
+    SurgicalClinicalReference,
+)
+
 # Medication Reconciliation
 from app.modules.medication_reconciliation.models.medication_reconciliation_model import (
     MedicationReconciliation,
@@ -354,6 +358,7 @@ __all__ = [
     "SurgicalPacuObservation",
     "SurgicalOperativeReport",
     "SurgicalOperativeSignature",
+    "SurgicalClinicalReference",
     # Medication Reconciliation
     "MedicationReconciliation",
     "MedicationReconciliationItem",
