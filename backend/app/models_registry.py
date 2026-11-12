@@ -140,6 +140,11 @@ from app.modules.surgery.models.surgical_material_trace_model import (
     SurgicalMaterialTrace,
 )
 
+from app.modules.surgery.models.pacu_preparation_model import (
+    SurgicalPacuPreparation,
+    SurgicalPacuObservation,
+)
+
 # Medication Reconciliation
 from app.modules.medication_reconciliation.models.medication_reconciliation_model import (
     MedicationReconciliation,
@@ -340,6 +345,8 @@ __all__ = [
     "SurgicalEvidenceEvent",
     "SurgicalInstrumentCount",
     "SurgicalMaterialTrace",
+    "SurgicalPacuPreparation",
+    "SurgicalPacuObservation",
     # Medication Reconciliation
     "MedicationReconciliation",
     "MedicationReconciliationItem",
