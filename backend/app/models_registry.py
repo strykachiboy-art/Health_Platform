@@ -145,6 +145,11 @@ from app.modules.surgery.models.pacu_preparation_model import (
     SurgicalPacuObservation,
 )
 
+from app.modules.surgery.models.operative_report_model import (
+    SurgicalOperativeReport,
+    SurgicalOperativeSignature,
+)
+
 # Medication Reconciliation
 from app.modules.medication_reconciliation.models.medication_reconciliation_model import (
     MedicationReconciliation,
@@ -347,6 +352,8 @@ __all__ = [
     "SurgicalMaterialTrace",
     "SurgicalPacuPreparation",
     "SurgicalPacuObservation",
+    "SurgicalOperativeReport",
+    "SurgicalOperativeSignature",
     # Medication Reconciliation
     "MedicationReconciliation",
     "MedicationReconciliationItem",
