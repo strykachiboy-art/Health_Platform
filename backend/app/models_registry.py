@@ -125,6 +125,11 @@ from app.modules.surgery.models.surgical_authorization_model import (
 
 from app.modules.surgery.models.surgical_checklist_model import SurgicalSafetyChecklistAttestation
 
+from app.modules.surgery.models.anesthesia_model import (
+    AnesthesiaPreoperativeAssessment,
+    AnesthesiaBaselineObservation,
+)
+
 # Medication Reconciliation
 from app.modules.medication_reconciliation.models.medication_reconciliation_model import (
     MedicationReconciliation,
@@ -319,6 +324,8 @@ __all__ = [
     "SurgicalConsentEvidence",
 
     "SurgicalSafetyChecklistAttestation",
+    "AnesthesiaPreoperativeAssessment",
+    "AnesthesiaBaselineObservation",
     # Medication Reconciliation
     "MedicationReconciliation",
     "MedicationReconciliationItem",
