@@ -336,6 +336,19 @@ def list_procedure_orders(
     )
 
 
+def _block_legacy_surgical_mutation(order: ProcedureOrder, action: str) -> None:
+    """Never treat a legacy ProcedureOrder mutation as surgical authorization.
+
+    The dedicated Surgery workflow must first enforce clinical readiness,
+    checklist, operative record finalization and audit policy in later gates.
+    """
+    if order.procedure_type == "surgical":
+        raise ConflictError(
+            f"Legacy procedure {action} is unavailable for surgical orders; "
+            "dedicated Surgery workflow required"
+        )
+
+
 @transactional
 def verify_procedure_consent(
     procedure_order_id: int,
@@ -349,6 +362,8 @@ def verify_procedure_consent(
         clinic_id,
         lock=True,
     )
+
+    _block_legacy_surgical_mutation(order, "consent verification")
 
     if order.status not in _MUTABLE_STATUSES:
         raise ConflictError(
@@ -391,6 +406,20 @@ def cancel_procedure_order(
         clinic_id,
         lock=True,
     )
+
+    if order.procedure_type == "surgical":
+        from app.modules.surgery.models.surgical_case_model import SurgicalCase
+
+        linked_case_id = db.session.execute(
+            select(SurgicalCase.id).where(
+                SurgicalCase.procedure_order_id == order.id,
+                SurgicalCase.clinic_id == clinic_id,
+            )
+        ).scalar_one_or_none()
+        if linked_case_id is not None:
+            raise ConflictError(
+                "Surgical case cancellation requires dedicated Surgery workflow"
+            )
 
     if order.status not in _MUTABLE_STATUSES:
         raise ConflictError(
@@ -438,6 +467,8 @@ def complete_procedure_order(
         clinic_id,
         lock=True,
     )
+
+    _block_legacy_surgical_mutation(order, "completion")
 
     if order.status not in _MUTABLE_STATUSES:
         raise ConflictError(

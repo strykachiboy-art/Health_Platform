@@ -118,6 +118,10 @@ from app.modules.surgery.models.theatre_model import (
     OperatingTheatre,
     TheatreBooking,
 )
+from app.modules.surgery.models.surgical_authorization_model import (
+    SurgicalProfessionalPrivilege,
+    SurgicalConsentEvidence,
+)
 
 # Medication Reconciliation
 from app.modules.medication_reconciliation.models.medication_reconciliation_model import (
@@ -309,6 +313,8 @@ __all__ = [
     "SurgicalCase",
     "OperatingTheatre",
     "TheatreBooking",
+    "SurgicalProfessionalPrivilege",
+    "SurgicalConsentEvidence",
 
     # Medication Reconciliation
     "MedicationReconciliation",
