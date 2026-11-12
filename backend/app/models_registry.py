@@ -114,6 +114,10 @@ from app.modules.clinical_orders.models.nursing_order_model import (
 
 # Surgery
 from app.modules.surgery.models.surgical_case_model import SurgicalCase
+from app.modules.surgery.models.theatre_model import (
+    OperatingTheatre,
+    TheatreBooking,
+)
 
 # Medication Reconciliation
 from app.modules.medication_reconciliation.models.medication_reconciliation_model import (
@@ -303,6 +307,8 @@ __all__ = [
 
     # Surgery
     "SurgicalCase",
+    "OperatingTheatre",
+    "TheatreBooking",
 
     # Medication Reconciliation
     "MedicationReconciliation",
