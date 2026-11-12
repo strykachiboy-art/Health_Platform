@@ -136,6 +136,10 @@ from app.modules.surgery.models.intraoperative_evidence_model import (
     SurgicalInstrumentCount,
 )
 
+from app.modules.surgery.models.surgical_material_trace_model import (
+    SurgicalMaterialTrace,
+)
+
 # Medication Reconciliation
 from app.modules.medication_reconciliation.models.medication_reconciliation_model import (
     MedicationReconciliation,
@@ -335,6 +339,7 @@ __all__ = [
     "SurgicalEvidenceJournal",
     "SurgicalEvidenceEvent",
     "SurgicalInstrumentCount",
+    "SurgicalMaterialTrace",
     # Medication Reconciliation
     "MedicationReconciliation",
     "MedicationReconciliationItem",
