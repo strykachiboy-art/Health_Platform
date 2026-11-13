@@ -50,6 +50,7 @@ void main() {
     ]);
     expect(ids('SUPER_ADMIN'), ['health']);
     expect(ids('SUPER_ADMIN', clinic: 3), [
+      'surgery',
       'clinical_safety',
       'feedback',
       'notifications',

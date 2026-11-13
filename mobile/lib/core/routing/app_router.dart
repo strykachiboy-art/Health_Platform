@@ -97,6 +97,8 @@ import 'package:clinic_system_pro/features/patients/data/patient_clinical_alert_
 import 'package:clinic_system_pro/features/patients/presentation/patient_detail_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_directory_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_registration_screen.dart';
+import 'package:clinic_system_pro/features/surgery/data/surgery_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/surgery/presentation/surgery_read_screens.dart';
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
@@ -327,6 +329,16 @@ GoRouter createAppRouter({
           registrationCoordinator: registrationCoordinator,
         )
       : null;
+  // Surgery A uses the existing dashboard API/session/guard; never a new client.
+  final SurgeryReadRemoteDataSource? surgerySource =
+      dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(
+            dashboardDataSource.sessionNavigationGuard,
+            sessionNavigationGuard,
+          )
+      ? SurgeryReadRemoteDataSource(dashboardSource: dashboardDataSource)
+      : null;
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
@@ -358,6 +370,12 @@ GoRouter createAppRouter({
       // including in tests that use the default /patients-only guard.
       if ((state.matchedLocation == '/devices' ||
               state.matchedLocation == '/devices/register') &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
+      // Surgery A direct links must be protected even with default test guard.
+      if ((state.uri.path == '/surgery' ||
+              state.uri.path.startsWith('/surgery/')) &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -452,6 +470,55 @@ GoRouter createAppRouter({
           );
         },
         routes: [
+          GoRoute(
+            path: '/surgery',
+            name: 'surgery-a-worklist',
+            builder: (context, state) {
+              final source = surgerySource;
+              final guard = sessionNavigationGuard;
+              if (source == null ||
+                  guard == null ||
+                  !source.canOpen ||
+                  !identical(
+                    source.dashboardSource.sessionNavigationGuard,
+                    guard,
+                  )) {
+                return const Scaffold(
+                  body: Center(child: Text('Surgery worklist unavailable.')),
+                );
+              }
+              return SurgeryWorklistScreen(source: source, guard: guard);
+            },
+          ),
+          GoRoute(
+            path: '/surgery/cases/:caseId',
+            name: 'surgery-a-case-detail',
+            builder: (context, state) {
+              final source = surgerySource;
+              final guard = sessionNavigationGuard;
+              final textId = state.pathParameters['caseId'];
+              final caseId = int.tryParse(textId ?? '');
+              if (source == null ||
+                  guard == null ||
+                  !source.canOpen ||
+                  !identical(
+                    source.dashboardSource.sessionNavigationGuard,
+                    guard,
+                  ) ||
+                  caseId == null ||
+                  caseId <= 0 ||
+                  textId != caseId.toString()) {
+                return const Scaffold(
+                  body: Center(child: Text('Surgery case unavailable.')),
+                );
+              }
+              return SurgeryCaseDetailScreen(
+                source: source,
+                guard: guard,
+                caseId: caseId,
+              );
+            },
+          ),
           GoRoute(
             path: '/billing',
             name: 'p23i-billing-workspace',

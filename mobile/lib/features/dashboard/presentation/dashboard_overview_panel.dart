@@ -6,6 +6,7 @@ import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/dashboard/data/models/dashboard_snapshot.dart';
+import 'package:clinic_system_pro/features/surgery/presentation/surgery_read_screens.dart';
 
 /// GET-only, in-memory dashboard view. No KPI is shown until a fresh,
 /// identity-checked server snapshot is available for the current session.
@@ -270,6 +271,10 @@ class _DashboardOverviewPanelState extends State<DashboardOverviewPanel> {
                     );
                   },
                 ),
+              if (snapshot.surgery != null) ...[
+                const SizedBox(height: 12),
+                SurgeryDashboardSummary(widgetData: snapshot.surgery!),
+              ],
               const SizedBox(height: 8),
               const Text(
                 'Snapshot only. Access and clinical decisions remain server-controlled.',

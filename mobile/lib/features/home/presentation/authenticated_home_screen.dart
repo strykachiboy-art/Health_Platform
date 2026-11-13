@@ -336,6 +336,25 @@ List<HomeDestination> homeDestinationsFor({
     );
   }
 
+  // Surgery A: navigation only; CE1 checks selected clinic, role and assignment.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{
+        'super_admin',
+        'admin',
+        'doctor',
+        'nurse',
+      }.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'surgery',
+        'Surgery worklist',
+        '/surgery',
+        Icons.medical_services_outlined,
+      ),
+    );
+  }
   return List<HomeDestination>.unmodifiable(destinations);
 }
 
