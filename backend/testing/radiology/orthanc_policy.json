@@ -1,0 +1,18 @@
+{
+  "Name": "CSP-RAD2-SYNTHETIC-ISOLATED",
+  "HttpServerEnabled": true,
+  "HttpPort": 8042,
+  "RemoteAccessAllowed": true,
+  "AuthenticationEnabled": true,
+  "DicomServerEnabled": false,
+  "DicomAlwaysAllowStore": false,
+  "DicomAlwaysAllowFind": false,
+  "DicomAlwaysAllowMove": false,
+  "OverwriteInstances": false,
+  "StorageDirectory": "/var/lib/orthanc/db",
+  "MaximumStorageSize": 128,
+  "DicomWeb": {
+    "Enable": true,
+    "Root": "/dicom-web/"
+  }
+}
