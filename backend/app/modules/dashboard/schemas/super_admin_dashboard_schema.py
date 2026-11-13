@@ -23,6 +23,8 @@ from app.modules.dashboard.schemas.dashboard_schema import (
 )
 
 
+from app.modules.dashboard.schemas.surgery_dashboard_schema import SurgeryDashboardWidgetSchema
+
 class SuperAdminDashboardOverviewSchema(BaseModel):
     total_clinics: int = Field(
         ...,
@@ -280,6 +282,8 @@ class SuperAdminDashboardSchema(BaseModel):
     ] = Field(
         default_factory=list,
     )
+
+    surgery: SurgeryDashboardWidgetSchema | None = None
 
     model_config = ConfigDict(
         extra="forbid",

@@ -12,6 +12,8 @@ from app.modules.dashboard.schemas.dashboard_schema import (
 )
 
 
+from app.modules.dashboard.schemas.surgery_dashboard_schema import SurgeryDashboardWidgetSchema
+
 class OperationsHospitalCapacitySchema(BaseModel):
     active_admissions: int = Field(..., ge=0)
     total_beds: int = Field(..., ge=0)
@@ -102,6 +104,8 @@ class OperationsDashboardSchema(BaseModel):
     ] = Field(
         default_factory=list,
     )
+
+    surgery: SurgeryDashboardWidgetSchema | None = None
 
     model_config = ConfigDict(
         extra="forbid",
