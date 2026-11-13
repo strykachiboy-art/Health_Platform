@@ -373,6 +373,10 @@ def register_blueprints(app):
         dashboard_bp,
     )
 
+    from app.modules.surgery.routes.surgery_http_routes import (
+        surgery_http_bp,
+    )
+
     from app.core.observability.operations_routes import (
         operations_bp,
     )
@@ -440,6 +444,7 @@ def register_blueprints(app):
         access_control_bp,
         chat_bp,
         dashboard_bp,
+        surgery_http_bp,
         operations_bp,
         failure_dashboard_bp,
         emergency_access_bp,
