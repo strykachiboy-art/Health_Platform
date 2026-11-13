@@ -381,6 +381,10 @@ def register_blueprints(app):
         radiology_bp,
     )
 
+    from app.modules.printing.routes.printing_routes import (
+        printing_bp,
+    )
+
     from app.core.observability.operations_routes import (
         operations_bp,
     )
@@ -450,6 +454,7 @@ def register_blueprints(app):
         dashboard_bp,
         surgery_http_bp,
         radiology_bp,
+        printing_bp,
         operations_bp,
         failure_dashboard_bp,
         emergency_access_bp,
