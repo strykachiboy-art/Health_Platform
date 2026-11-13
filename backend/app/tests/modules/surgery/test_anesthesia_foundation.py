@@ -315,7 +315,17 @@ def test_tenant_isolation_and_no_public_operative_route(anesthesia_ready, make_c
         svc.get_preanesthesia_assessment(assessment_id=row.id, clinic_id=other.id)
     with pytest.raises(NotFoundError):
         _baseline(ctx, row, clinic_id=other.id)
-    assert not any("/surgery" in route.rule for route in app.url_map.iter_rules())
+    # S11 permits exactly two authorized GET-only documentation endpoints.
+    # No Surgery mutation or operative-execution routes may be registered.
+    surgery_routes = {
+        (rule.rule, frozenset(rule.methods - {"HEAD", "OPTIONS"}))
+        for rule in app.url_map.iter_rules()
+        if "/surgery" in rule.rule
+    }
+    assert surgery_routes == {
+        ("/api/v1/dashboard/surgery", frozenset({"GET"})),
+        ("/api/v1/dashboard/surgery/cases/<int:surgical_case_id>", frozenset({"GET"})),
+    }
     assert ctx["case"].status == "planned"
 
 

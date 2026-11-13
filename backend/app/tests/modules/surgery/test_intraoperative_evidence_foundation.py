@@ -441,7 +441,17 @@ def test_no_surgery_public_route_and_no_operative_transition(app, ready_s06):
     ctx = ready_s06
     journal = _journal(ctx)
     _event(ctx, journal)
-    assert not any("/surgery" in rule.rule for rule in app.url_map.iter_rules())
+    # S11 permits exactly two authorized GET-only documentation endpoints.
+    # No Surgery mutation or operative-execution routes may be registered.
+    surgery_routes = {
+        (rule.rule, frozenset(rule.methods - {"HEAD", "OPTIONS"}))
+        for rule in app.url_map.iter_rules()
+        if "/surgery" in rule.rule
+    }
+    assert surgery_routes == {
+        ("/api/v1/dashboard/surgery", frozenset({"GET"})),
+        ("/api/v1/dashboard/surgery/cases/<int:surgical_case_id>", frozenset({"GET"})),
+    }
     assert ctx["case"].status == "planned"
     assert ctx["order"].status == "active"
 

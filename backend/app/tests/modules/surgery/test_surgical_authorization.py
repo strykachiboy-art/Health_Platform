@@ -384,6 +384,16 @@ def test_model_db_constraints_block_forged_verified_state(scenario):
 
 def test_no_public_surgery_routes_and_no_execution_transition(app, scenario):
     _ready(scenario)
-    assert not any("/surgery" in rule.rule for rule in app.url_map.iter_rules())
+    # S11 permits exactly two authorized GET-only documentation endpoints.
+    # No Surgery mutation or operative-execution routes may be registered.
+    surgery_routes = {
+        (rule.rule, frozenset(rule.methods - {"HEAD", "OPTIONS"}))
+        for rule in app.url_map.iter_rules()
+        if "/surgery" in rule.rule
+    }
+    assert surgery_routes == {
+        ("/api/v1/dashboard/surgery", frozenset({"GET"})),
+        ("/api/v1/dashboard/surgery/cases/<int:surgical_case_id>", frozenset({"GET"})),
+    }
     assert scenario["case"].status == "planned"
     assert scenario["order"].status == "active"

@@ -345,7 +345,17 @@ def test_db_constraint_prevents_forged_trace_type(workspace, make_lab_order):
 
 
 def test_no_public_routes_or_clinical_execution(workspace, app):
-    assert not any('/surgery' in rule.rule for rule in app.url_map.iter_rules())
+    # S11 permits exactly two authorized GET-only documentation endpoints.
+    # No Surgery mutation or operative-execution routes may be registered.
+    surgery_routes = {
+        (rule.rule, frozenset(rule.methods - {"HEAD", "OPTIONS"}))
+        for rule in app.url_map.iter_rules()
+        if "/surgery" in rule.rule
+    }
+    assert surgery_routes == {
+        ("/api/v1/dashboard/surgery", frozenset({"GET"})),
+        ("/api/v1/dashboard/surgery/cases/<int:surgical_case_id>", frozenset({"GET"})),
+    }
     assert workspace['case'].status == 'planned'
     assert workspace['order'].status == 'active'
     assert workspace['journal'].status == 'draft'

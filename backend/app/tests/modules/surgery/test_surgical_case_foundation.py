@@ -193,4 +193,14 @@ def test_case_requires_positive_ids(clinic):
 
 def test_surgery_public_routes_not_registered_in_foundation(app):
     paths = [rule.rule for rule in app.url_map.iter_rules()]
-    assert not any("/surgery" in path for path in paths)
+    # S11 permits exactly two authorized GET-only documentation endpoints.
+    # No Surgery mutation or operative-execution routes may be registered.
+    surgery_routes = {
+        (rule.rule, frozenset(rule.methods - {"HEAD", "OPTIONS"}))
+        for rule in app.url_map.iter_rules()
+        if "/surgery" in rule.rule
+    }
+    assert surgery_routes == {
+        ("/api/v1/dashboard/surgery", frozenset({"GET"})),
+        ("/api/v1/dashboard/surgery/cases/<int:surgical_case_id>", frozenset({"GET"})),
+    }

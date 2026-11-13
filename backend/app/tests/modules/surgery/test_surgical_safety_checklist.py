@@ -223,6 +223,16 @@ def test_sign_out_explicitly_blocked_until_true_execution_evidence(ready):
 
 def test_no_public_surgery_routes_or_executable_transition(app, ready):
     _attest(ready)
-    assert not any("/surgery" in rule.rule for rule in app.url_map.iter_rules())
+    # S11 permits exactly two authorized GET-only documentation endpoints.
+    # No Surgery mutation or operative-execution routes may be registered.
+    surgery_routes = {
+        (rule.rule, frozenset(rule.methods - {"HEAD", "OPTIONS"}))
+        for rule in app.url_map.iter_rules()
+        if "/surgery" in rule.rule
+    }
+    assert surgery_routes == {
+        ("/api/v1/dashboard/surgery", frozenset({"GET"})),
+        ("/api/v1/dashboard/surgery/cases/<int:surgical_case_id>", frozenset({"GET"})),
+    }
     assert ready["case"].status == "planned"
     assert ready["order"].status == "active"

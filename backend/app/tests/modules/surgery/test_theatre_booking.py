@@ -268,10 +268,22 @@ def test_terminal_order_blocks_booking(context):
     theatre = _room(context)
     order, case = _case(context)
     from app.modules.clinical_orders.services import procedure_order_service
-    procedure_order_service.cancel_procedure_order(
-        order.id, clinic_id=context["clinic"].id,
-        actor_staff_id=context["doctor"].id, reason="New plan",
-    )
+    # The normal CPOE cancellation API now protects linked surgical cases.
+    with pytest.raises(ConflictError, match="dedicated Surgery workflow"):
+        procedure_order_service.cancel_procedure_order(
+            order.id, clinic_id=context["clinic"].id,
+            actor_staff_id=context["doctor"].id, reason="New plan",
+        )
+    assert order.status == "active"
+    # Test-only legacy terminal state with valid DB cancellation evidence:
+    # theatre scheduling must independently reject the terminal source.
+    # Resolve the staff identifier before any incomplete terminal-state write.
+    cancelling_staff_id = context["doctor"].id
+    order.status = "cancelled"
+    order.cancelled_at = datetime.now(timezone.utc)
+    order.cancelled_by_staff_id = cancelling_staff_id
+    order.cancellation_reason = "Synthetic legacy state in isolated test DB"
+    db.session.flush()
     with pytest.raises(ConflictError, match="Active consent-required"):
         _schedule(context, case, theatre)
 
@@ -345,4 +357,14 @@ def test_database_active_case_unique_index(context):
 
 
 def test_no_public_surgery_routes_in_s02(app):
-    assert not any("/surgery" in rule.rule for rule in app.url_map.iter_rules())
+    # S11 permits exactly two authorized GET-only documentation endpoints.
+    # No Surgery mutation or operative-execution routes may be registered.
+    surgery_routes = {
+        (rule.rule, frozenset(rule.methods - {"HEAD", "OPTIONS"}))
+        for rule in app.url_map.iter_rules()
+        if "/surgery" in rule.rule
+    }
+    assert surgery_routes == {
+        ("/api/v1/dashboard/surgery", frozenset({"GET"})),
+        ("/api/v1/dashboard/surgery/cases/<int:surgical_case_id>", frozenset({"GET"})),
+    }
