@@ -99,6 +99,8 @@ import 'package:clinic_system_pro/features/patients/presentation/patient_directo
 import 'package:clinic_system_pro/features/patients/presentation/patient_registration_screen.dart';
 import 'package:clinic_system_pro/features/surgery/data/surgery_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/surgery/presentation/surgery_read_screens.dart';
+import 'package:clinic_system_pro/features/surgery/data/surgery_mutation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/surgery/presentation/surgery_action_screen.dart';
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
@@ -339,6 +341,14 @@ GoRouter createAppRouter({
           )
       ? SurgeryReadRemoteDataSource(dashboardSource: dashboardDataSource)
       : null;
+  // Surgery C: one writer per router, preserved across route revisits.
+  // It never queues or retries Surgery B mutations.
+  final SurgeryMutationRemoteDataSource? surgeryWriter = surgerySource == null
+      ? null
+      : SurgeryMutationRemoteDataSource(
+          reader: surgerySource,
+          connectivity: ConnectivityPlusDeviceConnectivitySource(),
+        );
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
@@ -488,6 +498,38 @@ GoRouter createAppRouter({
                 );
               }
               return SurgeryWorklistScreen(source: source, guard: guard);
+            },
+          ),
+          GoRoute(
+            path: '/surgery/cases/:caseId/actions',
+            name: 'surgery-c-documentation-actions',
+            builder: (context, state) {
+              final source = surgerySource;
+              final writer = surgeryWriter;
+              final guard = sessionNavigationGuard;
+              final textId = state.pathParameters['caseId'];
+              final caseId = int.tryParse(textId ?? '');
+              if (source == null ||
+                  writer == null ||
+                  guard == null ||
+                  !source.canOpen ||
+                  !identical(
+                    source.dashboardSource.sessionNavigationGuard,
+                    guard,
+                  ) ||
+                  caseId == null ||
+                  caseId <= 0 ||
+                  textId != caseId.toString()) {
+                return const Scaffold(
+                  body: Center(child: Text('Surgery actions unavailable.')),
+                );
+              }
+              return SurgeryActionScreen(
+                caseId: caseId,
+                reader: source,
+                writer: writer,
+                guard: guard,
+              );
             },
           ),
           GoRoute(

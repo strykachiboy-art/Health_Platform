@@ -408,6 +408,13 @@ class _SurgeryCaseDetailScreenState extends State<SurgeryCaseDetailScreen> {
                   'billing clearance, or clinical release is available.',
                 ),
                 TextButton(
+                  key: const ValueKey('surgery-c-open-actions'),
+                  onPressed: () => context.push<void>(
+                    '/surgery/cases/${widget.caseId}/actions',
+                  ),
+                  child: const Text('Documentation actions'),
+                ),
+                TextButton(
                   onPressed: () => unawaited(_load()),
                   child: const Text('Refresh from server'),
                 ),
