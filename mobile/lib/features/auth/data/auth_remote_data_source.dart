@@ -68,6 +68,71 @@ class AuthRemoteDataSource {
     return AuthTokenResponse.fromEnvelope(response);
   }
 
+  static const String _passwordResetRequestPath =
+      'api/v1/auth/password-reset/request';
+  static const String _passwordResetConfirmPath =
+      'api/v1/auth/password-reset/confirm';
+
+  /// The backend returns the same public response for existing and unknown
+  /// accounts. Never disclose account eligibility to Flutter callers.
+  Future<void> requestPasswordReset({required String email}) async {
+    if (email.isEmpty ||
+        email.length > 254 ||
+        email.trim() != email ||
+        !email.contains('@')) {
+      throw ArgumentError('A valid email address is required.');
+    }
+    final response = await _apiClient.postJson(
+      _passwordResetRequestPath,
+      body: {'email': email},
+    );
+    if (response['success'] != true) {
+      throw const FormatException('Password reset request was not confirmed.');
+    }
+  }
+
+  /// Single attempt only. Backend atomically validates/consumes the token,
+  /// applies any recovery factor, and revokes existing account sessions.
+  /// Callers must not automatically retry ambiguous outcomes.
+  Future<void> confirmPasswordReset({
+    required String token,
+    required String newPassword,
+    required String confirmPassword,
+    String? recoveryFactor,
+  }) async {
+    if (token.length < 32 || token.length > 512 || token.trim() != token) {
+      throw ArgumentError('A valid reset credential is required.');
+    }
+    if (newPassword.length < 8 ||
+        newPassword.length > 128 ||
+        newPassword.trim().isEmpty ||
+        newPassword != confirmPassword) {
+      throw ArgumentError('Matching valid new passwords are required.');
+    }
+    if (recoveryFactor != null &&
+        (recoveryFactor.isEmpty ||
+            recoveryFactor.length > 512 ||
+            recoveryFactor.trim() != recoveryFactor)) {
+      throw ArgumentError('Invalid additional recovery verification.');
+    }
+    final response = await _apiClient.postJson(
+      _passwordResetConfirmPath,
+      body: <String, dynamic>{
+        'token': token,
+        'new_password': newPassword,
+        'confirm_password': confirmPassword,
+        'recovery_factor': ?recoveryFactor,
+      },
+    );
+    if (response['success'] != true ||
+        response['data'] is! Map<String, dynamic> ||
+        (response['data']
+                as Map<String, dynamic>)['reauthentication_required'] !=
+            true) {
+      throw const FormatException('Password reset confirmation was invalid.');
+    }
+  }
+
   /// Sends a Google ID token to the backend for verification.
   Future<AuthTokenResponse> loginWithGoogleIdToken({
     required String idToken,

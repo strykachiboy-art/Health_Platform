@@ -41,6 +41,9 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   bool _busy = false;
   String? _errorMessage;
   String? _statusMessage;
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _showEmailPassword = false;
 
   @override
   void initState() {
@@ -54,6 +57,8 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
     widget.sessionNavigationGuard?.removeListener(
       _handleNavigationStatusChanged,
     );
+    _emailController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
@@ -223,6 +228,72 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
     }
   }
 
+  /// Password sign-in reuses the same session coordinator, revision gate and
+  /// post-authentication navigation as Google sign-in. No parallel token store.
+  Future<void> _signInWithEmail() async {
+    if (_busy || _restoring) return;
+    final guard = widget.sessionNavigationGuard;
+    if (guard?.requiresLocalRecovery ?? false) return;
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (!email.contains('@') || email.length > 254 || password.isEmpty) {
+      setState(() {
+        _errorMessage = 'Enter your email and password.';
+      });
+      return;
+    }
+    final revision = guard?.revision;
+    setState(() {
+      _busy = true;
+      _errorMessage = null;
+      _statusMessage = null;
+    });
+    try {
+      final tokens = await widget.authRemoteDataSource.login(
+        email: email,
+        password: password,
+      );
+      final authenticated = await widget.sessionCoordinator
+          .persistAuthenticatedSession(tokens);
+      if (guard != null && guard.revision != revision) {
+        final currentState = guard.status == SessionNavigationStatus.signedOut
+            ? const AuthSessionState.signedOut()
+            : const AuthSessionState.recoveryRequired();
+        if (!mounted) return;
+        setState(() {
+          _sessionState = currentState;
+          _busy = false;
+          _errorMessage =
+              currentState.disposition ==
+                  AuthSessionDisposition.recoveryRequired
+              ? 'Session state changed during sign-in. Clear local session data before continuing.'
+              : null;
+          _statusMessage = null;
+        });
+        return;
+      }
+      guard?.markSessionAvailable();
+      widget.onSessionChanged?.call();
+      if (!mounted) return;
+      setState(() {
+        _sessionState = authenticated;
+        _busy = false;
+        _statusMessage = 'Signed in securely.';
+      });
+    } catch (_) {
+      final restored = await _restoreOrRequireRecovery();
+      _applyNavigationState(restored);
+      if (!mounted) return;
+      setState(() {
+        _sessionState = restored;
+        _busy = false;
+        _errorMessage = 'Email sign-in could not be completed. Check your credentials or connection.';
+      });
+    } finally {
+      if (mounted) _passwordController.clear();
+    }
+  }
+
   Future<void> _signOut() async {
     if (_busy || _restoring) return;
 
@@ -362,6 +433,58 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 20),
+        OutlinedButton(
+          key: const ValueKey('auth-r01-email-toggle'),
+          onPressed: _busy
+              ? null
+              : () {
+                  setState(() => _showEmailPassword = !_showEmailPassword);
+                },
+          child: Text(
+            _showEmailPassword
+                ? 'Hide email sign-in'
+                : 'Sign in with email and password',
+          ),
+        ),
+        if (_showEmailPassword) ...[
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('auth-r01-login-email'),
+            controller: _emailController,
+            enabled: !_busy,
+            keyboardType: TextInputType.emailAddress,
+            autofillHints: const [AutofillHints.email],
+            autocorrect: false,
+            decoration: const InputDecoration(labelText: 'Email address'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('auth-r01-login-password'),
+            controller: _passwordController,
+            enabled: !_busy,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: const InputDecoration(labelText: 'Password'),
+            onSubmitted: (_) => _signInWithEmail(),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            key: const ValueKey('auth-r01-email-sign-in'),
+            onPressed: _busy ? null : _signInWithEmail,
+            child: Text(_busy ? 'Signing in...' : 'Sign in with password'),
+          ),
+          TextButton(
+            key: const ValueKey('auth-r01-forgot-link'),
+            onPressed: _busy
+                ? null
+                : () => context.push<void>('/forgot-password'),
+            child: const Text('Forgot password?'),
+          ),
+          const SizedBox(height: 12),
+          const Text('Or continue with Google', textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+        ],
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(

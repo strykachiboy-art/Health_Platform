@@ -5,6 +5,7 @@ import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
+import 'package:clinic_system_pro/features/auth/presentation/password_recovery_screens.dart';
 import 'package:clinic_system_pro/features/auth/data/clinic_context_switch_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/authenticated_sign_out_coordinator.dart';
 import 'package:clinic_system_pro/features/profile/data/profile_remote_data_source.dart';
@@ -392,6 +393,34 @@ GoRouter createAppRouter({
         path: '/login',
         name: 'login',
         builder: (context, state) => loginScreen,
+      ),
+      GoRoute(
+        path: '/forgot-password',
+        name: 'forgot-password',
+        builder: (context, state) {
+          final source = authRemoteDataSource;
+          if (source == null) {
+            return const Scaffold(
+              body: Center(child: Text('Password recovery unavailable.')),
+            );
+          }
+          return ForgotPasswordScreen(authRemoteDataSource: source);
+        },
+      ),
+      GoRoute(
+        path: '/reset-password',
+        name: 'reset-password',
+        builder: (context, state) {
+          final source = authRemoteDataSource;
+          if (source == null) {
+            return const Scaffold(
+              body: Center(child: Text('Password recovery unavailable.')),
+            );
+          }
+          // No token-bearing route arguments. Use paste-only credential input
+          // until an approved verified HTTPS Android App Link is deployed.
+          return ResetPasswordScreen(authRemoteDataSource: source);
+        },
       ),
       GoRoute(
         path: '/home',
