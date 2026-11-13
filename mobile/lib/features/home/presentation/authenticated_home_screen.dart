@@ -336,6 +336,41 @@ List<HomeDestination> homeDestinationsFor({
     );
   }
 
+  // RAD7: shared hospital printing suggestions, NEVER backend print grants.
+  // RAD6_PRINTING_ENABLED remains false until a separate clinical approval.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{
+        'admin',
+        'accountant',
+        'receptionist',
+        'doctor',
+        'lab_technician',
+      }.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'printing',
+        'Document printing (pending approval)',
+        '/printing',
+        Icons.print_disabled_outlined,
+      ),
+    );
+  }
+  // RAD7 RIS only permits the original ordering doctor on the server.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      normalizedRole == 'doctor') {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'radiology',
+        'Radiology planning',
+        '/radiology',
+        Icons.medical_services_outlined,
+      ),
+    );
+  }
   // Surgery A: navigation only; CE1 checks selected clinic, role and assignment.
   if (clinicContextId != null &&
       clinicContextId > 0 &&

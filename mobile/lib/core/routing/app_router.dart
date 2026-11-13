@@ -101,6 +101,9 @@ import 'package:clinic_system_pro/features/surgery/data/surgery_read_remote_data
 import 'package:clinic_system_pro/features/surgery/presentation/surgery_read_screens.dart';
 import 'package:clinic_system_pro/features/surgery/data/surgery_mutation_remote_data_source.dart';
 import 'package:clinic_system_pro/features/surgery/presentation/surgery_action_screen.dart';
+import 'package:clinic_system_pro/features/radiology/data/rad7_ris_remote_data_source.dart';
+import 'package:clinic_system_pro/features/radiology/presentation/rad7_radiology_screen.dart';
+import 'package:clinic_system_pro/features/printing/presentation/rad7_printing_screen.dart';
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
@@ -349,6 +352,21 @@ GoRouter createAppRouter({
           reader: surgerySource,
           connectivity: ConnectivityPlusDeviceConnectivitySource(),
         );
+  // RAD7 retains its one-shot writer for the router lifetime, including
+  // route revisits. Neither RAD1 nor RAD6 has a replay-safe write contract.
+  final Rad7RisRemoteDataSource? rad7Source =
+      dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(
+            dashboardDataSource.sessionNavigationGuard,
+            sessionNavigationGuard,
+          )
+      ? Rad7RisRemoteDataSource(
+          dashboard: dashboardDataSource,
+          guard: sessionNavigationGuard,
+          connectivity: ConnectivityPlusDeviceConnectivitySource(),
+        )
+      : null;
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
@@ -386,6 +404,12 @@ GoRouter createAppRouter({
       // Surgery A direct links must be protected even with default test guard.
       if ((state.uri.path == '/surgery' ||
               state.uri.path.startsWith('/surgery/')) &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
+      // RAD7 direct links are protected under the default /patients-only
+      // navigation guard. The backend still rechecks role and clinic.
+      if ((state.uri.path == '/radiology' || state.uri.path == '/printing') &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -480,6 +504,39 @@ GoRouter createAppRouter({
           );
         },
         routes: [
+          GoRoute(
+            path: '/radiology',
+            name: 'rad7-radiology-ris',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final source = rad7Source;
+              if (guard == null ||
+                  source == null ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Radiology unavailable.')),
+                );
+              }
+              return Rad7RadiologyScreen(source: source, guard: guard);
+            },
+          ),
+          GoRoute(
+            path: '/printing',
+            name: 'rad7-shared-hospital-printing',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final source = dashboardDataSource;
+              if (guard == null ||
+                  source == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  !identical(source.sessionNavigationGuard, guard)) {
+                return const Scaffold(
+                  body: Center(child: Text('Printing unavailable.')),
+                );
+              }
+              return Rad7PrintingScreen(dashboard: source, guard: guard);
+            },
+          ),
           GoRoute(
             path: '/surgery',
             name: 'surgery-a-worklist',
