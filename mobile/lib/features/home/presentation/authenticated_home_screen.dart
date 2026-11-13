@@ -653,7 +653,7 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
                                 ),
                               ),
                             )
-                          : _overview(role, destinations),
+                          : _overview(role, destinations, wide: wide),
                     ),
                   ],
                 );
@@ -665,8 +665,17 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
     );
   }
 
-  Widget _overview(String role, List<HomeDestination> destinations) {
+  Widget _overview(
+    String role,
+    List<HomeDestination> destinations, {
+    required bool wide,
+  }) {
     final dashboard = widget.dashboardDataSource;
+    const authorityNotice = Text(
+      'Navigation suggestions are not access grants. The backend '
+      'verifies every request and can deny it.',
+      key: ValueKey('p22-home-server-authority'),
+    );
     return ListView(
       key: const ValueKey('p22-home-overview'),
       padding: const EdgeInsets.all(20),
@@ -706,6 +715,7 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 8),
+        if (wide) ...[authorityNotice, const SizedBox(height: 12)],
         for (final destination in destinations) ...[
           Card(
             child: ListTile(
@@ -717,12 +727,7 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
             ),
           ),
         ],
-        const SizedBox(height: 12),
-        const Text(
-          'Navigation suggestions are not access grants. The backend '
-          'verifies every request and can deny it.',
-          key: ValueKey('p22-home-server-authority'),
-        ),
+        if (!wide) ...[const SizedBox(height: 12), authorityNotice],
       ],
     );
   }
