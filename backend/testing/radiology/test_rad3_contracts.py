@@ -50,6 +50,29 @@ class Rad3Contracts(unittest.TestCase):
         with self.assertRaises(bridge.ContractViolation):
             bridge.worklist_payload(replace(fixture(),patient_id='MRN-112'))
 
+    def test_malformed_snapshot_fields_fail_closed_and_quarantine(self):
+        cases = (
+            ("accession_number", None),
+            ("accession_number", []),
+            ("accession_number", 123),
+            ("patient_id", None),
+            ("patient_id", []),
+            ("patient_id", True),
+            ("modality", None),
+            ("modality", []),
+            ("modality", {}),
+        )
+        for field, value in cases:
+            with self.subTest(field=field, malformed_type=type(value).__name__):
+                untrusted = replace(fixture(), **{field: value})
+                with self.assertRaises(bridge.ContractViolation):
+                    bridge.validate_intent(untrusted)
+                result = bridge.reconcile_candidate(untrusted, {})
+                self.assertEqual(result.match_status, "quarantined")
+                self.assertFalse(result.archive_verified)
+                self.assertFalse(result.report_signed)
+                self.assertFalse(result.chart_released)
+
     def test_issuer_scoped_synthetic_dicom_short_accession(self):
         s=fixture()
         x=bridge.dicom_accession(s)

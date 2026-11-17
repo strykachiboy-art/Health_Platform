@@ -58,9 +58,9 @@ def validate_intent(s: CanonicalRISIntent) -> None:
         _positive(getattr(s, name), name)
     if s.issuer_namespace != f"CSP-CLINIC-{s.clinic_id}" or not _ISSUER.fullmatch(s.issuer_namespace):
         raise ContractViolation("Issuer and clinic mismatch")
-    if not _RAD1_ACCESSION.fullmatch(s.accession_number):
+    if not isinstance(s.accession_number, str) or not _RAD1_ACCESSION.fullmatch(s.accession_number):
         raise ContractViolation("RAD1 issuer-scoped accession required")
-    if not s.patient_id.startswith("RAD2_SYNTH_"):
+    if not isinstance(s.patient_id, str) or not s.patient_id.startswith("RAD2_SYNTH_"):
         raise ContractViolation("RAD3 synthetic-only MWL gate: real patients prohibited")
     if s.order_status not in ("pending", "active", "in_progress", "on_hold"):
         raise ContractViolation("Canonical imaging order inactive")
@@ -68,7 +68,7 @@ def validate_intent(s: CanonicalRISIntent) -> None:
         raise ContractViolation("Current scheduled step required")
     if s.scheduled_step_sequence != s.exam_version - 1:
         raise ContractViolation("Stale RIS step/exam version")
-    if s.modality not in _MODALITIES:
+    if not isinstance(s.modality, str) or s.modality not in _MODALITIES:
         raise ContractViolation("Unsupported RIS modality")
     if not isinstance(s.station_aet, str) or not _AET.fullmatch(s.station_aet):
         raise ContractViolation("DICOM station AET invalid")
