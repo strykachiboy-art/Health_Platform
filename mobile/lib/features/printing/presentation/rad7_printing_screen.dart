@@ -5,6 +5,7 @@ import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/printing/data/rad7_print_contract.dart';
+import 'package:clinic_system_pro/features/printing/data/rad7_print_remote_data_source.dart';
 
 /// The shared hospital print workspace is visible, but RAD6 backend downloads
 /// are currently disabled. No URL launching, file writes, PDF caching, or
@@ -14,10 +15,12 @@ class Rad7PrintingScreen extends StatefulWidget {
     super.key,
     required this.dashboard,
     required this.guard,
+    this.transport,
   });
 
   final DashboardRemoteDataSource dashboard;
   final SessionNavigationGuard guard;
+  final Rad7PrintRemoteDataSource? transport;
 
   @override
   State<Rad7PrintingScreen> createState() => _Rad7PrintingScreenState();
@@ -114,6 +117,11 @@ class _Rad7PrintingScreenState extends State<Rad7PrintingScreen> {
             'Printing integration is protected until the backend release gate is approved.',
             key: ValueKey('rad7-print-release-locked'),
           ),
+          if (widget.transport != null)
+            const Text(
+              'Rust PDF transport integrated; clinical print release still disabled.',
+              key: ValueKey('rad7-rust-transport-connected'),
+            ),
           const SizedBox(height: 12),
           for (final kind in _kinds)
             ListTile(

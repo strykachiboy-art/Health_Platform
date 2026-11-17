@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -58,6 +59,130 @@ class ApiClient {
     if (!_communicationStatusChanges.isClosed) {
       _communicationStatusChanges.add(status);
     }
+  }
+
+  /// One-shot authenticated RAD6/Rust PDF download. No redirects or retries.
+  /// Only the caller's guarded session layer may invoke this API.
+  Future<Uint8List> getPdf(String path, {required String bearerToken}) async {
+    if (bearerToken.isEmpty || bearerToken.trim() != bearerToken) {
+      throw ArgumentError.value(null, 'bearerToken', 'Invalid bearer token.');
+    }
+    final uri = config.endpoint(path);
+    if (uri.hasQuery ||
+        uri.hasFragment ||
+        !RegExp(
+          r'^/api/v1/printing/(invoice|appointment|lab_order|radiology_draft)/[1-9][0-9]*\.pdf$',
+        ).hasMatch(uri.path)) {
+      throw ArgumentError.value(path, 'path', 'Unsupported PDF endpoint.');
+    }
+    const maxPdfBytes = 3 * 1024 * 1024;
+    final request = http.Request('GET', uri)
+      ..followRedirects = false
+      ..headers.addAll(<String, String>{
+        'Accept': 'application/pdf',
+        'Authorization': 'Bearer $bearerToken',
+      });
+    final requestId = ++_requestSequence;
+    late final http.StreamedResponse response;
+    try {
+      response = await _client.send(request).timeout(requestTimeout);
+    } on TimeoutException catch (error) {
+      _recordCommunicationStatus(
+        ApiCommunicationStatus.responseNotReceived,
+        requestId,
+      );
+      throw ApiException(
+        kind: ApiFailureKind.timeout,
+        message: 'The PDF request timed out.',
+        uri: uri,
+        cause: error,
+      );
+    } on http.ClientException catch (error) {
+      _recordCommunicationStatus(
+        ApiCommunicationStatus.responseNotReceived,
+        requestId,
+      );
+      throw ApiException(
+        kind: ApiFailureKind.connection,
+        message: 'Unable to connect to the backend.',
+        uri: uri,
+        cause: error,
+      );
+    }
+    _recordCommunicationStatus(
+      ApiCommunicationStatus.responseReceived,
+      requestId,
+    );
+    if (response.statusCode == 401) {
+      try {
+        onAuthenticationRejected?.call();
+      } on Object {
+        // Authentication cleanup must not hide the transport denial.
+      }
+    }
+    if (response.statusCode != 200) {
+      throw ApiException(
+        kind: ApiFailureKind.httpStatus,
+        message: 'The backend returned HTTP ${response.statusCode}.',
+        uri: uri,
+        statusCode: response.statusCode,
+      );
+    }
+    final headers = response.headers;
+    final contentType = (headers['content-type'] ?? '')
+        .split(';')
+        .first
+        .trim()
+        .toLowerCase();
+    final disposition = (headers['content-disposition'] ?? '')
+        .trim()
+        .toLowerCase();
+    final cache = (headers['cache-control'] ?? '')
+        .split(',')
+        .map((part) => part.trim().toLowerCase());
+    final sourceDigest = headers['x-source-sha256'] ?? '';
+    if (contentType != 'application/pdf' ||
+        !RegExp(r'^attachment(?:;|$)').hasMatch(disposition) ||
+        !cache.contains('no-store') ||
+        headers['x-content-type-options']?.toLowerCase() != 'nosniff' ||
+        headers['x-clinical-release'] != 'none' ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(sourceDigest) ||
+        (response.contentLength ?? 0) > maxPdfBytes) {
+      throw const FormatException('Untrusted clinical PDF response.');
+    }
+    final builder = BytesBuilder(copy: false);
+    var received = 0;
+    try {
+      await for (final chunk in response.stream.timeout(requestTimeout)) {
+        received += chunk.length;
+        if (received > maxPdfBytes) {
+          throw const FormatException('PDF exceeds size bound.');
+        }
+        builder.add(chunk);
+      }
+    } on TimeoutException catch (error) {
+      throw ApiException(
+        kind: ApiFailureKind.timeout,
+        message: 'The PDF download timed out.',
+        uri: uri,
+        cause: error,
+      );
+    }
+    final data = builder.takeBytes();
+    final trailer = ascii.decode(
+      data.sublist(data.length > 64 ? data.length - 64 : 0),
+      allowInvalid: true,
+    );
+    if (data.length < 12 ||
+        data[0] != 0x25 ||
+        data[1] != 0x50 ||
+        data[2] != 0x44 ||
+        data[3] != 0x46 ||
+        data[4] != 0x2d ||
+        !trailer.trimRight().endsWith('%%EOF')) {
+      throw const FormatException('Untrusted clinical PDF bytes.');
+    }
+    return data;
   }
 
   /// Performs a GET request and requires a JSON object response.

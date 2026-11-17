@@ -104,6 +104,7 @@ import 'package:clinic_system_pro/features/surgery/presentation/surgery_action_s
 import 'package:clinic_system_pro/features/radiology/data/rad7_ris_remote_data_source.dart';
 import 'package:clinic_system_pro/features/radiology/presentation/rad7_radiology_screen.dart';
 import 'package:clinic_system_pro/features/printing/presentation/rad7_printing_screen.dart';
+import 'package:clinic_system_pro/features/printing/data/rad7_print_remote_data_source.dart';
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
@@ -367,6 +368,20 @@ GoRouter createAppRouter({
           connectivity: ConnectivityPlusDeviceConnectivitySource(),
         )
       : null;
+  // RAD7/Rust: one guarded binary PDF transport, no automatic download.
+  final Rad7PrintRemoteDataSource? rad7PrintTransport =
+      dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(
+            dashboardDataSource.sessionNavigationGuard,
+            sessionNavigationGuard,
+          )
+      ? Rad7PrintRemoteDataSource(
+          dashboard: dashboardDataSource,
+          guard: sessionNavigationGuard,
+          connectivity: ConnectivityPlusDeviceConnectivitySource(),
+        )
+      : null;
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
@@ -534,7 +549,11 @@ GoRouter createAppRouter({
                   body: Center(child: Text('Printing unavailable.')),
                 );
               }
-              return Rad7PrintingScreen(dashboard: source, guard: guard);
+              return Rad7PrintingScreen(
+                dashboard: source,
+                guard: guard,
+                transport: rad7PrintTransport,
+              );
             },
           ),
           GoRoute(
