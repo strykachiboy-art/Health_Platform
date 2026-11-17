@@ -206,7 +206,7 @@ fn helvetica_metric_paths() -> Option<[PathBuf; 4]> {
     #[cfg(not(windows))]
     {
         // Explicitly installed by the Dockerfile, not a runtime download.
-        let dir = Path::new("/usr/share/fonts/truetype/liberation2");
+        let dir = Path::new("/usr/share/fonts/truetype/liberation");
         let paths = [
             "LiberationSans-Regular.ttf",
             "LiberationSans-Bold.ttf",
