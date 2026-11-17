@@ -11,3 +11,4 @@ app/tests/
 !.env.example
 .git/
 .gitignore
+rust/**/target/

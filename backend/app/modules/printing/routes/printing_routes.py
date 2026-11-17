@@ -19,7 +19,7 @@ from app.core.utils.decorators import get_current_clinic_id, role_required
 from app.extensions import db
 from app.modules.staff.models.staff_model import Staff
 from app.modules.printing.services.print_policy import PrintDenied, supported_kinds
-from app.modules.printing.services.print_renderer import render_pdf
+from app.modules.printing.services.rust_print_bridge import render_pdf
 from app.modules.printing.services.source_adapters import snapshot
 
 printing_bp = Blueprint('printing',__name__,url_prefix='/printing')
