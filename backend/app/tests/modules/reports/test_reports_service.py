@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 import io
@@ -674,6 +674,7 @@ class TestGatherers:
             ReportType.STAFF,
             ReportType.APPOINTMENTS,
             ReportType.BILLING,
+            ReportType.INVENTORY,
             ReportType.LAB,
             ReportType.PHARMACY,
             ReportType.WARD,
@@ -689,11 +690,15 @@ class TestGatherers:
             service._GATHERERS[report_type]
         )
 
-    def test_inventory_has_no_gatherer(self):
-        assert (
-            ReportType.INVENTORY
-            not in service._GATHERERS
-        )
+    def test_inventory_has_registered_gatherer(self):
+        assert service._GATHERERS[ReportType.INVENTORY] is service._gather_inventory
+        assert ReportType.INVENTORY not in service.UNSUPPORTED_TYPES
+        for supported in (
+            service.SUPPORTED_CSV_TYPES,
+            service.SUPPORTED_XLSX_TYPES,
+            service.SUPPORTED_PDF_TYPES,
+        ):
+            assert ReportType.INVENTORY in supported
 
 
 class TestCSVWriter:
@@ -2168,41 +2173,9 @@ class TestGenerateReportValidation:
                 report_format="invalid",
             )
 
-    def test_inventory_is_explicitly_unsupported(
-        self,
-        monkeypatch,
-    ):
-        requester = _requester(
-            user_id=1,
-            clinic_id=10,
-        ).staff
-
-        clinic = _clinic(
-            clinic_id=10,
-            is_active=True,
-        )
-
-        monkeypatch.setattr(
-            service,
-            "_get_requester",
-            lambda user_id: requester,
-        )
-
-        monkeypatch.setattr(
-            service,
-            "_get_clinic",
-            lambda clinic_id: clinic,
-        )
-
-        with pytest.raises(
-            ValidationError
-        ):
-            service.generate_report(
-                requester_user_id=1,
-                clinic_id=10,
-                report_type=ReportType.INVENTORY,
-                report_format=ReportFormat.CSV,
-            )
+    def test_inventory_is_supported_by_report_contract(self):
+        assert ReportType.INVENTORY in service._GATHERERS
+        assert ReportType.INVENTORY in service.SUPPORTED_CSV_TYPES
 
 
 class TestGenerateReportAuthorization:
@@ -2744,11 +2717,9 @@ class TestFormatCompatibility:
             in service.SUPPORTED_PDF_TYPES
         )
 
-    def test_inventory_is_marked_unsupported(self):
-        assert (
-            ReportType.INVENTORY
-            in service.UNSUPPORTED_TYPES
-        )
+    def test_inventory_is_marked_supported(self):
+        assert ReportType.INVENTORY not in service.UNSUPPORTED_TYPES
+        assert ReportType.INVENTORY in service._GATHERERS
 
 
 class TestValueHelpers:
@@ -3306,13 +3277,6 @@ def test_supported_type_sets_are_consistent():
     )
 
 
-def test_unsupported_inventory_is_explicit():
-    assert (
-        ReportType.INVENTORY
-        in service.UNSUPPORTED_TYPES
-    )
-
-    assert (
-        ReportType.INVENTORY
-        not in service._GATHERERS
-    )
+def test_supported_inventory_is_explicit():
+    assert ReportType.INVENTORY not in service.UNSUPPORTED_TYPES
+    assert ReportType.INVENTORY in service._GATHERERS
