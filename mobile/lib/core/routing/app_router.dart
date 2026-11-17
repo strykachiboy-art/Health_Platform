@@ -16,6 +16,8 @@ import 'package:clinic_system_pro/features/home/presentation/authenticated_featu
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
 import 'package:clinic_system_pro/features/backend_health/presentation/backend_health_screen.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_remote_data_source.dart';
+import 'package:clinic_system_pro/features/ai/data/clinical_ai_remote_data_source.dart';
+import 'package:clinic_system_pro/features/ai/presentation/clinical_ai_workspace_screen.dart';
 import 'package:clinic_system_pro/features/clinical_safety/presentation/clinical_alert_inbox_screen.dart';
 import 'package:clinic_system_pro/features/clinical_safety/presentation/clinical_alert_detail_screen.dart';
 import 'package:clinic_system_pro/features/emergency_access/data/emergency_access_context.dart';
@@ -130,6 +132,7 @@ GoRouter createAppRouter({
   PatientClinicalAlertRemoteDataSource? patientClinicalAlertDataSource,
   EmergencyAccessRemoteDataSource? emergencyAccessDataSource,
   ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource,
+  ClinicalAiRemoteDataSource? clinicalAiSource,
   EmergencyAccessContext? emergencyAccessContext,
   SessionNavigationGuard? sessionNavigationGuard,
   DeviceTokenProvider? deviceTokenProvider,
@@ -422,6 +425,12 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
+      // GAP-AI direct links never bypass session protection.
+      if (state.uri.path.startsWith('/patients/') &&
+          state.uri.path.endsWith('/ai') &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       // RAD7 direct links are protected under the default /patients-only
       // navigation guard. The backend still rechecks role and clinic.
       if ((state.uri.path == '/radiology' || state.uri.path == '/printing') &&
@@ -519,6 +528,35 @@ GoRouter createAppRouter({
           );
         },
         routes: [
+          GoRoute(
+            path: '/patients/:patientId/ai',
+            name: 'gap-ai-patient-advisory',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final source = clinicalAiSource;
+              final patientSource = patientDataSource;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (guard == null ||
+                  source == null ||
+                  patientSource == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0) {
+                return const Scaffold(
+                  body: Center(child: Text('AI assistance unavailable.')),
+                );
+              }
+              return ClinicalAiWorkspaceScreen(
+                key: ValueKey('gap-ai-patient-$patientId'),
+                patientId: patientId,
+                loadPatient: (id) => patientSource.fetchPatient(patientId: id),
+                source: source,
+                guard: guard,
+              );
+            },
+          ),
           GoRoute(
             path: '/radiology',
             name: 'rad7-radiology-ris',
@@ -1785,6 +1823,10 @@ GoRouter createAppRouter({
                         '/patients/$patientId/clinical-actions',
                       )
                     : null,
+                onAiRequested:
+                    clinicalAiSource == null || sessionNavigationGuard == null
+                    ? null
+                    : () => context.push<void>('/patients/$patientId/ai'),
                 emergencyAccessContext: emergencyAccessContext,
               );
             },

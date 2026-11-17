@@ -43,6 +43,7 @@ import 'package:clinic_system_pro/features/auth/data/google_sign_in_provider.dar
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_remote_data_source.dart';
+import 'package:clinic_system_pro/features/ai/data/clinical_ai_remote_data_source.dart';
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/status/data/scoped_sync_status_source.dart';
 import 'package:clinic_system_pro/features/status/presentation/authenticated_status_strip.dart';
@@ -189,6 +190,12 @@ Future<void> main() async {
     loadAccessToken: authenticatedSessionAccess.requireAccessToken,
     loadSessionStamp: clinicalSafetySessionScope.snapshot,
     deviceConnectivitySource: connectivitySource,
+  );
+  final clinicalAiSource = ClinicalAiRemoteDataSource(
+    apiClient: apiClient,
+    loadSession: sessionCoordinator.restoreSession,
+    guard: sessionNavigationGuard,
+    connectivity: connectivitySource,
   );
   final emergencyAccessContext = EmergencyAccessContext(
     sessionNavigationGuard: sessionNavigationGuard,
@@ -360,6 +367,7 @@ Future<void> main() async {
         patientClinicalAlertDataSource: patientClinicalAlertDataSource,
         emergencyAccessDataSource: emergencyAccessDataSource,
         clinicalSafetyDataSource: clinicalSafetyDataSource,
+        clinicalAiSource: clinicalAiSource,
         emergencyAccessContext: emergencyAccessContext,
         loginScreen: loginScreen,
         loadHomeSession: sessionCoordinator.restoreSession,
@@ -423,6 +431,7 @@ class ClinicSystemProApp extends StatefulWidget {
     this.patientClinicalAlertDataSource,
     this.emergencyAccessDataSource,
     this.clinicalSafetyDataSource,
+    this.clinicalAiSource,
     this.emergencyAccessContext,
     this.sessionNavigationGuard,
     this.deviceTokenProvider,
@@ -455,6 +464,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final PatientClinicalAlertRemoteDataSource? patientClinicalAlertDataSource;
   final EmergencyAccessRemoteDataSource? emergencyAccessDataSource;
   final ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource;
+  final ClinicalAiRemoteDataSource? clinicalAiSource;
   final EmergencyAccessContext? emergencyAccessContext;
   final SessionNavigationGuard? sessionNavigationGuard;
   final DeviceTokenProvider? deviceTokenProvider;
@@ -497,6 +507,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       patientClinicalAlertDataSource: widget.patientClinicalAlertDataSource,
       emergencyAccessDataSource: widget.emergencyAccessDataSource,
       clinicalSafetyDataSource: widget.clinicalSafetyDataSource,
+      clinicalAiSource: widget.clinicalAiSource,
       emergencyAccessContext: widget.emergencyAccessContext,
       sessionNavigationGuard: widget.sessionNavigationGuard,
       deviceTokenProvider: widget.deviceTokenProvider,

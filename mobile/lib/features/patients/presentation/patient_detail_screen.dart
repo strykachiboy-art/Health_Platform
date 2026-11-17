@@ -37,6 +37,7 @@ class PatientDetailScreen extends StatefulWidget {
     this.onLabOrdersRequested,
     this.onPharmacyStockRequested,
     this.onClinicalActionsRequested,
+    this.onAiRequested,
     this.consultationDataSource,
     this.prescriptionDataSource,
     this.clinicalAlertDataSource,
@@ -54,6 +55,7 @@ class PatientDetailScreen extends StatefulWidget {
   final VoidCallback? onLabOrdersRequested;
   final VoidCallback? onPharmacyStockRequested;
   final VoidCallback? onClinicalActionsRequested;
+  final VoidCallback? onAiRequested;
   final PatientConsultationRemoteDataSource? consultationDataSource;
   final PatientPrescriptionRemoteDataSource? prescriptionDataSource;
   final PatientClinicalAlertRemoteDataSource? clinicalAlertDataSource;
@@ -518,6 +520,16 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
               'Review server records before any clinical change.',
             ),
             onTap: widget.onClinicalActionsRequested,
+          ),
+        if (!_patientSnapshotStale && widget.onAiRequested != null)
+          ListTile(
+            key: ValueKey('gap-ai-patient-entry-${patient.id}'),
+            leading: const Icon(Icons.psychology_outlined),
+            title: const Text('Clinical AI assistance (advisory only)'),
+            subtitle: const Text(
+              'Review inputs and AI-credit cost before requesting assistance.',
+            ),
+            onTap: widget.onAiRequested,
           ),
         if (widget.consultationDataSource != null &&
             !_patientSnapshotStale) ...[
