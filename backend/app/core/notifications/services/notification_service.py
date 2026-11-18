@@ -39,6 +39,13 @@ from app.core.notifications.models.notification_models import (
 from app.modules.clinic.services.clinic_service import (
     get_clinic,
 )
+from app.modules.clinic.models.clinic_model import Clinic
+from app.core.enums.clinic_enums import ClinicStatus
+from app.core.enums.staff_enums import StaffStatus
+from app.modules.clinic.services.tenant_boundary import (
+    TenantAccessDenied,
+    require_tenant_clinic_access,
+)
 
 
 # ============================================================================
@@ -355,7 +362,47 @@ def _notification_idempotency_key(notification):
     )
 
 
+def _gapc_external_delivery_authorized(notification):
+    """Revalidate at worker egress; no recipient inferred from a clinic ID.
+
+    Patient-first onboarding is preserved: a real patient profile can receive
+    notifications in its own clinic without becoming a clinical staff member.
+    All non-patient recipients require an explicit live clinic-role grant.
+    """
+    if notification is None or type(notification.clinic_id) is not int:
+        return False
+    if type(notification.user_id) is not int:
+        return False
+    clinic = db.session.get(Clinic, notification.clinic_id)
+    if (clinic is None or clinic.status is not ClinicStatus.ACTIVE
+            or clinic.organization_id is None):
+        return False
+    user = db.session.get(User, notification.user_id)
+    if (user is None or not user.is_active
+            or user.clinic_id != clinic.id):
+        return False
+    if user.role is Role.PATIENT:
+        patient = user.patient
+        return patient is not None and patient.clinic_id == clinic.id
+    staff = user.staff
+    if (staff is None or staff.user_id != user.id
+            or staff.clinic_id != clinic.id
+            or staff.status is not StaffStatus.ACTIVE):
+        return False
+    try:
+        require_tenant_clinic_access(
+            user_id=user.id,
+            organization_id=clinic.organization_id,
+            clinic_id=clinic.id,
+        )
+    except TenantAccessDenied:
+        return False
+    return True
+
+
 def _deliver_with_provider(notification):
+    if not _gapc_external_delivery_authorized(notification):
+        raise NotFoundError("Notification delivery target unavailable")
     channel = notification.channel
 
     if channel == NotificationChannel.IN_APP:
@@ -739,6 +786,11 @@ def deliver_notification(
     # In-app notifications are persisted directly and do not
     # require an external provider.
     if notification.channel == NotificationChannel.IN_APP:
+        return False
+
+    # A queued notification may outlive its original authorization. Denial
+    # happens before SENT/FAILED transitions or any external-provider call.
+    if not _gapc_external_delivery_authorized(notification):
         return False
 
     try:

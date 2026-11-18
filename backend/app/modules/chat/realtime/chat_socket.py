@@ -36,19 +36,19 @@ def conversation_room(
     )
 
 
-def user_room(
-    clinic_id: int,
-    user_id: int,
-) -> str:
-    return (
-        f"{CHAT_USER_ROOM_PREFIX}"
-        f"{clinic_id}:{user_id}"
-    )
-
+def user_room(clinic_id: int, user_id: int, token_version: int | None = None) -> str:
+    # Legacy room format is retained only for compatibility with callers
+    # not used for live authenticated delivery. Live rooms include the
+    # server's current token version so a revoked session stops receiving.
+    if token_version is None:
+        return f"{CHAT_USER_ROOM_PREFIX}{clinic_id}:{user_id}"
+    if type(token_version) is not int or token_version < 0:
+        raise ValueError("Invalid chat session version")
+    return f"{CHAT_USER_ROOM_PREFIX}{clinic_id}:{user_id}:v{token_version}"
 
 def _authenticate_socket(
     auth: object,
-) -> tuple[int, int]:
+) -> tuple[int, int, dict]:
     if not isinstance(auth, dict):
         raise ValueError(
             "Authentication data is required"
@@ -108,28 +108,28 @@ def _authenticate_socket(
             clinic_id,
         )
 
-    return user.id, clinic_id
+    return user.id, clinic_id, claims
 
 
 def _get_socket_context() -> tuple[int, int]:
-    user_id = session.get(
-        "chat_user_id"
-    )
-
-    clinic_id = session.get(
-        "chat_clinic_id"
-    )
-
-    if user_id is None or clinic_id is None:
-        raise ValueError(
-            "Socket authentication context is missing"
-        )
-
-    return (
-        int(user_id),
-        int(clinic_id),
-    )
-
+    from datetime import datetime, timezone
+    from app.modules.clinic.services.session_authority import context_from_claims
+    user_id = session.get("chat_user_id")
+    clinic_id = session.get("chat_clinic_id")
+    claims = session.get("chat_auth_claims")
+    if type(user_id) is not int or type(clinic_id) is not int or not isinstance(claims, dict):
+        raise ValueError("Socket authentication context is missing")
+    if claims.get("sub") != str(user_id):
+        raise ValueError("Socket identity mismatch")
+    exp = claims.get("exp")
+    if type(exp) not in (int, float) or exp <= datetime.now(timezone.utc).timestamp():
+        raise ValueError("Socket session has expired")
+    if is_token_revoked(claims):
+        raise ValueError("Socket session is revoked")
+    _, live_clinic_id = context_from_claims(user_id, claims)
+    if live_clinic_id != clinic_id:
+        raise ValueError("Socket clinic membership has changed")
+    return user_id, clinic_id
 
 def _get_conversation_id(
     data: object,
@@ -175,17 +175,19 @@ def handle_connect(auth=None):
     session["backend_drain_socket_tracked"] = True
 
     try:
-        user_id, clinic_id = _authenticate_socket(
+        user_id, clinic_id, claims = _authenticate_socket(
             auth
         )
 
         session["chat_user_id"] = user_id
         session["chat_clinic_id"] = clinic_id
+        session["chat_auth_claims"] = claims
 
         join_room(
             user_room(
                 clinic_id,
                 user_id,
+                claims.get("token_version"),
             )
         )
 
@@ -220,6 +222,7 @@ def handle_disconnect():
         "chat_clinic_id",
         None,
     )
+    session.pop("chat_auth_claims", None)
 
     if session.pop("backend_drain_socket_tracked", False):
         release_socket_connection(request.sid)
