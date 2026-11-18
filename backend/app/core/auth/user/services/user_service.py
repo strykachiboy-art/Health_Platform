@@ -121,60 +121,42 @@ def register_user(
 def issue_auth_tokens(
     user: User,
     clinic_context_id: int | None = None,
+    *,
+    tenant_id=None,
+    auto_assign_clinic: bool = True,
 ) -> dict:
-    if not isinstance(user, User):
-        raise ValidationError(
-            "Invalid user"
-        )
+    """Issue tokens only with server-validated tenant and clinic memberships.
 
-    if not user.is_active:
-        raise ValidationError(
-            "This account has been deactivated"
-        )
-
-    if clinic_context_id is not None:
-        if user.role is not Role.SUPER_ADMIN:
-            raise ValidationError(
-                "Only a super administrator can use a clinic context"
-            )
-
-        from app.core.auth.user.services.clinic_context_service import (
-            _get_active_clinic,
-        )
-
-        clinic_context_id = _get_active_clinic(
-            clinic_context_id
-        ).id
-
+    Unscoped login remains valid for newly onboarded patients; it grants no
+    organization or clinic authority. Organization admins receive no clinical
+    permission simply because of their organization role.
+    """
+    from app.modules.clinic.services.session_authority import (
+        bound_context_for_issuance,
+    )
+    organization_id, selected_clinic_id = bound_context_for_issuance(
+        user, tenant_id=tenant_id, clinic_id=clinic_context_id,
+        auto_assign_clinic=auto_assign_clinic,
+    )
     access_claims = {
-        "role": user.role.value,
-        "token_version": user.token_version,
+        'role': user.role.value,
+        'token_version': user.token_version,
     }
-
-    refresh_claims = {
-        "token_version": user.token_version,
-    }
-
-    if clinic_context_id is not None:
-        access_claims["clinic_context_id"] = clinic_context_id
-        refresh_claims["clinic_context_id"] = clinic_context_id
-
+    refresh_claims = {'token_version': user.token_version}
+    if organization_id is not None:
+        access_claims['tenant_id'] = organization_id
+        refresh_claims['tenant_id'] = organization_id
+    if selected_clinic_id is not None:
+        access_claims['clinic_context_id'] = selected_clinic_id
+        refresh_claims['clinic_context_id'] = selected_clinic_id
     access_token = create_access_token(
-        identity=str(user.id),
-        additional_claims=access_claims,
-    )
-
+        identity=str(user.id), additional_claims=access_claims)
     refresh_token = create_refresh_token(
-        identity=str(user.id),
-        additional_claims=refresh_claims,
-    )
-
+        identity=str(user.id), additional_claims=refresh_claims)
     return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "user_id": user.id,
-        "role": user.role.value,
-        "clinic_context_id": clinic_context_id,
+        'access_token': access_token, 'refresh_token': refresh_token,
+        'user_id': user.id, 'role': user.role.value,
+        'tenant_id': organization_id, 'clinic_context_id': selected_clinic_id,
     }
 
 

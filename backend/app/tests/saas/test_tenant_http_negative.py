@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from app.core.enums.role_enums import Role
-from app.modules.clinic.models.organization_model import HospitalOrganization, TenantMembership
+from app.modules.clinic.models.organization_model import HospitalOrganization, TenantMembership, ClinicMembership
 
 
 class _IsolatedRevocationStore:
@@ -54,20 +54,41 @@ def tenant_world(db, make_clinic, make_user, auth_headers_for):
     admin_b = make_user(clinic=clinic_b, role=Role.ADMIN)
     doctor_a = make_user(clinic=clinic_a, role=Role.DOCTOR)
     db.session.add_all([
-        TenantMembership(id=10001, organization_id=alpha.id, user_id=admin_a.id, is_active=True),
-        TenantMembership(id=10002, organization_id=beta.id, user_id=admin_b.id, is_active=True),
-        TenantMembership(id=10003, organization_id=alpha.id, user_id=doctor_a.id, is_active=True),
+        TenantMembership(id=10001, organization_id=alpha.id, user_id=admin_a.id,
+                         role='organization_admin', status='active', is_active=True),
+        TenantMembership(id=10002, organization_id=beta.id, user_id=admin_b.id,
+                         role='member', status='active', is_active=True),
+        TenantMembership(id=10003, organization_id=alpha.id, user_id=doctor_a.id,
+                         role='member', status='active', is_active=True),
     ])
     db.session.flush()
+    db.session.add_all([
+        ClinicMembership(user_id=admin_a.id, clinic_id=clinic_a.id,
+            organization_id=alpha.id, role='admin', is_active=True),
+        ClinicMembership(user_id=admin_a.id, clinic_id=branch_a.id,
+            organization_id=alpha.id, role='admin', is_active=True),
+        ClinicMembership(user_id=admin_b.id, clinic_id=clinic_b.id,
+            organization_id=beta.id, role='admin', is_active=True),
+        ClinicMembership(user_id=doctor_a.id, clinic_id=clinic_a.id,
+            organization_id=alpha.id, role='doctor', is_active=True),
+    ])
+    db.session.flush()
+    from app.core.auth.user.services.user_service import issue_auth_tokens
+    from flask_jwt_extended import create_access_token
+    def header(user):
+        return {'Authorization': 'Bearer ' + issue_auth_tokens(user)['access_token']}
+    spoofed = create_access_token(identity=str(admin_a.id), additional_claims={
+        'role': 'admin', 'token_version': admin_a.token_version,
+        'tenant_id': str(alpha.id), 'clinic_context_id': clinic_b.id})
 
     return {
         'alpha': alpha, 'beta': beta,
         'clinic_a': clinic_a, 'branch_a': branch_a, 'clinic_b': clinic_b,
         'admin_a': admin_a, 'admin_b': admin_b, 'doctor_a': doctor_a,
-        'header_a': auth_headers_for(admin_a),
-        'header_b': auth_headers_for(admin_b),
-        'header_doctor': auth_headers_for(doctor_a),
-        'spoofed_header_a': auth_headers_for(admin_a, clinic_context_id=clinic_b.id),
+        'header_a': header(admin_a),
+        'header_b': header(admin_b),
+        'header_doctor': header(doctor_a),
+        'spoofed_header_a': {'Authorization': 'Bearer ' + spoofed},
     }
 
 
@@ -96,10 +117,10 @@ def test_authenticated_admin_listing_stays_in_member_organization(client, tenant
 def test_forged_clinic_context_cannot_read_foreign_org(client, tenant_world):
     w = tenant_world
     response = client.get(_url(w['clinic_b'].id), headers=w['spoofed_header_a'])
-    assert response.status_code == 403, response.get_data(as_text=True)[:400]
+    # GAP-B strengthens this denial at the JWT gate before reaching the route.
+    assert response.status_code == 401, response.get_data(as_text=True)[:400]
     response = client.get('/api/v1/clinics', headers=w['spoofed_header_a'])
-    assert response.status_code == 200
-    assert w['clinic_b'].id not in {item['id'] for item in response.get_json()['data']}
+    assert response.status_code == 401
 
 
 @pytest.mark.parametrize('method,suffix,payload', [
@@ -140,10 +161,10 @@ def test_membership_revocation_fails_closed(client, tenant_world, db):
     membership.is_active = False
     db.session.flush()
     own = client.get(_url(w['clinic_a'].id), headers=w['header_a'])
-    assert own.status_code == 403, own.get_data(as_text=True)[:400]
+    # Revoked organization membership invalidates the existing JWT itself.
+    assert own.status_code == 401, own.get_data(as_text=True)[:400]
     listed = client.get('/api/v1/clinics', headers=w['header_a'])
-    assert listed.status_code == 200
-    assert listed.get_json()['data'] == []
+    assert listed.status_code == 401
 
 
 def test_non_admin_cannot_read_foreign_clinic_or_mutate(client, tenant_world):

@@ -204,4 +204,9 @@ def is_token_revoked(
     if user.token_version != token_version:
         return True
 
+    # GAP-B: revalidate current organization/clinic grants on every JWT use.
+    from app.modules.clinic.services.session_authority import validate_bound_claims
+    if not validate_bound_claims(jwt_payload, user):
+        return True
+
     return False

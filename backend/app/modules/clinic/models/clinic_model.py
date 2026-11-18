@@ -33,6 +33,9 @@ class Clinic(db.Model):
             "OR opening_time < closing_time",
             name="ck_clinics_valid_opening_hours",
         ),
+        # GAP-A created this constraint in the migration; make the ORM metadata
+        # consistent so GAP-B composite clinic-membership FKs can be tested.
+        db.UniqueConstraint('id', 'organization_id', name='uq_clinics_id_organization_id'),
     )
 
     id = db.Column(
