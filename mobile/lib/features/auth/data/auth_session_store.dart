@@ -37,6 +37,7 @@ class AuthSessionStore {
     'user_id',
     'role',
     'clinic_context_id',
+    'tenant_id',
   };
 
   /// Validates the complete session before writing a single secure-storage key.
@@ -52,6 +53,7 @@ class AuthSessionStore {
       'user_id': session.userId,
       'role': session.role,
       'clinic_context_id': session.clinicContextId,
+      'tenant_id': session.tenantId,
     };
 
     // Validate caller-constructed instances too; constructors alone do not
@@ -114,7 +116,13 @@ class AuthSessionStore {
 
   StoredAuthSession _parseRecord(Map<String, dynamic> record) {
     final keys = record.keys.toSet();
-    if (keys.length != _recordKeys.length || !keys.containsAll(_recordKeys)) {
+    // Pre-GAP-B schema-v2 records lack tenant_id. Accept those as
+    // unscoped; never fabricate an organization grant from clinic_id.
+    final legacyKeys = _recordKeys.difference(const {'tenant_id'});
+    if (!keys.containsAll(legacyKeys) ||
+        (keys.length != legacyKeys.length &&
+            keys.length != _recordKeys.length) ||
+        (keys.length == _recordKeys.length && !keys.containsAll(_recordKeys))) {
       throw const FormatException(
         'Stored authentication session fields are incomplete or unexpected.',
       );
@@ -140,6 +148,7 @@ class AuthSessionStore {
       'user_id': record['user_id'],
       'role': record['role'],
       'clinic_context_id': record['clinic_context_id'],
+      'tenant_id': record['tenant_id'],
     });
 
     if (!_isCompactToken(session.accessToken) ||

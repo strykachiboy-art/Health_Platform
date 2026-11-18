@@ -52,6 +52,7 @@ class DashboardRemoteDataSource {
 
   bool _sameSession(AuthTokenResponse a, AuthTokenResponse b) {
     return a.userId == b.userId &&
+        a.tenantId == b.tenantId &&
         a.role.toLowerCase() == b.role.toLowerCase() &&
         a.clinicContextId == b.clinicContextId &&
         a.accessToken == b.accessToken;

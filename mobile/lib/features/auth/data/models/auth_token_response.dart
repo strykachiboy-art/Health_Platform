@@ -9,6 +9,7 @@ class AuthTokenResponse {
     required this.userId,
     required this.role,
     required this.clinicContextId,
+    this.tenantId,
   });
 
   final String accessToken;
@@ -16,6 +17,9 @@ class AuthTokenResponse {
   final int userId;
   final String role;
   final int? clinicContextId;
+
+  /// Server-approved hospital/organization UUID; never a local authorization grant.
+  final String? tenantId;
 
   /// Parses the complete `{success, data}` backend response envelope.
   factory AuthTokenResponse.fromEnvelope(Map<String, dynamic> envelope) {
@@ -56,12 +60,23 @@ class AuthTokenResponse {
       );
     }
 
+    final Object? rawTenantId = json['tenant_id'];
+    if (rawTenantId != null &&
+        (rawTenantId is! String ||
+            !RegExp(r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$')
+                .hasMatch(rawTenantId))) {
+      throw const FormatException(
+        'Authentication response tenant_id must be a UUID or null.',
+      );
+    }
+
     return AuthTokenResponse(
       accessToken: accessToken,
       refreshToken: refreshToken,
       userId: userIdValue,
       role: role,
       clinicContextId: clinicContextValue as int?,
+      tenantId: rawTenantId as String?,
     );
   }
 

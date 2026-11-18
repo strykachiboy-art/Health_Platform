@@ -263,6 +263,22 @@ class _AccountClinicScreenState extends State<AccountClinicScreen> {
                   icon: const Icon(Icons.security_outlined),
                   label: const Text('Security and sessions'),
                 ),
+                if (session.role.trim().toUpperCase() != 'PATIENT') ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    key: const ValueKey('gapb-open-tenant-context'),
+                    onPressed:
+                        _changing ||
+                            widget
+                                    .sessionNavigationGuard
+                                    ?.canAccessProtectedRoutes ==
+                                false
+                        ? null
+                        : () => context.push<void>('/account/tenant'),
+                    icon: const Icon(Icons.business_outlined),
+                    label: const Text('Hospital and clinic access'),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
                   key: const ValueKey('p22-s05-account-sign-out'),

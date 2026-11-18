@@ -204,7 +204,8 @@ class AuthSessionCoordinator {
     }
 
     if (replacement.userId != stored.session.userId ||
-        replacement.clinicContextId != stored.session.clinicContextId) {
+        replacement.clinicContextId != stored.session.clinicContextId ||
+        replacement.tenantId != stored.session.tenantId) {
       final contextChange = StateError(
         'Refreshed session identity or clinic context changed.',
       );
@@ -308,6 +309,112 @@ class AuthSessionCoordinator {
       return const AuthSessionState.recoveryRequired();
     }
 
+    try {
+      await _sessionStore.save(replacement, refreshPending: false);
+    } on Object catch (error) {
+      return AuthSessionState.recoveryRequired(cause: error);
+    }
+    if (_logoutRequested || generation != _sessionTransitionGeneration) {
+      return const AuthSessionState.recoveryRequired();
+    }
+    return AuthSessionState.ready(replacement);
+  }
+
+  /// GAP-B membership-authorized hospital/clinic context transitions.
+  /// Reuses the same single-flight transition as legacy super-admin switching.
+  Future<AuthSessionState> changeTenantContext({
+    String? tenantId,
+    int? clinicId,
+    bool clear = false,
+  }) {
+    final selectedActions =
+        (tenantId != null ? 1 : 0) +
+        (clinicId != null ? 1 : 0) +
+        (clear ? 1 : 0);
+    if (selectedActions != 1 || (clinicId != null && clinicId <= 0)) {
+      throw ArgumentError('Exactly one valid context action is required.');
+    }
+    if (_logoutRequested ||
+        _logoutInFlight != null ||
+        _refreshInFlight != null ||
+        _clinicContextInFlight != null ||
+        _sessionEstablishmentInFlight) {
+      return Future.value(const AuthSessionState.recoveryRequired());
+    }
+    final generation = ++_sessionTransitionGeneration;
+    late final Future<AuthSessionState> operation;
+    operation =
+        _changeStoredTenantContext(
+          tenantId: tenantId,
+          clinicId: clinicId,
+          clear: clear,
+          generation: generation,
+        ).whenComplete(() {
+          if (identical(_clinicContextInFlight, operation)) {
+            _clinicContextInFlight = null;
+          }
+        });
+    _clinicContextInFlight = operation;
+    return operation;
+  }
+
+  Future<AuthSessionState> _changeStoredTenantContext({
+    required String? tenantId,
+    required int? clinicId,
+    required bool clear,
+    required int generation,
+  }) async {
+    final StoredAuthSession? stored;
+    try {
+      stored = await _sessionStore.readRecord();
+    } on Object catch (error) {
+      return AuthSessionState.recoveryRequired(cause: error);
+    }
+    final previous = stored?.session;
+    if (stored == null ||
+        stored.refreshPending ||
+        previous == null ||
+        (clinicId != null && previous.tenantId == null) ||
+        _logoutRequested ||
+        generation != _sessionTransitionGeneration) {
+      return const AuthSessionState.recoveryRequired();
+    }
+    // Mark old credentials unusable before any potentially uncertain POST.
+    try {
+      await _sessionStore.save(previous, refreshPending: true);
+    } on Object catch (error) {
+      return AuthSessionState.recoveryRequired(cause: error);
+    }
+    final AuthTokenResponse replacement;
+    try {
+      replacement = clear
+          ? await _remoteDataSource.clearTenantContext(
+              accessToken: previous.accessToken,
+            )
+          : tenantId != null
+          ? await _remoteDataSource.selectTenantContext(
+              accessToken: previous.accessToken,
+              organizationId: tenantId,
+            )
+          : await _remoteDataSource.selectMemberClinicContext(
+              accessToken: previous.accessToken,
+              clinicId: clinicId!,
+            );
+    } on Object catch (error) {
+      return AuthSessionState.recoveryRequired(cause: error);
+    }
+    final requiredTenant = clear ? null : (tenantId ?? previous.tenantId);
+    final requiredClinic = clinicId;
+    if (_logoutRequested ||
+        generation != _sessionTransitionGeneration ||
+        replacement.userId != previous.userId ||
+        replacement.role != previous.role ||
+        replacement.tenantId != requiredTenant ||
+        replacement.clinicContextId != requiredClinic ||
+        replacement.accessToken == previous.accessToken ||
+        replacement.refreshToken == previous.refreshToken) {
+      return const AuthSessionState.recoveryRequired();
+    }
     try {
       await _sessionStore.save(replacement, refreshPending: false);
     } on Object catch (error) {

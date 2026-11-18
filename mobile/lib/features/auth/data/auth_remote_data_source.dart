@@ -43,6 +43,45 @@ class ClinicContextDetails {
 /// Remote boundary for backend authentication operations.
 ///
 /// Token persistence and session lifecycle belong to other layers.
+/// Trusted only after the backend has verified the bearer and its grants.
+class TenantContextDetails {
+  const TenantContextDetails({required this.tenantId, required this.clinicId});
+
+  final String? tenantId;
+  final int? clinicId;
+
+  factory TenantContextDetails.fromEnvelope(Map<String, dynamic> response) {
+    if (response['success'] != true ||
+        response['data'] is! Map<String, dynamic>) {
+      throw const FormatException('Invalid tenant context response.');
+    }
+    final data = response['data'] as Map<String, dynamic>;
+    if (data.keys.toSet().difference(const {
+          'tenant_id',
+          'clinic_id',
+        }).isNotEmpty ||
+        !data.containsKey('tenant_id') ||
+        !data.containsKey('clinic_id')) {
+      throw const FormatException('Unexpected tenant context fields.');
+    }
+    final tenant = data['tenant_id'];
+    final clinic = data['clinic_id'];
+    if ((tenant != null &&
+            (tenant is! String ||
+                !RegExp(
+                  r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$',
+                ).hasMatch(tenant))) ||
+        (clinic != null && (clinic is! int || clinic <= 0)) ||
+        (clinic != null && tenant == null)) {
+      throw const FormatException('Untrusted tenant/clinic identifiers.');
+    }
+    return TenantContextDetails(
+      tenantId: tenant as String?,
+      clinicId: clinic as int?,
+    );
+  }
+}
+
 class AuthRemoteDataSource {
   const AuthRemoteDataSource({required ApiClient apiClient})
     : this._(apiClient);
@@ -144,6 +183,61 @@ class AuthRemoteDataSource {
       body: {'id_token': idToken},
     );
 
+    return AuthTokenResponse.fromEnvelope(response);
+  }
+
+  static const String _tenantContextPath = 'api/v1/auth/tenant-context';
+
+  Future<TenantContextDetails> getTenantContext({
+    required String accessToken,
+  }) async {
+    _requireToken(accessToken, 'accessToken');
+    final response = await _apiClient.getJson(
+      _tenantContextPath,
+      bearerToken: accessToken,
+    );
+    return TenantContextDetails.fromEnvelope(response);
+  }
+
+  Future<AuthTokenResponse> selectTenantContext({
+    required String accessToken,
+    required String organizationId,
+  }) async {
+    _requireToken(accessToken, 'accessToken');
+    if (!RegExp(r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$')
+        .hasMatch(organizationId)) {
+      throw ArgumentError('organizationId must be a canonical UUID.');
+    }
+    final response = await _apiClient.postJson(
+      _tenantContextPath,
+      body: {'organization_id': organizationId},
+      bearerToken: accessToken,
+    );
+    return AuthTokenResponse.fromEnvelope(response);
+  }
+
+  Future<AuthTokenResponse> selectMemberClinicContext({
+    required String accessToken,
+    required int clinicId,
+  }) async {
+    _requireToken(accessToken, 'accessToken');
+    if (clinicId <= 0) throw ArgumentError('clinicId must be positive.');
+    final response = await _apiClient.postJson(
+      '$_tenantContextPath/clinic',
+      body: {'clinic_id': clinicId},
+      bearerToken: accessToken,
+    );
+    return AuthTokenResponse.fromEnvelope(response);
+  }
+
+  Future<AuthTokenResponse> clearTenantContext({
+    required String accessToken,
+  }) async {
+    _requireToken(accessToken, 'accessToken');
+    final response = await _apiClient.deleteJson(
+      _tenantContextPath,
+      bearerToken: accessToken,
+    );
     return AuthTokenResponse.fromEnvelope(response);
   }
 

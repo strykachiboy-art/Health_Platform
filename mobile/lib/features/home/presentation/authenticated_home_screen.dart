@@ -336,6 +336,27 @@ List<HomeDestination> homeDestinationsFor({
     );
   }
 
+  // GAP-AI: navigation only. The online-only source and backend recheck
+  // current tenant, selected clinic and clinical role before the POST.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{
+        'admin',
+        'doctor',
+        'nurse',
+        'pharmacist',
+        'lab_technician',
+      }.contains(normalizedRole)) {
+    destinations.insert(
+      0,
+      const HomeDestination(
+        'clinical_ai',
+        'Clinical AI assistance',
+        '/clinical-ai',
+        Icons.psychology_alt_outlined,
+      ),
+    );
+  }
   // RAD7: shared hospital printing suggestions, NEVER backend print grants.
   // RAD6_PRINTING_ENABLED remains false until a separate clinical approval.
   if (clinicContextId != null &&

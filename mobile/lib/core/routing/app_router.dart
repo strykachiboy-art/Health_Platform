@@ -104,6 +104,9 @@ import 'package:clinic_system_pro/features/surgery/presentation/surgery_action_s
 import 'package:clinic_system_pro/features/radiology/data/rad7_ris_remote_data_source.dart';
 import 'package:clinic_system_pro/features/radiology/presentation/rad7_radiology_screen.dart';
 import 'package:clinic_system_pro/features/printing/presentation/rad7_printing_screen.dart';
+import 'package:clinic_system_pro/features/auth/presentation/tenant_context_screen.dart';
+import 'package:clinic_system_pro/features/clinical_ai/data/clinical_ai_remote_data_source.dart';
+import 'package:clinic_system_pro/features/clinical_ai/presentation/clinical_ai_workspace_screen.dart';
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
@@ -407,6 +410,12 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
+      // GAP-B and GAP-AI remain protected even with default test guards.
+      if ((state.uri.path == '/account/tenant' ||
+              state.uri.path == '/clinical-ai') &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       // RAD7 direct links are protected under the default /patients-only
       // navigation guard. The backend still rechecks role and clinic.
       if ((state.uri.path == '/radiology' || state.uri.path == '/printing') &&
@@ -518,6 +527,32 @@ GoRouter createAppRouter({
                 );
               }
               return Rad7RadiologyScreen(source: source, guard: guard);
+            },
+          ),
+          GoRoute(
+            path: '/clinical-ai',
+            name: 'gapai-clinical-advisory',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final dashboard = dashboardDataSource;
+              final connectivity = deviceRegistrationConnectivitySource;
+              if (guard == null ||
+                  dashboard == null ||
+                  connectivity == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  !identical(dashboard.sessionNavigationGuard, guard)) {
+                return const Scaffold(
+                  body: Center(child: Text('Clinical AI unavailable.')),
+                );
+              }
+              return ClinicalAiWorkspaceScreen(
+                source: ClinicalAiRemoteDataSource(
+                  dashboard: dashboard,
+                  guard: guard,
+                  connectivity: connectivity,
+                ),
+                guard: guard,
+              );
             },
           ),
           GoRoute(
@@ -653,6 +688,31 @@ GoRouter createAppRouter({
                 clinicContextSwitcher: switcher,
                 signOutCoordinator: signOutCoordinator,
                 sessionNavigationGuard: sessionNavigationGuard,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/account/tenant',
+            name: 'gapb-tenant-context',
+            builder: (context, state) {
+              final loader = loadHomeSession;
+              final remote = authRemoteDataSource;
+              final switcher = clinicContextSwitcher;
+              final guard = sessionNavigationGuard;
+              if (loader == null ||
+                  remote == null ||
+                  switcher == null ||
+                  guard == null ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Hospital context unavailable.')),
+                );
+              }
+              return TenantContextScreen(
+                loadSession: loader,
+                remote: remote,
+                switcher: switcher,
+                guard: guard,
               );
             },
           ),
