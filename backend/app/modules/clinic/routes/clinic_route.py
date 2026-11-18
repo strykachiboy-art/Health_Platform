@@ -11,6 +11,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.auth.user.models.user_model import User
+from app.modules.clinic.models.clinic_model import Clinic
 from app.core.utils.decorators import role_required
 
 from app.modules.clinic.schemas.clinic_schema import (
@@ -20,6 +21,12 @@ from app.modules.clinic.schemas.clinic_schema import (
     ClinicCreateSchema,
     ClinicStatusUpdateSchema,
     ClinicUpdateSchema,
+)
+
+from app.modules.clinic.services.tenant_boundary import (
+    TenantAccessDenied,
+    require_tenant_clinic_access,
+    list_authorized_clinics_for_user,
 )
 
 from app.modules.clinic.services.clinic_service import (
@@ -156,50 +163,23 @@ def _get_current_user():
 
 
 def _get_authorized_clinic(clinic_id: int):
-    """
-    Enforce clinic tenant isolation.
-
-    ADMIN users may access any clinic.
-    Non-admin users may access only their own clinic.
-    """
-
-    if clinic_id <= 0:
-        return (
-            jsonify(
-                {
-                    "error": "Invalid clinic ID",
-                }
-            ),
-            400,
-        )
-
+    """Deny unless server-derived organization ownership and active membership match."""
+    if type(clinic_id) is not int or clinic_id <= 0:
+        return jsonify({'error': 'Invalid clinic ID'}), 400
     user = _get_current_user()
-
-    if _is_admin():
-        return None
-
-    user_clinic_id = getattr(user, "clinic_id", None)
-
-    if user_clinic_id is None:
-        return (
-            jsonify(
-                {
-                    "error": "User is not assigned to a clinic",
-                }
-            ),
-            403,
+    clinic = db.session.get(Clinic, clinic_id)
+    if clinic is None:
+        return jsonify({'error': 'Clinic not found'}), 404
+    if not _is_admin() and user.clinic_id != clinic_id:
+        return jsonify({'error': 'Clinic access denied'}), 403
+    try:
+        require_tenant_clinic_access(
+            user_id=user.id,
+            organization_id=clinic.organization_id,
+            clinic_id=clinic_id,
         )
-
-    if user_clinic_id != clinic_id:
-        return (
-            jsonify(
-                {
-                    "error": "You do not have access to this clinic",
-                }
-            ),
-            403,
-        )
-
+    except TenantAccessDenied:
+        return jsonify({'error': 'Tenant clinic access denied'}), 403
     return None
 
 
@@ -323,6 +303,13 @@ def create_clinic_route():
     if error:
         return error
 
+    # GAPA_ROOT_PROVISIONING_DISABLED: no implicit tenant is ever created.
+    if payload.parent_clinic_id is None:
+        return jsonify({'error': 'Organization-owned root provisioning not available'}), 403
+    denied = _get_authorized_clinic(payload.parent_clinic_id)
+    if denied is not None:
+        return denied
+
     try:
         clinic = create_clinic(
             name=payload.name,
@@ -378,7 +365,8 @@ def list_clinics_route():
 
     try:
         if _is_admin():
-            clinics = list_clinics(
+            clinics = list_authorized_clinics_for_user(
+                user_id=_get_current_user().id,
                 status=parsed_status,
             )
 
@@ -388,6 +376,9 @@ def list_clinics_route():
             if isinstance(clinic_id, tuple):
                 return clinic_id
 
+            denied = _get_authorized_clinic(clinic_id)
+            if denied is not None:
+                return denied
             clinic = get_clinic(clinic_id)
 
             if (
@@ -516,6 +507,10 @@ def create_clinic_branch_route(clinic_id: int):
     if error:
         return error
 
+    denied = _get_authorized_clinic(clinic_id)
+    if denied is not None:
+        return denied
+
     try:
         branch = create_branch(
             parent_clinic_id=clinic_id,
@@ -581,6 +576,9 @@ def update_clinic_branch_configuration_route(
             exclude_unset=True,
         )
 
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
         clinic = update_branch_configuration(
             clinic_id=clinic_id,
             **fields,
@@ -637,6 +635,9 @@ def update_clinic_route(clinic_id: int):
             exclude_unset=True,
         )
 
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
         clinic = update_clinic(
             clinic_id=clinic_id,
             **fields,
@@ -686,6 +687,9 @@ def update_clinic_status_route(clinic_id: int):
         return error
 
     try:
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
         clinic = change_status(
             clinic_id=clinic_id,
             new_status=payload.status,
@@ -735,6 +739,9 @@ def update_clinic_ai_credits_route(clinic_id: int):
         return error
 
     try:
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
         clinic = add_ai_credits(
             clinic_id=clinic_id,
             amount=payload.amount,
@@ -783,6 +790,9 @@ def regenerate_clinic_api_token_route(
     clinic_id: int,
 ):
     try:
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
         token = regenerate_api_token(
             clinic_id=clinic_id,
         )

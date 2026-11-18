@@ -40,6 +40,16 @@ class Clinic(db.Model):
         primary_key=True,
     )
 
+    # GAP-A: mandatory organization owner. Existing parent relationship is unchanged.
+    organization_id = db.Column(
+        db.UUID(as_uuid=True),
+        db.ForeignKey('hospital_organizations.id'),
+        nullable=False,
+        index=True,
+    )
+
+    organization = db.relationship('HospitalOrganization', back_populates='clinics')
+
     name = db.Column(
         db.String(150),
         nullable=False,
