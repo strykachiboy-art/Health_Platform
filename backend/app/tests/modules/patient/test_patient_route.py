@@ -565,7 +565,7 @@ class TestPatientRoutes:
             headers=headers,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 404
 
     def test_get_patient_rejects_invalid_patient_id(
         self,
@@ -664,7 +664,7 @@ class TestPatientRoutes:
             headers=headers,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 404
 
     def test_update_patient_rejects_invalid_patient_id(
         self,
@@ -743,7 +743,7 @@ class TestPatientRoutes:
             headers=headers,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 404
 
 
 class TestFamilyMemberRoutes:
@@ -917,7 +917,7 @@ class TestFamilyMemberRoutes:
             headers=headers,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 404
 
     def test_update_and_remove_family_member(
         self,
@@ -1221,7 +1221,7 @@ class TestInsuranceRoutes:
             headers=headers,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 404
 
 
 class TestVitalsRoutes:
@@ -1591,7 +1591,7 @@ class TestVitalsRoutes:
             headers=headers,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 404
 
     def test_get_vitals_rejects_other_clinic_patient(
         self,
@@ -1621,7 +1621,7 @@ class TestVitalsRoutes:
             headers=headers,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 404
 
     def test_latest_vitals_rejects_other_clinic_patient(
         self,
@@ -1651,4 +1651,4 @@ class TestVitalsRoutes:
             headers=headers,
         )
 
-        assert response.status_code == 422
+        assert response.status_code == 404

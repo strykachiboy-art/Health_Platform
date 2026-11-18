@@ -113,7 +113,9 @@ def test_forged_clinic_context_and_extra_patient_rejected(client, setup_ris,
     body = {'imaging_order_id': s['order'].id}
     response = client.post(_path(), json=body,
         headers=auth_headers_for(s['doctor'].user, clinic_context_id=foreign.id))
-    assert response.status_code in (403, 404, 422)
+    # GAP-B verifies forged tenant/clinic claims before a clinical handler runs.
+    # Authentication denial (401) is stricter than a route-level denial.
+    assert response.status_code == 401
     assert db.session.query(RadiologyExam).count() == 0
     extra = body | {'patient_id': s['patient'].id, 'clinic_id': s['clinic'].id}
     assert client.post(_path(), json=extra, headers=s['headers']).status_code == 422

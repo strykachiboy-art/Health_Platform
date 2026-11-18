@@ -287,6 +287,14 @@ def _get_patient_or_404(
             f"Patient {patient_id} not found"
         )
 
+    from flask import g, has_request_context
+    if has_request_context() and type(getattr(g, "current_user_id", None)) is int:
+        from app.core.utils.decorators import get_current_clinic_id
+        selected = get_current_clinic_id(required=True)
+        if patient.clinic_id != selected:
+            # Same error for absent and foreign identifiers; no existence leak.
+            raise NotFoundError(f"Patient {patient_id} not found")
+
     return patient
 
 
@@ -526,18 +534,26 @@ def list_patients(
         per_page,
     )
 
-    if clinic_id is not None:
-        clinic_id = _validate_positive_id(
-            clinic_id,
-            "Clinic ID",
-        )
+    if clinic_id is None:
+        raise ValidationError("Explicit clinic scope is required for patient listing")
 
-    statement = select(Patient)
+    clinic_id = _validate_positive_id(
+        clinic_id,
+        "Clinic ID",
+    )
 
-    if clinic_id is not None:
-        statement = statement.where(
-            Patient.clinic_id == clinic_id
-        )
+    # Authenticated HTTP caller must never force a second clinic through a
+    # service argument. Internal jobs still have to supply explicit clinic_id.
+    from flask import g, has_request_context
+    if has_request_context() and type(getattr(g, "current_user_id", None)) is int:
+        from app.core.utils.decorators import get_current_clinic_id
+        selected = get_current_clinic_id(required=True)
+        if selected != clinic_id:
+            raise NotFoundError("Patient records not found")
+
+    statement = select(Patient).where(
+        Patient.clinic_id == clinic_id
+    )
 
     if active_only:
         statement = statement.where(

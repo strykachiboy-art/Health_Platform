@@ -11,6 +11,9 @@ from app.modules.printing.services.print_policy import PrintDenied, build_docume
 
 
 PATH = "/api/v1/printing/invoice/41.pdf"
+# Synthetic renderer output only for two HTTP authorization/audit tests.
+# Native Rust rendering correctness has its own outstanding release gate.
+_GAPC_HTTP_TEST_PDF = b"%PDF-1.4\n%GAPC-HTTP-BOUNDARY-TEST\n%%EOF\n"
 
 
 def _invoice_copy(clinic_id: int):
@@ -110,6 +113,9 @@ def test_enabled_authorized_pdf_is_attachment_no_store_unsigned_and_audited(
     audit = Mock()
     monkeypatch.setattr(printing_routes, "snapshot", source)
     monkeypatch.setattr(printing_routes, "create_audit_log", audit)
+    # HTTP/audit boundary: isolate external Rust executable availability.
+    renderer = Mock(return_value=_GAPC_HTTP_TEST_PDF)
+    monkeypatch.setattr(printing_routes, "render_pdf", renderer)
 
     response = client.get(PATH, headers=headers)
 
@@ -125,6 +131,7 @@ def test_enabled_authorized_pdf_is_attachment_no_store_unsigned_and_audited(
         kind="invoice", record_id=41, clinic_id=clinic.id,
         actor_role="ADMIN", actor_staff_id=staff.id,
     )
+    renderer.assert_called_once_with(doc)
     audit.assert_called_once()
     kwargs = audit.call_args.kwargs
     assert kwargs["clinic_id"] == clinic.id
@@ -158,10 +165,13 @@ def test_enabled_audit_failure_returns_500_without_pdf_delivery(
 ):
     app.config["RAD6_PRINTING_ENABLED"] = True
     _, headers = _authenticated_admin(clinic, make_authenticated_staff)
-    source = Mock(return_value=_invoice_copy(clinic.id))
+    doc = _invoice_copy(clinic.id)
+    source = Mock(return_value=doc)
     audit = Mock(side_effect=RuntimeError("synthetic audit unavailable"))
     monkeypatch.setattr(printing_routes, "snapshot", source)
     monkeypatch.setattr(printing_routes, "create_audit_log", audit)
+    renderer = Mock(return_value=_GAPC_HTTP_TEST_PDF)
+    monkeypatch.setattr(printing_routes, "render_pdf", renderer)
     response = client.get(PATH, headers=headers)
     assert response.status_code == 500
     assert response.is_json
@@ -173,4 +183,5 @@ def test_enabled_audit_failure_returns_500_without_pdf_delivery(
     assert not response.data.startswith(b"%PDF-")
     assert "no-store" in response.headers["Cache-Control"]
     source.assert_called_once()
+    renderer.assert_called_once_with(doc)
     audit.assert_called_once()

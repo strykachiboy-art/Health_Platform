@@ -157,6 +157,35 @@ def _get_backup_root(
     return root
 
 
+def _require_private_backup_destination(
+    backup_root: str | Path | None,
+    storage_root: str | Path | None,
+) -> None:
+    if backup_root is None:
+        # The default backup directory and platform backup authority still
+        # require dedicated deployment/security review.
+        return
+
+    public_root = storage_root
+    if public_root is None:
+        public_root = current_app.config.get("STORAGE_ROOT")
+    if public_root is None:
+        public_root = Path(current_app.instance_path) / "storage"
+
+    try:
+        output = Path(backup_root).resolve()
+        public = Path(public_root).resolve()
+        output.relative_to(public)
+    except ValueError:
+        return
+    except (OSError, TypeError) as exc:
+        raise BackupServiceError("Unsafe backup destination") from exc
+
+    raise BackupServiceError(
+        "Full backup destination must not be inside public storage"
+    )
+
+
 def _cleanup_partial_backup(
     backup_directory: Path,
 ) -> None:
@@ -249,6 +278,8 @@ def create_full_backup(
     if file_backup_callable is None:
         file_backup_callable = backup_files
 
+    # Reject publicly accessible backup paths BEFORE creating any dump.
+    _require_private_backup_destination(backup_root, storage_root)
     root = _get_backup_root(
         backup_root
     )

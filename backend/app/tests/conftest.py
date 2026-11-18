@@ -107,8 +107,25 @@ def client(app):
 # ============================================================================
 
 
+# GAP-C: only these older regression MODULES need SaaS grant-aware synthetic
+# users. This never applies to the GAP-B/GAP-C adversarial tests or production.
+_GAPC_LEGACY_AUTH_MODULES = (
+    '/modules/patient/test_patient_route.py',
+    '/modules/chat/tasks/test_chat_outbox_task.py',
+    '/core/security/test_chat_realtime_authorization.py',
+    '/modules/printing/test_gap03_print_route_security.py',
+    '/modules/radiology/test_rad1_ris_foundation.py',
+    '/core/offline_operations/test_disposition_route.py',
+)
+
+
+def _gapc_legacy_auth_target(request):
+    path = str(request.node.path).replace('\\', '/')
+    return any(path.endswith(tail) for tail in _GAPC_LEGACY_AUTH_MODULES)
+
+
 @pytest.fixture()
-def auth_headers_for(app):
+def auth_headers_for(app, request):
     def _make(user, role=None, clinic_context_id=None):
         claim_role = (
             role
@@ -119,10 +136,31 @@ def auth_headers_for(app):
         if hasattr(claim_role, "value"):
             claim_role = claim_role.value
 
+        if (
+            _gapc_legacy_auth_target(request)
+            and user.clinic_id is not None
+            and claim_role == user.role.value
+            and (clinic_context_id is None or clinic_context_id == user.clinic_id)
+        ):
+            # This path uses the real GAP-B issuer and verifies explicit
+            # server-side grants, never a hand-crafted trusted JWT claim.
+            from app.core.auth.user.services.user_service import issue_auth_tokens
+            with app.test_request_context():
+                pair = issue_auth_tokens(user, clinic_context_id=user.clinic_id)
+            return {"Authorization": "Bearer " + pair["access_token"]}
+
         claims = {
             "role": claim_role,
             "token_version": user.token_version,
         }
+        if _gapc_legacy_auth_target(request) and user.clinic_id is not None:
+            # Foreign or forged clinic-context claims remain invalid at JWT
+            # verification, rather than silently receiving a clinic grant.
+            from app.modules.clinic.models.clinic_model import Clinic
+            from app.extensions import db as _gapc_db
+            actual_clinic = _gapc_db.session.get(Clinic, user.clinic_id)
+            if actual_clinic is not None:
+                claims["tenant_id"] = str(actual_clinic.organization_id)
 
         if clinic_context_id is not None:
             claims["clinic_context_id"] = clinic_context_id
@@ -163,8 +201,22 @@ def make_clinic(db):
 
     counter = {"n": 0}
 
+    synthetic_owner = {"id": None}
+
     def _make(**overrides):
         counter["n"] += 1
+
+        if "organization_id" not in overrides:
+            if synthetic_owner["id"] is None:
+                from uuid import uuid4
+                from app.modules.clinic.models.organization_model import HospitalOrganization
+                owner = HospitalOrganization(
+                    id=uuid4(), name="Legacy fixture owned test organization",
+                )
+                db.session.add(owner)
+                db.session.flush()
+                synthetic_owner["id"] = owner.id
+            overrides["organization_id"] = synthetic_owner["id"]
 
         overrides.setdefault(
             "name",
@@ -212,7 +264,7 @@ def suspended_clinic(make_clinic):
 
 
 @pytest.fixture()
-def make_user(db):
+def make_user(db, request):
     from app.core.auth.user.models.user_model import User
     from app.core.enums.role_enums import Role
 
@@ -247,6 +299,38 @@ def make_user(db):
 
         db.session.add(user)
         db.session.flush()
+
+        if (
+            _gapc_legacy_auth_target(request)
+            and clinic is not None and user.is_active
+            and clinic.organization_id is not None
+        ):
+            # Provision BOTH genuine GAP-B FK-linked grants. Never provision
+            # implicit access for production, other test modules, or users
+            # without an assigned clinic.
+            from app.modules.clinic.models.organization_model import (
+                TenantMembership, ClinicMembership,
+            )
+            tenant = db.session.execute(db.select(TenantMembership).where(
+                TenantMembership.user_id == user.id,
+                TenantMembership.organization_id == clinic.organization_id,
+            )).scalar_one_or_none()
+            if tenant is None:
+                db.session.add(TenantMembership(
+                    user_id=user.id, organization_id=clinic.organization_id,
+                    role='member', is_active=True, status='active',
+                ))
+                db.session.flush()  # Composite parent MUST exist first.
+            grant = db.session.execute(db.select(ClinicMembership).where(
+                ClinicMembership.user_id == user.id,
+                ClinicMembership.clinic_id == clinic.id,
+            )).scalar_one_or_none()
+            if grant is None:
+                db.session.add(ClinicMembership(
+                    user_id=user.id, organization_id=clinic.organization_id,
+                    clinic_id=clinic.id, role=user.role.value, is_active=True,
+                ))
+                db.session.flush()
 
         return user
 
@@ -1948,7 +2032,7 @@ def no_audit(monkeypatch):
 
 
 @pytest.fixture()
-def chat_socket_client_for(app):
+def chat_socket_client_for(app, request):
     def _make(
         user=None,
         *,
@@ -1963,6 +2047,14 @@ def chat_socket_client_for(app):
                 }
 
             elif user is not None:
+                if _gapc_legacy_auth_target(request) and user.clinic_id is not None:
+                    from app.core.auth.user.services.user_service import issue_auth_tokens
+                    with app.test_request_context():
+                        pair = issue_auth_tokens(user, clinic_context_id=user.clinic_id)
+                    auth = {"access_token": pair["access_token"]}
+                    return socketio.test_client(
+                        app, namespace=namespace, auth=auth,
+                    )
                 claim_role = user.role
 
                 if hasattr(claim_role, "value"):
