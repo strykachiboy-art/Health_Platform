@@ -425,63 +425,66 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
 
   Widget _overview(String role, List<HomeDestination> destinations) {
     final dashboard = widget.dashboardDataSource;
-    return ListView(
+    return SingleChildScrollView(
       key: const ValueKey('p22-home-overview'),
       padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          _dashboardFamily(role),
-          key: const ValueKey('p22-home-role-family'),
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        const SizedBox(height: 10),
-        if (dashboard == null)
-          const Text(
-            'Dashboard metrics will be loaded from the backend in P22.S03. '
-            'This home screen does not invent counts or clinical permissions.',
-          )
-        else
-          DashboardOverviewPanel(
-            key: ValueKey(
-              'p22-dashboard-${role.toLowerCase()}-${_clinicId ?? 'none'}',
-            ),
-            dataSource: dashboard,
-            expectedRole: role,
-            expectedClinicId: _clinicId,
-            sessionNavigationGuard: widget.sessionNavigationGuard,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            _dashboardFamily(role),
+            key: const ValueKey('p22-home-role-family'),
+            style: Theme.of(context).textTheme.headlineSmall,
           ),
-        if (role.trim().toLowerCase() == 'super_admin' &&
-            (_clinicId == null || _clinicId! <= 0)) ...[
+          const SizedBox(height: 10),
+          if (dashboard == null)
+            const Text(
+              'Dashboard metrics will be loaded from the backend in P22.S03. '
+              'This home screen does not invent counts or clinical permissions.',
+            )
+          else
+            DashboardOverviewPanel(
+              key: ValueKey(
+                'p22-dashboard-${role.toLowerCase()}-${_clinicId ?? 'none'}',
+              ),
+              dataSource: dashboard,
+              expectedRole: role,
+              expectedClinicId: _clinicId,
+              sessionNavigationGuard: widget.sessionNavigationGuard,
+            ),
+          if (role.trim().toLowerCase() == 'super_admin' &&
+              (_clinicId == null || _clinicId! <= 0)) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Select a clinic context before accessing clinic-scoped alerts.',
+              key: ValueKey('p22-home-clinic-required'),
+            ),
+          ],
+          const SizedBox(height: 24),
+          Text(
+            'Available navigation',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          for (final destination in destinations) ...[
+            Card(
+              child: ListTile(
+                key: ValueKey('p22-home-${destination.id}'),
+                leading: Icon(destination.icon),
+                title: Text(destination.label),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openDestination(destination),
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           const Text(
-            'Select a clinic context before accessing clinic-scoped alerts.',
-            key: ValueKey('p22-home-clinic-required'),
+            'Navigation suggestions are not access grants. The backend '
+            'verifies every request and can deny it.',
+            key: ValueKey('p22-home-server-authority'),
           ),
         ],
-        const SizedBox(height: 24),
-        Text(
-          'Available navigation',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 8),
-        for (final destination in destinations) ...[
-          Card(
-            child: ListTile(
-              key: ValueKey('p22-home-${destination.id}'),
-              leading: Icon(destination.icon),
-              title: Text(destination.label),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => _openDestination(destination),
-            ),
-          ),
-        ],
-        const SizedBox(height: 12),
-        const Text(
-          'Navigation suggestions are not access grants. The backend '
-          'verifies every request and can deny it.',
-          key: ValueKey('p22-home-server-authority'),
-        ),
-      ],
+      ),
     );
   }
 }
