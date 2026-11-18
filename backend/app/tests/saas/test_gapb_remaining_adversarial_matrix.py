@@ -1,4 +1,4 @@
-"""GAP-C consolidated targeted security negatives (real ORM, signed JWT, no Docker).
+"""GAP-B consolidated targeted security negatives (real ORM, signed JWT, no Docker).
 
 These focused tests do NOT substitute for comprehensive 476-route / independent review.
 """
@@ -38,15 +38,15 @@ def isolated_revocation(app, monkeypatch):
 @pytest.fixture()
 def world(db, make_clinic, make_staff, make_patient, make_user):
     # Two real organization owners, two clinics inside Alpha, one in Beta.
-    alpha = HospitalOrganization(id=uuid4(), name='GAPC final Alpha')
-    beta = HospitalOrganization(id=uuid4(), name='GAPC final Beta')
+    alpha = HospitalOrganization(id=uuid4(), name='GAPB final Alpha')
+    beta = HospitalOrganization(id=uuid4(), name='GAPB final Beta')
     db.session.add_all((alpha, beta))
     db.session.flush()
-    a = make_clinic(name='GAPC final Alpha HQ', organization_id=alpha.id,
+    a = make_clinic(name='GAPB final Alpha HQ', organization_id=alpha.id,
                     is_headquarters=True)
-    a2 = make_clinic(name='GAPC final Alpha site 2', organization_id=alpha.id,
+    a2 = make_clinic(name='GAPB final Alpha site 2', organization_id=alpha.id,
                      parent_clinic_id=a.id)
-    b = make_clinic(name='GAPC final Beta HQ', organization_id=beta.id,
+    b = make_clinic(name='GAPB final Beta HQ', organization_id=beta.id,
                     is_headquarters=True)
     staff = make_staff(a, role=Role.DOCTOR)
     actor = staff.user

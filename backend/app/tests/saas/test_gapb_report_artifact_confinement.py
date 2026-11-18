@@ -1,4 +1,4 @@
-"""GAP-C report-storage cross-boundary cleanup negatives.
+"""GAP-B report-storage cross-boundary cleanup negatives.
 
 All tests are additive. No changes to existing baseline assertions.
 """

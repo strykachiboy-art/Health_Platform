@@ -65,7 +65,7 @@ def _enforce_clinic_dashboard_session(actor_id: int) -> None:
 
     # The current super-admin implementation queries every tenant's clinical
     # and operational tables. Platform-wide exception approval/audit is not
-    # implemented in GAP-C, so do not expose that endpoint.
+    # implemented in GAP-B, so do not expose that endpoint.
     if actor.role is Role.SUPER_ADMIN:
         raise TenantContextDenied('Platform-wide clinical dashboard unavailable')
 

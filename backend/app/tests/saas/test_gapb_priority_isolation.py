@@ -1,4 +1,4 @@
-"""GAP-C Gate 5 P0 targeted negatives. Does NOT certify all 476 endpoints.
+"""GAP-B Gate 5 P0 targeted negatives. Does NOT certify all 476 endpoints.
 
 Uses actual signed JWT, real Flask test client, SQLAlchemy/SQLite, and a
 module-local synthetic Redis JTI store. Never weakens auth callbacks.
@@ -50,14 +50,14 @@ def revocation_store(app, monkeypatch):
 
 @pytest.fixture()
 def world(db, make_clinic, make_staff, make_user):
-    alpha = HospitalOrganization(id=uuid4(), name='GAPC synthetic alpha')
-    beta = HospitalOrganization(id=uuid4(), name='GAPC synthetic beta')
+    alpha = HospitalOrganization(id=uuid4(), name='GAPB synthetic alpha')
+    beta = HospitalOrganization(id=uuid4(), name='GAPB synthetic beta')
     db.session.add_all([alpha, beta])
     db.session.flush()
-    a = make_clinic(name='GAPC A HQ', organization_id=alpha.id)
-    a2 = make_clinic(name='GAPC A satellite', organization_id=alpha.id,
+    a = make_clinic(name='GAPB A HQ', organization_id=alpha.id)
+    a2 = make_clinic(name='GAPB A satellite', organization_id=alpha.id,
                      parent_clinic_id=a.id)
-    b = make_clinic(name='GAPC B HQ', organization_id=beta.id)
+    b = make_clinic(name='GAPB B HQ', organization_id=beta.id)
     staff_a = make_staff(a, role=Role.ADMIN)
     staff_b = make_staff(b, role=Role.ADMIN)
     admin_a = staff_a.user
@@ -123,9 +123,9 @@ def test_authenticated_report_list_does_not_reveal_beta(client, world, db):
 
 def test_audit_listing_only_bound_clinic(client, world, db):
     w=world
-    a=create_audit_log(action=AuditAction.VIEW,entity_type='GAPCProbe',
+    a=create_audit_log(action=AuditAction.VIEW,entity_type='GAPBProbe',
        entity_id=10,clinic_id=w['a'].id,description='Authorized synthetic record')
-    b=create_audit_log(action=AuditAction.VIEW,entity_type='GAPCProbe',
+    b=create_audit_log(action=AuditAction.VIEW,entity_type='GAPBProbe',
        entity_id=20,clinic_id=w['b'].id,description='Foreign synthetic record')
     db.session.commit()
     pair=issue_auth_tokens(w['admin_a'])

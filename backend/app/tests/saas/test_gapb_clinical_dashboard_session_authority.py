@@ -1,4 +1,4 @@
-"""GAP-C signed-session adversarial tests for the main clinical dashboard.
+"""GAP-B signed-session adversarial tests for the main clinical dashboard.
 
 No Redis, production data, Docker or migrations; real JWT blocklist callback,
 full Flask routing, and explicit two-organization/three-clinic membership rows.
@@ -31,15 +31,15 @@ def isolated_revocation(app, monkeypatch):
 
 @pytest.fixture()
 def world(db, make_clinic, make_user):
-    alpha = HospitalOrganization(id=uuid4(), name='GAPC dashboard alpha')
-    beta = HospitalOrganization(id=uuid4(), name='GAPC dashboard beta')
+    alpha = HospitalOrganization(id=uuid4(), name='GAPB dashboard alpha')
+    beta = HospitalOrganization(id=uuid4(), name='GAPB dashboard beta')
     db.session.add_all((alpha, beta))
     db.session.flush()
-    a = make_clinic(name='GAPC Dashboard Alpha HQ', organization_id=alpha.id,
+    a = make_clinic(name='GAPB Dashboard Alpha HQ', organization_id=alpha.id,
                     is_headquarters=True)
-    a2 = make_clinic(name='GAPC Dashboard Alpha Clinic 2', organization_id=alpha.id,
+    a2 = make_clinic(name='GAPB Dashboard Alpha Clinic 2', organization_id=alpha.id,
                      parent_clinic_id=a.id)
-    b = make_clinic(name='GAPC Dashboard Beta HQ', organization_id=beta.id,
+    b = make_clinic(name='GAPB Dashboard Beta HQ', organization_id=beta.id,
                     is_headquarters=True)
     admin = make_user(a, role=Role.ADMIN)
     doctor = make_user(a, role=Role.DOCTOR)

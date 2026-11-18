@@ -362,7 +362,7 @@ def _notification_idempotency_key(notification):
     )
 
 
-def _gapc_external_delivery_authorized(notification):
+def _gapb_external_delivery_authorized(notification):
     """Revalidate at worker egress; no recipient inferred from a clinic ID.
 
     Patient-first onboarding is preserved: a real patient profile can receive
@@ -401,7 +401,7 @@ def _gapc_external_delivery_authorized(notification):
 
 
 def _deliver_with_provider(notification):
-    if not _gapc_external_delivery_authorized(notification):
+    if not _gapb_external_delivery_authorized(notification):
         raise NotFoundError("Notification delivery target unavailable")
     channel = notification.channel
 
@@ -790,7 +790,7 @@ def deliver_notification(
 
     # A queued notification may outlive its original authorization. Denial
     # happens before SENT/FAILED transitions or any external-provider call.
-    if not _gapc_external_delivery_authorized(notification):
+    if not _gapb_external_delivery_authorized(notification):
         return False
 
     try:

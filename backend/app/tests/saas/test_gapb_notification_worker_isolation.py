@@ -1,4 +1,4 @@
-"""GAP-C P0: notification worker authority checked at egress.
+"""GAP-B P0: notification worker authority checked at egress.
 
 Two organizations, two clinics, real SQLAlchemy and Celery task entry.
 No fake provider is allowed to observe a denied notification.
@@ -20,12 +20,12 @@ from app.modules.clinic.models.organization_model import (
 
 @pytest.fixture()
 def world(db, make_clinic, make_staff, make_user, make_notification):
-    alpha = HospitalOrganization(id=uuid4(), name="GAPC synthetic Alpha")
-    beta = HospitalOrganization(id=uuid4(), name="GAPC synthetic Beta")
+    alpha = HospitalOrganization(id=uuid4(), name="GAPB synthetic Alpha")
+    beta = HospitalOrganization(id=uuid4(), name="GAPB synthetic Beta")
     db.session.add_all([alpha, beta])
     db.session.flush()
-    a = make_clinic(name="GAPC Alpha Clinic", organization_id=alpha.id)
-    b = make_clinic(name="GAPC Beta Clinic", organization_id=beta.id)
+    a = make_clinic(name="GAPB Alpha Clinic", organization_id=alpha.id)
+    b = make_clinic(name="GAPB Beta Clinic", organization_id=beta.id)
     staff = make_staff(a, role=Role.DOCTOR)
     db.session.add(TenantMembership(
         organization_id=alpha.id, user_id=staff.user.id,

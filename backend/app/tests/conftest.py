@@ -107,9 +107,9 @@ def client(app):
 # ============================================================================
 
 
-# GAP-C: only these older regression MODULES need SaaS grant-aware synthetic
-# users. This never applies to the GAP-B/GAP-C adversarial tests or production.
-_GAPC_LEGACY_AUTH_MODULES = (
+# GAP-B: only these older regression MODULES need SaaS grant-aware synthetic
+# users. This never applies to the GAP-B/GAP-B adversarial tests or production.
+_GAPB_LEGACY_AUTH_MODULES = (
     '/modules/patient/test_patient_route.py',
     '/modules/chat/tasks/test_chat_outbox_task.py',
     '/core/security/test_chat_realtime_authorization.py',
@@ -119,9 +119,9 @@ _GAPC_LEGACY_AUTH_MODULES = (
 )
 
 
-def _gapc_legacy_auth_target(request):
+def _gapb_legacy_auth_target(request):
     path = str(request.node.path).replace('\\', '/')
-    return any(path.endswith(tail) for tail in _GAPC_LEGACY_AUTH_MODULES)
+    return any(path.endswith(tail) for tail in _GAPB_LEGACY_AUTH_MODULES)
 
 
 @pytest.fixture()
@@ -137,7 +137,7 @@ def auth_headers_for(app, request):
             claim_role = claim_role.value
 
         if (
-            _gapc_legacy_auth_target(request)
+            _gapb_legacy_auth_target(request)
             and user.clinic_id is not None
             and claim_role == user.role.value
             and (clinic_context_id is None or clinic_context_id == user.clinic_id)
@@ -153,12 +153,12 @@ def auth_headers_for(app, request):
             "role": claim_role,
             "token_version": user.token_version,
         }
-        if _gapc_legacy_auth_target(request) and user.clinic_id is not None:
+        if _gapb_legacy_auth_target(request) and user.clinic_id is not None:
             # Foreign or forged clinic-context claims remain invalid at JWT
             # verification, rather than silently receiving a clinic grant.
             from app.modules.clinic.models.clinic_model import Clinic
-            from app.extensions import db as _gapc_db
-            actual_clinic = _gapc_db.session.get(Clinic, user.clinic_id)
+            from app.extensions import db as _gapb_db
+            actual_clinic = _gapb_db.session.get(Clinic, user.clinic_id)
             if actual_clinic is not None:
                 claims["tenant_id"] = str(actual_clinic.organization_id)
 
@@ -301,7 +301,7 @@ def make_user(db, request):
         db.session.flush()
 
         if (
-            _gapc_legacy_auth_target(request)
+            _gapb_legacy_auth_target(request)
             and clinic is not None and user.is_active
             and clinic.organization_id is not None
         ):
@@ -2047,7 +2047,7 @@ def chat_socket_client_for(app, request):
                 }
 
             elif user is not None:
-                if _gapc_legacy_auth_target(request) and user.clinic_id is not None:
+                if _gapb_legacy_auth_target(request) and user.clinic_id is not None:
                     from app.core.auth.user.services.user_service import issue_auth_tokens
                     with app.test_request_context():
                         pair = issue_auth_tokens(user, clinic_context_id=user.clinic_id)

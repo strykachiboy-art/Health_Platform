@@ -20,11 +20,11 @@ from app.modules.dashboard.schemas.dashboard_schema import (
 
 
 # ============================================================================
-# GAP-C: legitimate signed tenant + clinic test fixture
+# GAP-B: legitimate signed tenant + clinic test fixture
 # ============================================================================
 
 @pytest.fixture(autouse=True)
-def _gapc_revocation_store_for_legacy_dashboard(app, monkeypatch):
+def _gapb_revocation_store_for_legacy_dashboard(app, monkeypatch):
     from app import extensions
 
     class Store:
@@ -43,12 +43,12 @@ def clinic(db, make_clinic):
     from app.modules.clinic.models.organization_model import HospitalOrganization
 
     organization = HospitalOrganization(
-        id=uuid4(), name='GAPC dashboard legacy fixture organization',
+        id=uuid4(), name='GAPB dashboard legacy fixture organization',
     )
     db.session.add(organization)
     db.session.flush()
     return make_clinic(
-        name='GAPC legacy dashboard root',
+        name='GAPB legacy dashboard root',
         organization_id=organization.id,
         is_headquarters=True,
     )

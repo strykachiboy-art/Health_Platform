@@ -13,7 +13,7 @@ from app.modules.printing.services.print_policy import PrintDenied, build_docume
 PATH = "/api/v1/printing/invoice/41.pdf"
 # Synthetic renderer output only for two HTTP authorization/audit tests.
 # Native Rust rendering correctness has its own outstanding release gate.
-_GAPC_HTTP_TEST_PDF = b"%PDF-1.4\n%GAPC-HTTP-BOUNDARY-TEST\n%%EOF\n"
+_GAPB_HTTP_TEST_PDF = b"%PDF-1.4\n%GAPB-HTTP-BOUNDARY-TEST\n%%EOF\n"
 
 
 def _invoice_copy(clinic_id: int):
@@ -114,7 +114,7 @@ def test_enabled_authorized_pdf_is_attachment_no_store_unsigned_and_audited(
     monkeypatch.setattr(printing_routes, "snapshot", source)
     monkeypatch.setattr(printing_routes, "create_audit_log", audit)
     # HTTP/audit boundary: isolate external Rust executable availability.
-    renderer = Mock(return_value=_GAPC_HTTP_TEST_PDF)
+    renderer = Mock(return_value=_GAPB_HTTP_TEST_PDF)
     monkeypatch.setattr(printing_routes, "render_pdf", renderer)
 
     response = client.get(PATH, headers=headers)
@@ -170,7 +170,7 @@ def test_enabled_audit_failure_returns_500_without_pdf_delivery(
     audit = Mock(side_effect=RuntimeError("synthetic audit unavailable"))
     monkeypatch.setattr(printing_routes, "snapshot", source)
     monkeypatch.setattr(printing_routes, "create_audit_log", audit)
-    renderer = Mock(return_value=_GAPC_HTTP_TEST_PDF)
+    renderer = Mock(return_value=_GAPB_HTTP_TEST_PDF)
     monkeypatch.setattr(printing_routes, "render_pdf", renderer)
     response = client.get(PATH, headers=headers)
     assert response.status_code == 500
