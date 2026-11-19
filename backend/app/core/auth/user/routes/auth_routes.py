@@ -21,6 +21,7 @@ from app.core.auth.user.schema.user_schema import (
     GoogleAuthCallbackSchema,
     GoogleMobileAuthSchema,
     GoogleDesktopAuthSchema,
+    GoogleDesktopCodeAuthSchema,
     UserLoginSchema,
     UserRegisterSchema,
 )
@@ -31,6 +32,7 @@ from app.core.auth.user.services.google_auth_service import (
     authenticate_google_code,
     authenticate_google_id_token,
     authenticate_google_desktop_id_token,
+    authenticate_google_desktop_authorization_code,
     get_google_authorization_url,
     validate_google_oauth_state,
 )
@@ -243,6 +245,34 @@ def google_desktop_login():
     try:
         result = authenticate_google_desktop_id_token(
             id_token=data.id_token, nonce=data.nonce,
+        )
+    except DomainError as exc:
+        return jsonify({"success": False, "error": str(exc)}), exc.status_code
+    return jsonify({"success": True, "data": result}), 200
+
+
+@auth_bp.post("/google/desktop/code")
+@limiter.limit(
+    lambda: current_app.config.get(
+        "AUTH_GOOGLE_RATE_LIMIT", "5 per minute",
+    )
+)
+def google_desktop_code_login():
+    """Server-side code exchange; no Google client secret in Flutter."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        data = GoogleDesktopCodeAuthSchema.model_validate(payload)
+    except PydanticValidationError as exc:
+        return jsonify({
+            "success": False, "error": "Validation failed",
+            "details": _safe_validation_errors(exc),
+        }), 400
+    try:
+        result = authenticate_google_desktop_authorization_code(
+            code=data.code,
+            code_verifier=data.code_verifier,
+            redirect_uri=data.redirect_uri,
+            nonce=data.nonce,
         )
     except DomainError as exc:
         return jsonify({"success": False, "error": str(exc)}), exc.status_code

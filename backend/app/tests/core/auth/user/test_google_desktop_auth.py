@@ -159,3 +159,101 @@ def test_desktop_redis_unavailable_fails_closed(app, monkeypatch):
                 id_token="signed-token", nonce=GOOD_NONCE,
             )
     authenticate.assert_not_called()
+
+
+# WD01 server-side desktop-code exchange; all network, Redis and JWT calls mocked.
+def test_desktop_code_rejects_missing_secret_before_google_request(app, monkeypatch):
+    app.config["GOOGLE_DESKTOP_CLIENT_ID"] = DESKTOP_ID
+    app.config["GOOGLE_DESKTOP_CLIENT_SECRET"] = None
+    post = Mock()
+    monkeypatch.setattr(google_auth_service.requests, "post", post)
+    with app.app_context():
+        with pytest.raises(ValidationError, match="not configured"):
+            google_auth_service.authenticate_google_desktop_authorization_code(
+                code="one-time-code", code_verifier="V" * 48,
+                redirect_uri="http://127.0.0.1:23456", nonce=GOOD_NONCE,
+            )
+    post.assert_not_called()
+
+
+def test_desktop_code_rejects_nonloopback_redirect_before_google_request(app, monkeypatch):
+    app.config["GOOGLE_DESKTOP_CLIENT_ID"] = DESKTOP_ID
+    app.config["GOOGLE_DESKTOP_CLIENT_SECRET"] = "test-secret-only"
+    post = Mock()
+    monkeypatch.setattr(google_auth_service.requests, "post", post)
+    with app.app_context():
+        with pytest.raises(ValidationError, match="loopback"):
+            google_auth_service.authenticate_google_desktop_authorization_code(
+                code="one-time-code", code_verifier="V" * 48,
+                redirect_uri="http://example.com:23456", nonce=GOOD_NONCE,
+            )
+    post.assert_not_called()
+
+
+def test_desktop_code_exchange_keeps_secret_server_side_and_nonce_verified(app, monkeypatch):
+    app.config["GOOGLE_DESKTOP_CLIENT_ID"] = DESKTOP_ID
+    app.config["GOOGLE_DESKTOP_CLIENT_SECRET"] = "test-secret-only"
+    exchange_result = Mock(ok=True, status_code=200)
+    exchange_result.json.return_value = {"id_token": "mock-signed-token"}
+    post = Mock(return_value=exchange_result)
+    monkeypatch.setattr(google_auth_service.requests, "post", post)
+    monkeypatch.setattr(
+        google_auth_service, "call_google_auth_with_circuit",
+        lambda *, operation, function: function(),
+    )
+    user = GoogleUserInfoSchema(
+        provider_user_id="test-desktop-sub", email="patient@example.com",
+        email_verified=True,
+    )
+    verifier = Mock(return_value=user)
+    monkeypatch.setattr(google_auth_service, "verify_google_id_token", verifier)
+    redis = Mock()
+    redis.set.return_value = True
+    monkeypatch.setattr(google_auth_service.extensions, "redis_client", redis)
+    authenticate = Mock(return_value={"access_token": "jwt", "refresh_token": "jwt2"})
+    monkeypatch.setattr(google_auth_service, "authenticate_google_user", authenticate)
+    with app.app_context():
+        tokens = google_auth_service.authenticate_google_desktop_authorization_code(
+            code="one-time-code", code_verifier="V" * 48,
+            redirect_uri="http://127.0.0.1:23456", nonce=GOOD_NONCE,
+        )
+    assert tokens["access_token"] == "jwt"
+    call = post.call_args
+    assert call.kwargs["allow_redirects"] is False
+    assert call.kwargs["data"]["client_secret"] == "test-secret-only"
+    assert call.kwargs["data"]["code_verifier"] == "V" * 48
+    assert call.kwargs["data"]["redirect_uri"] == "http://127.0.0.1:23456"
+    verifier.assert_called_once_with(
+        "mock-signed-token", audience=DESKTOP_ID, expected_nonce=GOOD_NONCE,
+    )
+    authenticate.assert_called_once_with(user)
+    redis.set.assert_called_once()
+
+
+def test_desktop_code_route_bad_verifier_fails_before_exchange(client, monkeypatch):
+    from app.core.auth.user.routes import auth_routes
+    exchange = Mock()
+    monkeypatch.setattr(auth_routes, "authenticate_google_desktop_authorization_code", exchange)
+    resp = client.post("/api/v1/auth/google/desktop/code", json={
+        "code": "one-time-code", "code_verifier": "too-short",
+        "redirect_uri": "http://127.0.0.1:23456", "nonce": GOOD_NONCE,
+    })
+    assert resp.status_code == 400
+    exchange.assert_not_called()
+
+
+def test_desktop_code_route_mocked_issuance(client, monkeypatch):
+    from app.core.auth.user.routes import auth_routes
+    tokens = {"access_token": "jwt", "refresh_token": "refresh", "role": "PATIENT"}
+    exchange = Mock(return_value=tokens)
+    monkeypatch.setattr(auth_routes, "authenticate_google_desktop_authorization_code", exchange)
+    resp = client.post("/api/v1/auth/google/desktop/code", json={
+        "code": "one-time-code", "code_verifier": "V" * 48,
+        "redirect_uri": "http://127.0.0.1:23456", "nonce": GOOD_NONCE,
+    })
+    assert resp.status_code == 200
+    assert resp.get_json() == {"success": True, "data": tokens}
+    exchange.assert_called_once_with(
+        code="one-time-code", code_verifier="V" * 48,
+        redirect_uri="http://127.0.0.1:23456", nonce=GOOD_NONCE,
+    )

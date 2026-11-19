@@ -784,6 +784,84 @@ def authenticate_google_desktop_id_token(
     return authenticate_google_user(google_user)
 
 
+def authenticate_google_desktop_authorization_code(
+    *, code: str, code_verifier: str, redirect_uri: str, nonce: str,
+) -> dict:
+    """Exchange one PKCE-bound desktop code on Flask and issue existing CSP JWTs.
+
+    The Desktop OAuth client secret remains a runtime backend configuration;
+    no OAuth code, Google token, or secret is logged, persisted, or retried.
+    """
+    import re
+
+    client_id = current_app.config.get("GOOGLE_DESKTOP_CLIENT_ID")
+    client_secret = current_app.config.get("GOOGLE_DESKTOP_CLIENT_SECRET")
+    if not isinstance(client_id, str) or not client_id:
+        raise ValidationError("Google desktop OAuth is not configured")
+    if not isinstance(client_secret, str) or not client_secret:
+        raise ValidationError("Google desktop code exchange is not configured")
+    if not isinstance(code, str) or not code or len(code) > 4096:
+        raise ValidationError("Invalid Google authorization code")
+    if not isinstance(code_verifier, str) or not re.fullmatch(
+        r"[A-Za-z0-9._~-]{43,128}", code_verifier,
+    ):
+        raise ValidationError("Invalid Google PKCE verifier")
+    match = re.fullmatch(r"http://127\.0\.0\.1:([0-9]{2,5})", redirect_uri or "")
+    if match is None or not (1024 <= int(match.group(1)) <= 65535):
+        raise ValidationError("Invalid Google loopback redirect URI")
+    if not isinstance(nonce, str) or not re.fullmatch(
+        r"[A-Za-z0-9_-]{43,128}", nonce,
+    ):
+        raise ValidationError("Invalid Google desktop nonce")
+
+    payload = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "code_verifier": code_verifier,
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+    }
+
+    def _exchange_once():
+        try:
+            response = requests.post(
+                GOOGLE_TOKEN_URL, data=payload, timeout=10,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            raise GoogleAuthTransientError(
+                "Google desktop token exchange unavailable"
+            ) from exc
+        if _is_redirect_response(response):
+            raise ValidationError("Google desktop token exchange rejected")
+        if not response.ok:
+            if is_transient_google_http_status(response.status_code):
+                raise GoogleAuthTransientError(
+                    "Google desktop token exchange unavailable"
+                )
+            raise ValidationError("Google desktop token exchange rejected")
+        return response
+
+    response = call_google_auth_with_circuit(
+        operation="token_exchange", function=_exchange_once,
+    )
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise ValidationError("Invalid Google desktop token response") from exc
+    if not isinstance(result, dict):
+        raise ValidationError("Invalid Google desktop token response")
+    id_token = result.get("id_token")
+    if not isinstance(id_token, str):
+        raise ValidationError("Google desktop ID token is missing")
+    identity = verify_google_id_token(
+        id_token, audience=client_id, expected_nonce=nonce,
+    )
+    _consume_google_desktop_token_once(id_token)
+    return authenticate_google_user(identity)
+
+
 # ============================================================================
 # GOOGLE CODE AUTHENTICATION
 # ============================================================================

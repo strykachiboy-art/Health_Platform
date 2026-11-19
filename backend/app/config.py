@@ -53,6 +53,11 @@ class Config:
         "GOOGLE_DESKTOP_CLIENT_ID"
     )
 
+    # Runtime only: never stored in the Windows binary or in Git.
+    GOOGLE_DESKTOP_CLIENT_SECRET = os.environ.get(
+        "GOOGLE_DESKTOP_CLIENT_SECRET"
+    )
+
     GOOGLE_CLIENT_SECRET = os.environ.get(
         "GOOGLE_CLIENT_SECRET"
     )
