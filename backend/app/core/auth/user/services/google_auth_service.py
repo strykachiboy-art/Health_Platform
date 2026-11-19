@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import hashlib
 import secrets
 from urllib.parse import urlencode
 
@@ -665,6 +666,9 @@ def authenticate_google_user(
 
 def verify_google_id_token(
     token: str,
+    *,
+    audience: str | None = None,
+    expected_nonce: str | None = None,
 ) -> GoogleUserInfoSchema:
     """Verify a Google-issued ID token for this backend audience."""
 
@@ -676,7 +680,7 @@ def verify_google_id_token(
     ):
         raise ValidationError("Google ID token is required or invalid")
 
-    client_id = current_app.config.get("GOOGLE_CLIENT_ID")
+    client_id = audience or current_app.config.get("GOOGLE_CLIENT_ID")
     if not client_id:
         raise ValidationError(
             "Google OAuth client ID is not configured"
@@ -696,6 +700,14 @@ def verify_google_id_token(
 
     if not isinstance(claims, Mapping):
         raise ValidationError("Invalid Google ID token")
+
+    if expected_nonce is not None:
+        verified_nonce = claims.get("nonce")
+        if (
+            not isinstance(verified_nonce, str)
+            or not secrets.compare_digest(verified_nonce, expected_nonce)
+        ):
+            raise ValidationError("Invalid Google desktop nonce")
 
     provider_user_id = claims.get("sub")
     email = claims.get("email")
@@ -737,6 +749,38 @@ def authenticate_google_id_token(
     """Authenticate a native-app user using a verified Google ID token."""
 
     google_user = verify_google_id_token(id_token)
+    return authenticate_google_user(google_user)
+
+
+def _consume_google_desktop_token_once(id_token: str) -> None:
+    """Redis-backed, bounded replay guard for already verified tokens."""
+    cache = extensions.redis_client
+    if cache is None:
+        raise ValidationError("Google desktop replay storage unavailable")
+    key = "wd01:google:desktop:used:" + hashlib.sha256(
+        id_token.encode("utf-8")
+    ).hexdigest()
+    try:
+        reserved = cache.set(key, "1", nx=True, ex=7200)
+    except (ConnectionError, TimeoutError) as exc:
+        raise ValidationError("Google desktop replay storage unavailable") from exc
+    if reserved is not True:
+        raise ValidationError("Google desktop authentication already consumed")
+
+
+def authenticate_google_desktop_id_token(
+    *, id_token: str, nonce: str,
+) -> dict:
+    """Desktop-only audience and nonce, then existing user/JWT pathway."""
+    desktop_client_id = current_app.config.get("GOOGLE_DESKTOP_CLIENT_ID")
+    if not desktop_client_id:
+        raise ValidationError("Google desktop OAuth is not configured")
+    if not isinstance(nonce, str) or len(nonce) < 43 or len(nonce) > 128:
+        raise ValidationError("Google desktop nonce is invalid")
+    google_user = verify_google_id_token(
+        id_token, audience=desktop_client_id, expected_nonce=nonce,
+    )
+    _consume_google_desktop_token_once(id_token)
     return authenticate_google_user(google_user)
 
 

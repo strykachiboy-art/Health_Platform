@@ -91,6 +91,18 @@ class GoogleMobileAuthSchema(BaseModel):
     )
 
 
+class GoogleDesktopAuthSchema(BaseModel):
+    id_token: str = Field(
+        min_length=1,
+        max_length=8192,
+    )
+    nonce: str = Field(
+        min_length=43,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
 class GoogleUserInfoSchema(BaseModel):
     provider_user_id: str = Field(
         min_length=1,

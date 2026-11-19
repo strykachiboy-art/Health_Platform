@@ -20,6 +20,7 @@ from app.core.auth.user.models.user_model import User
 from app.core.auth.user.schema.user_schema import (
     GoogleAuthCallbackSchema,
     GoogleMobileAuthSchema,
+    GoogleDesktopAuthSchema,
     UserLoginSchema,
     UserRegisterSchema,
 )
@@ -29,6 +30,7 @@ from app.core.auth.user.schema.clinic_context_schema import (
 from app.core.auth.user.services.google_auth_service import (
     authenticate_google_code,
     authenticate_google_id_token,
+    authenticate_google_desktop_id_token,
     get_google_authorization_url,
     validate_google_oauth_state,
 )
@@ -220,6 +222,31 @@ def google_mobile_login():
             "data": result,
         }
     ), 200
+
+
+@auth_bp.post("/google/desktop")
+@limiter.limit(
+    lambda: current_app.config.get(
+        "AUTH_GOOGLE_RATE_LIMIT",
+        "5 per minute",
+    )
+)
+def google_desktop_login():
+    payload = request.get_json(silent=True) or {}
+    try:
+        data = GoogleDesktopAuthSchema.model_validate(payload)
+    except PydanticValidationError as exc:
+        return jsonify({
+            "success": False, "error": "Validation failed",
+            "details": _safe_validation_errors(exc),
+        }), 400
+    try:
+        result = authenticate_google_desktop_id_token(
+            id_token=data.id_token, nonce=data.nonce,
+        )
+    except DomainError as exc:
+        return jsonify({"success": False, "error": str(exc)}), exc.status_code
+    return jsonify({"success": True, "data": result}), 200
 
 
 @auth_bp.get("/google")
