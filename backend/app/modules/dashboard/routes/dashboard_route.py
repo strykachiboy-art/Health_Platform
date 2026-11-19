@@ -123,15 +123,10 @@ def _validation_error_response(
 def _domain_error_response(
     exc: DomainError,
 ):
-    return (
-        jsonify(
-            {
-                "success": False,
-                "error": str(exc),
-            }
-        ),
-        exc.status_code,
-    )
+    payload = {"success": False, "error": str(exc)}
+    if exc.status_code == 409 and exc.code == "PATIENT_ENROLLMENT_REQUIRED":
+        payload["code"] = exc.code
+    return jsonify(payload), exc.status_code
 
 
 @dashboard_bp.get("")

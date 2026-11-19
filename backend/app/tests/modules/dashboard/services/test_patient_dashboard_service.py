@@ -23,7 +23,7 @@ from app.core.enums.role_enums import Role
 from app.core.enums.ward_enums import (
     AdmissionStatus,
 )
-from app.core.exceptions import ValidationError
+from app.core.exceptions import ConflictError, ValidationError
 
 from app.modules.appointment.models.appointment_model import (
     Appointment,
@@ -293,12 +293,15 @@ def test_rejects_patient_without_patient_profile(
     assert actor.patient is None
 
     with pytest.raises(
-        ValidationError,
-        match="not associated with a patient profile",
-    ):
+        ConflictError,
+        match="Clinical enrollment is pending",
+    ) as error:
         patient_dashboard_service.get_patient_dashboard(
             actor=actor,
         )
+    assert error.value.status_code == 409
+    assert error.value.code == "PATIENT_ENROLLMENT_REQUIRED"
+    assert actor.patient is None
 
 
 def test_empty_dashboard_returns_zero_values(

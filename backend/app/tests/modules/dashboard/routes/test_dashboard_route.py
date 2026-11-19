@@ -528,6 +528,39 @@ def test_get_dashboard_converts_string_identity_to_integer(
 
 
 # ============================================================================
+# WD01: AUTHENTICATED GOOGLE PATIENT WITHOUT CLINICAL ENROLLMENT
+# ============================================================================
+
+
+def test_wd01_unenrolled_google_patient_returns_typed_409_without_clinic(
+    client, db, make_user, auth_headers_for,
+):
+    from app.core.auth.user.models.user_auth_identity_model import UserAuthIdentity
+    from app.core.enums.role_enums import Role
+
+    actor = make_user(role=Role.PATIENT)
+    actor.password_hash = None
+    db.session.add(UserAuthIdentity(
+        user_id=actor.id, provider="google", provider_user_id="wd01-synthetic-sub",
+    ))
+    db.session.flush()
+    assert actor.clinic_id is None
+    assert actor.patient is None
+
+    response = client.get(
+        "/api/v1/dashboard", headers=auth_headers_for(actor),
+    )
+    assert response.status_code == 409
+    assert response.get_json() == {
+        "success": False,
+        "error": "Clinical enrollment is pending",
+        "code": "PATIENT_ENROLLMENT_REQUIRED",
+    }
+    assert actor.clinic_id is None
+    assert actor.patient is None
+
+
+# ============================================================================
 # DOMAIN ERROR MAPPING
 # ============================================================================
 

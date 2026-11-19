@@ -18,7 +18,7 @@ from app.core.enums.role_enums import Role
 from app.core.enums.ward_enums import (
     AdmissionStatus,
 )
-from app.core.exceptions import ValidationError
+from app.core.exceptions import ConflictError, ValidationError
 
 from app.core.notifications.models.notification_models import (
     Notification,
@@ -72,9 +72,11 @@ def get_patient_dashboard(
     patient = actor.patient
 
     if patient is None:
-        raise ValidationError(
-            "Patient account is not associated "
-            "with a patient profile"
+        # An unscoped Google account is not a clinic-enrolled patient record.
+        # Never infer a tenant, clinic or patient number from authentication.
+        raise ConflictError(
+            "Clinical enrollment is pending",
+            code="PATIENT_ENROLLMENT_REQUIRED",
         )
 
     clinic_id = patient.clinic_id
