@@ -40,6 +40,7 @@ import 'package:clinic_system_pro/features/auth/data/coordinator_authenticated_s
 import 'package:clinic_system_pro/features/auth/data/auth_session_store.dart';
 import 'package:clinic_system_pro/core/networking/local_debug_tls_client.dart';
 import 'package:clinic_system_pro/features/auth/data/google_sign_in_provider.dart';
+import 'package:clinic_system_pro/features/auth/data/google_desktop_oauth.dart';
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
 import 'package:clinic_system_pro/features/clinical_safety/data/clinical_safety_remote_data_source.dart';
@@ -333,7 +334,22 @@ Future<void> main() async {
     replayScheduler: replayScheduler,
   );
 
+  const googleWindowsClientId = String.fromEnvironment(
+    'GOOGLE_WINDOWS_CLIENT_ID',
+  );
+  final windowsGoogleEnabled =
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.windows &&
+      googleWindowsClientId.isNotEmpty;
   final loginScreen = GoogleLoginScreen(
+    enableDesktopGoogleSignIn: windowsGoogleEnabled,
+    acquireDesktopGoogleIdToken: windowsGoogleEnabled
+        ? () => acquireDesktopGoogleIdentity(clientId: googleWindowsClientId)
+        : null,
+    enableNativeGoogleSignIn:
+        !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS),
     acquireGoogleIdToken: googleSignInProvider.signInForIdToken,
     authRemoteDataSource: authRemoteDataSource,
     sessionCoordinator: sessionCoordinator,

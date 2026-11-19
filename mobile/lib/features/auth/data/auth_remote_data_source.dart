@@ -92,6 +92,52 @@ class AuthRemoteDataSource {
 
   static const String _loginPath = 'api/v1/auth/login';
   static const String _googleMobileLoginPath = 'api/v1/auth/google/mobile';
+  static const String _googleDesktopLoginPath = 'api/v1/auth/google/desktop';
+  static const String _googleDesktopCodeLoginPath =
+      'api/v1/auth/google/desktop/code';
+
+  /// Flask performs the one-time code exchange; client secret never on Windows.
+  Future<AuthTokenResponse> loginWithDesktopGoogleAuthorizationCode({
+    required String code,
+    required String codeVerifier,
+    required String redirectUri,
+    required String nonce,
+  }) async {
+    if (code.isEmpty ||
+        code.length > 4096 ||
+        !RegExp(r'^[A-Za-z0-9._~-]{43,128}$').hasMatch(codeVerifier) ||
+        !RegExp(r'^http://127\.0\.0\.1:[0-9]{2,5}$').hasMatch(redirectUri) ||
+        !RegExp(r'^[A-Za-z0-9_-]{43,128}$').hasMatch(nonce)) {
+      throw ArgumentError('Invalid desktop Google code handoff.');
+    }
+    final result = await _apiClient.postJson(
+      _googleDesktopCodeLoginPath,
+      body: <String, dynamic>{
+        'code': code,
+        'code_verifier': codeVerifier,
+        'redirect_uri': redirectUri,
+        'nonce': nonce,
+      },
+    );
+    return AuthTokenResponse.fromEnvelope(result);
+  }
+
+  /// Desktop Google ID token verified by Flask against its own allowlisted
+  /// audience and expected nonce. CSP tokens only come from Flask.
+  Future<AuthTokenResponse> loginWithDesktopGoogleIdToken({
+    required String idToken,
+    required String nonce,
+  }) async {
+    if (idToken.isEmpty || nonce.isEmpty) {
+      throw ArgumentError('Google desktop identity is incomplete.');
+    }
+    final response = await _apiClient.postJson(
+      _googleDesktopLoginPath,
+      body: {'id_token': idToken, 'nonce': nonce},
+    );
+    return AuthTokenResponse.fromEnvelope(response);
+  }
+
   static const String _refreshPath = 'api/v1/auth/refresh';
   static const String _logoutPath = 'api/v1/auth/logout';
 

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dart';
+import 'package:clinic_system_pro/features/auth/data/google_desktop_identity.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
 
@@ -19,6 +20,9 @@ class GoogleLoginScreen extends StatefulWidget {
     required this.acquireGoogleIdToken,
     required this.authRemoteDataSource,
     required this.sessionCoordinator,
+    this.enableNativeGoogleSignIn = true,
+    this.enableDesktopGoogleSignIn = false,
+    this.acquireDesktopGoogleIdToken,
     this.sessionNavigationGuard,
     this.onSessionEnding,
     this.onSessionChanged,
@@ -27,6 +31,13 @@ class GoogleLoginScreen extends StatefulWidget {
   final Future<String?> Function() acquireGoogleIdToken;
   final AuthRemoteDataSource authRemoteDataSource;
   final AuthSessionCoordinator sessionCoordinator;
+
+  /// Native Google SDK is restricted to Android/iOS. Desktop uses backend password auth.
+  final bool enableNativeGoogleSignIn;
+
+  /// Browser-based Google login is available only when explicitly wired.
+  final bool enableDesktopGoogleSignIn;
+  final Future<DesktopGoogleIdentity?> Function()? acquireDesktopGoogleIdToken;
   final SessionNavigationGuard? sessionNavigationGuard;
   final FutureOr<void> Function()? onSessionEnding;
   final VoidCallback? onSessionChanged;
@@ -153,7 +164,12 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   }
 
   Future<void> _signIn() async {
-    if (_busy || _restoring) return;
+    if ((!widget.enableNativeGoogleSignIn &&
+            !widget.enableDesktopGoogleSignIn) ||
+        _busy ||
+        _restoring) {
+      return;
+    }
 
     final navigationGuard = widget.sessionNavigationGuard;
     if (navigationGuard?.requiresLocalRecovery ?? false) return;
@@ -165,22 +181,51 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       _statusMessage = null;
     });
 
+    String wd01AuthStage = 'google_browser_callback_or_token';
     try {
-      final idToken = await widget.acquireGoogleIdToken();
-
-      if (idToken == null) {
-        if (!mounted) return;
-        setState(() {
-          _busy = false;
-          _statusMessage = 'Sign-in cancelled.';
-        });
-        return;
+      final AuthTokenResponse tokens;
+      if (widget.enableDesktopGoogleSignIn) {
+        final identity = await widget.acquireDesktopGoogleIdToken?.call();
+        if (identity == null) {
+          if (!mounted) return;
+          setState(() {
+            _busy = false;
+            _statusMessage = 'Sign-in cancelled.';
+          });
+          return;
+        }
+        wd01AuthStage = 'flask_desktop_auth_exchange';
+        if (identity.authorizationCode != null) {
+          tokens = await widget.authRemoteDataSource
+              .loginWithDesktopGoogleAuthorizationCode(
+                code: identity.authorizationCode!,
+                codeVerifier: identity.codeVerifier!,
+                redirectUri: identity.redirectUri!,
+                nonce: identity.nonce,
+              );
+        } else {
+          tokens = await widget.authRemoteDataSource
+              .loginWithDesktopGoogleIdToken(
+                idToken: identity.idToken,
+                nonce: identity.nonce,
+              );
+        }
+      } else {
+        final idToken = await widget.acquireGoogleIdToken();
+        if (idToken == null) {
+          if (!mounted) return;
+          setState(() {
+            _busy = false;
+            _statusMessage = 'Sign-in cancelled.';
+          });
+          return;
+        }
+        tokens = await widget.authRemoteDataSource.loginWithGoogleIdToken(
+          idToken: idToken,
+        );
       }
 
-      final tokens = await widget.authRemoteDataSource.loginWithGoogleIdToken(
-        idToken: idToken,
-      );
-
+      wd01AuthStage = 'secure_session_persistence';
       final authenticated = await widget.sessionCoordinator
           .persistAuthenticatedSession(tokens);
 
@@ -213,7 +258,44 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         _busy = false;
         _statusMessage = 'Signed in securely.';
       });
-    } catch (_) {
+    } catch (error) {
+      // Only static, allowlisted diagnostics. Never render raw exceptions,
+      // browser callback URLs, Google tokens, or backend response bodies.
+      final wd01Diagnostic = switch (error.toString()) {
+        'Bad state: Google token exchange failed.' =>
+          'google_token_exchange_rejected',
+        'Bad state: WD01 Google token error: google_token_invalid_client' =>
+          'google_token_invalid_client',
+        'Bad state: WD01 Google token error: google_token_invalid_grant' =>
+          'google_token_invalid_grant',
+        'Bad state: WD01 Google token error: google_token_invalid_request' =>
+          'google_token_invalid_request',
+        'Bad state: WD01 Google token error: google_token_unauthorized_client' =>
+          'google_token_unauthorized_client',
+        'Bad state: WD01 Google token error: google_token_redirect_uri_mismatch' =>
+          'google_token_redirect_uri_mismatch',
+        'Bad state: WD01 Google token error: google_token_unsupported_grant_type' =>
+          'google_token_unsupported_grant_type',
+        'Bad state: WD01 Google token error: google_token_access_denied' =>
+          'google_token_access_denied',
+        'Bad state: WD01 Google token error: google_token_temporarily_unavailable' =>
+          'google_token_temporarily_unavailable',
+        'Bad state: WD01 Google token error: google_token_invalid_scope' =>
+          'google_token_invalid_scope',
+        'Bad state: WD01 Google token error: google_token_error_unclassified' =>
+          'google_token_error_unclassified',
+        'Bad state: Google returned no valid ID token.' =>
+          'google_id_token_missing',
+        'Bad state: Unexpected Google token response.' =>
+          'google_token_response_invalid',
+        'Bad state: Google returned no valid authorization code.' =>
+          'google_auth_code_missing',
+        'Bad state: Google authorization was not completed.' =>
+          'google_authorization_error',
+        'Bad state: Google sign-in timed out. Try again.' =>
+          'google_oauth_timeout',
+        _ => wd01AuthStage,
+      };
       final restored = await _restoreOrRequireRecovery();
       _applyNavigationState(restored);
       if (!mounted) return;
@@ -222,8 +304,11 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         _sessionState = restored;
         _busy = false;
         _errorMessage =
-            'Google sign-in could not be completed. '
-            'Check your connection or configuration and try again.';
+            const bool.fromEnvironment('WD01_AUTH_DIAGNOSTICS') &&
+                widget.enableDesktopGoogleSignIn
+            ? 'WD01 sign-in diagnostic: $wd01Diagnostic.'
+            : 'Google sign-in could not be completed. '
+                  'Check your connection or configuration and try again.';
       });
     }
   }
@@ -425,6 +510,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   }
 
   Widget _buildSignedOut() {
+    final showEmail = !widget.enableNativeGoogleSignIn || _showEmailPassword;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -433,20 +519,21 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 20),
-        OutlinedButton(
-          key: const ValueKey('auth-r01-email-toggle'),
-          onPressed: _busy
-              ? null
-              : () {
-                  setState(() => _showEmailPassword = !_showEmailPassword);
-                },
-          child: Text(
-            _showEmailPassword
-                ? 'Hide email sign-in'
-                : 'Sign in with email and password',
+        if (widget.enableNativeGoogleSignIn)
+          OutlinedButton(
+            key: const ValueKey('auth-r01-email-toggle'),
+            onPressed: _busy
+                ? null
+                : () {
+                    setState(() => _showEmailPassword = !_showEmailPassword);
+                  },
+            child: Text(
+              _showEmailPassword
+                  ? 'Hide email sign-in'
+                  : 'Sign in with email and password',
+            ),
           ),
-        ),
-        if (_showEmailPassword) ...[
+        if (showEmail) ...[
           const SizedBox(height: 12),
           TextField(
             key: const ValueKey('auth-r01-login-email'),
@@ -481,25 +568,29 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
                 : () => context.push<void>('/forgot-password'),
             child: const Text('Forgot password?'),
           ),
-          const SizedBox(height: 12),
-          const Text('Or continue with Google', textAlign: TextAlign.center),
-          const SizedBox(height: 12),
+          if (widget.enableNativeGoogleSignIn ||
+              widget.enableDesktopGoogleSignIn) ...[
+            const SizedBox(height: 12),
+            const Text('Or continue with Google', textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+          ],
         ],
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            key: const ValueKey('google-sign-in-button'),
-            onPressed: _busy ? null : _signIn,
-            icon: _busy
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.login),
-            label: Text(_busy ? 'Signing in...' : 'Continue with Google'),
+        if (widget.enableNativeGoogleSignIn || widget.enableDesktopGoogleSignIn)
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              key: const ValueKey('google-sign-in-button'),
+              onPressed: _busy ? null : _signIn,
+              icon: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.login),
+              label: Text(_busy ? 'Signing in...' : 'Continue with Google'),
+            ),
           ),
-        ),
       ],
     );
   }
