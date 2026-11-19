@@ -144,6 +144,12 @@ class _DashboardOverviewPanelState extends State<DashboardOverviewPanel> {
           'Dashboard is offline. No current metrics are available.',
         ApiFailureKind.invalidResponse =>
           'Dashboard response was invalid. No metrics are shown.',
+        ApiFailureKind.httpStatus
+            when error.statusCode == 409 &&
+                error.serverCode == 'PATIENT_ENROLLMENT_REQUIRED' &&
+                widget.expectedRole.trim().toLowerCase() == 'patient' =>
+          'Account created. Clinical enrollment is pending. '
+              'Contact your clinic to complete enrollment.',
         ApiFailureKind.httpStatus when error.statusCode == 401 =>
           'Session expired. Dashboard data was cleared.',
         ApiFailureKind.httpStatus when error.statusCode == 403 =>

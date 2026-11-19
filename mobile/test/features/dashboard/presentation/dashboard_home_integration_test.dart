@@ -138,6 +138,102 @@ void main() {
     expect(find.textContaining('does not invent counts'), findsNothing);
   });
 
+  testWidgets('WD01 typed 409 gives signed-in patient an enrollment notice', (
+    tester,
+  ) async {
+    var requests = 0;
+    final client = MockClient((request) async {
+      requests++;
+      expect(request.method, 'GET');
+      expect(request.url.path, '/api/v1/dashboard');
+      expect(request.headers['authorization'], 'Bearer test-dashboard-token');
+      return http.Response(
+        jsonEncode(<String, dynamic>{
+          'success': false,
+          'error': 'Clinical enrollment is pending',
+          'code': 'PATIENT_ENROLLMENT_REQUIRED',
+        }),
+        409,
+      );
+    });
+    addTearDown(client.close);
+    Future<AuthSessionState> loader() async =>
+        _ready(role: 'patient', clinic: null);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AuthenticatedHomeScreen(
+          loadSession: loader,
+          dashboardDataSource: _source(client, loadSession: loader),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(requests, 1);
+    expect(
+      find.text(
+        'Account created. Clinical enrollment is pending. '
+        'Contact your clinic to complete enrollment.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('p22-dashboard-unavailable')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('p22-dashboard-period')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('p22-dashboard-metric-appointments_today')),
+      findsNothing,
+    );
+  });
+
+  for (final variant in <Map<String, String>>[
+    <String, String>{'role': 'doctor', 'code': 'PATIENT_ENROLLMENT_REQUIRED'},
+    <String, String>{'role': 'patient', 'code': 'UNRECOGNIZED_CONFLICT'},
+  ]) {
+    testWidgets('WD01 wrong role or wrong 409 code remains generic: $variant', (
+      tester,
+    ) async {
+      final client = MockClient(
+        (_) async => http.Response(
+          jsonEncode(<String, dynamic>{
+            'success': false,
+            'error': 'SENSITIVE_SERVER_DIAGNOSTIC_NOT_FOR_UI',
+            'code': variant['code'],
+          }),
+          409,
+        ),
+      );
+      addTearDown(client.close);
+      Future<AuthSessionState> loader() async => _ready(
+        role: variant['role']!,
+        clinic: variant['role'] == 'patient' ? null : 3,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AuthenticatedHomeScreen(
+            loadSession: loader,
+            dashboardDataSource: _source(client, loadSession: loader),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Dashboard is unavailable. No current metrics are shown.'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Clinical enrollment is pending'),
+        findsNothing,
+      );
+      expect(find.textContaining('SENSITIVE_SERVER_DIAGNOSTIC'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('p22-dashboard-metric-appointments_today')),
+        findsNothing,
+      );
+    });
+  }
+
   testWidgets('S03 empty backend metrics do not become fabricated zero cards', (
     tester,
   ) async {
