@@ -11,6 +11,7 @@ import 'package:clinic_system_pro/features/auth/data/authenticated_sign_out_coor
 import 'package:clinic_system_pro/features/profile/data/profile_remote_data_source.dart';
 import 'package:clinic_system_pro/features/profile/presentation/account_clinic_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_home_screen.dart';
+import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workflow_hub.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_feature_frame.dart';
 
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
@@ -419,6 +420,11 @@ GoRouter createAppRouter({
       // RAD7 direct links are protected under the default /patients-only
       // navigation guard. The backend still rechecks role and clinic.
       if ((state.uri.path == '/radiology' || state.uri.path == '/printing') &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
+      // WD04 clinical workflow entry is never reachable from a signed-out link.
+      if (state.matchedLocation == '/clinical-workflows' &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -883,6 +889,26 @@ GoRouter createAppRouter({
                   loadSession: admissions.loadSession,
                   sessionNavigationGuard: guard,
                 ),
+              );
+            },
+          ),
+          GoRoute(
+            path: '/clinical-workflows',
+            name: 'wd04-clinical-workflows',
+            builder: (context, state) {
+              final loader = loadHomeSession;
+              final guard = sessionNavigationGuard;
+              if (loader == null ||
+                  guard == null ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Clinical workflows unavailable.')),
+                );
+              }
+              return Wd04ClinicalWorkflowHub(
+                loadSession: loader,
+                sessionNavigationGuard: guard,
+                onOpen: (path) => context.go(path),
               );
             },
           ),

@@ -8,6 +8,7 @@ import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.da
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/dashboard/presentation/dashboard_overview_panel.dart';
 import 'package:clinic_system_pro/features/home/presentation/windows_workstation_shortcuts.dart';
+import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workflow_hub.dart';
 
 /// Navigation suggestions, never authorization grants. The backend enforces
 /// identity, clinic and role for every requested resource.
@@ -408,6 +409,21 @@ List<HomeDestination> homeDestinationsFor({
         'surgery',
         'Surgery worklist',
         '/surgery',
+        Icons.medical_services_outlined,
+      ),
+    );
+  }
+  // WD04: group existing advanced clinical routes behind one staff-only
+  // suggestion. Backend and current session remain authoritative.
+  if (wd04ClinicalWorkflowLinks(
+    role: normalizedRole,
+    clinicContextId: clinicContextId,
+  ).isNotEmpty) {
+    destinations.add(
+      const HomeDestination(
+        'clinical_workflows',
+        'Clinical workflows',
+        '/clinical-workflows',
         Icons.medical_services_outlined,
       ),
     );
