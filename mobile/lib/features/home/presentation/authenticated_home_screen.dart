@@ -7,6 +7,7 @@ import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/dashboard/presentation/dashboard_overview_panel.dart';
+import 'package:clinic_system_pro/features/home/presentation/windows_workstation_shortcuts.dart';
 
 /// Navigation suggestions, never authorization grants. The backend enforces
 /// identity, clinic and role for every requested resource.
@@ -578,110 +579,120 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
             deviceRegistrationConfigured: widget.deviceRegistrationConfigured,
           );
     final wideScreen = MediaQuery.sizeOf(context).width >= 850;
-    return Scaffold(
-      key: const ValueKey('p22-home-shell'),
-      appBar: AppBar(
-        title: const Text('Clinic System Pro'),
-        actions: [
-          IconButton(
-            key: const ValueKey('p22-s05-open-account-home'),
-            tooltip: 'Profile and clinic',
-            onPressed:
-                role == null ||
-                    widget.sessionNavigationGuard?.canAccessProtectedRoutes ==
-                        false
-                ? null
-                : () => context.push<void>('/account'),
-            icon: const Icon(Icons.person_outline),
-          ),
-          IconButton(
-            key: const ValueKey('p22-home-session-controls'),
-            tooltip: 'Session and sign out',
-            onPressed: () => context.go('/login?session=1'),
-            icon: const Icon(Icons.account_circle_outlined),
-          ),
-        ],
-      ),
-      drawer: wideScreen || destinations.isEmpty
+    final patientLinks = destinations.where(
+      (destination) => destination.id == 'patients',
+    );
+    return WindowsWorkstationShortcuts(
+      onPatients: patientLinks.isEmpty
           ? null
-          : Drawer(
-              child: SafeArea(
-                child: ListView(
-                  children: [
-                    const ListTile(title: Text('Navigate')),
-                    for (final destination in destinations)
-                      ListTile(
-                        key: ValueKey('p22-drawer-${destination.id}'),
-                        leading: Icon(destination.icon),
-                        title: Text(destination.label),
-                        onTap: () {
-                          Navigator.of(context).pop();
-                          _openDestination(destination);
-                        },
-                      ),
-                  ],
+          : () => _openDestination(patientLinks.first),
+      child: Scaffold(
+        key: const ValueKey('p22-home-shell'),
+        appBar: AppBar(
+          title: const Text('Clinic System Pro'),
+          actions: [
+            IconButton(
+              key: const ValueKey('p22-s05-open-account-home'),
+              tooltip: 'Profile and clinic',
+              onPressed:
+                  role == null ||
+                      widget.sessionNavigationGuard?.canAccessProtectedRoutes ==
+                          false
+                  ? null
+                  : () => context.push<void>('/account'),
+              icon: const Icon(Icons.person_outline),
+            ),
+            IconButton(
+              key: const ValueKey('p22-home-session-controls'),
+              tooltip: 'Session and sign out',
+              onPressed: () => context.go('/login?session=1'),
+              icon: const Icon(Icons.account_circle_outlined),
+            ),
+          ],
+        ),
+        drawer: wideScreen || destinations.isEmpty
+            ? null
+            : Drawer(
+                child: SafeArea(
+                  child: ListView(
+                    children: [
+                      const ListTile(title: Text('Navigate')),
+                      for (final destination in destinations)
+                        ListTile(
+                          key: ValueKey('p22-drawer-${destination.id}'),
+                          leading: Icon(destination.icon),
+                          title: Text(destination.label),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            _openDestination(destination);
+                          },
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-      body: Column(
-        children: [
-          if (widget.statusStripBuilder != null) widget.statusStripBuilder!(),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final wide =
-                    constraints.maxWidth >= 850 && destinations.isNotEmpty;
-                return Row(
-                  children: [
-                    if (wide) ...[
-                      NavigationRail(
-                        scrollable: true,
-                        selectedIndex: 0,
-                        labelType: NavigationRailLabelType.all,
-                        destinations: [
-                          const NavigationRailDestination(
-                            icon: Icon(Icons.home_outlined),
-                            label: Text('Home'),
-                          ),
-                          for (final destination in destinations)
-                            NavigationRailDestination(
-                              icon: Icon(destination.icon),
-                              label: Text(destination.label),
+        body: Column(
+          children: [
+            if (widget.statusStripBuilder != null) widget.statusStripBuilder!(),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final wide =
+                      constraints.maxWidth >= 850 && destinations.isNotEmpty;
+                  return Row(
+                    children: [
+                      if (wide) ...[
+                        NavigationRail(
+                          scrollable: true,
+                          selectedIndex: 0,
+                          labelType: NavigationRailLabelType.all,
+                          destinations: [
+                            const NavigationRailDestination(
+                              icon: Icon(Icons.home_outlined),
+                              label: Text('Home'),
                             ),
-                        ],
-                        onDestinationSelected: (index) {
-                          if (index > 0) {
-                            _openDestination(destinations[index - 1]);
-                          }
-                        },
-                      ),
-                      const VerticalDivider(width: 1),
-                    ],
-                    Expanded(
-                      child: _loading
-                          ? const Center(
-                              child: CircularProgressIndicator(
-                                key: ValueKey('p22-home-loading'),
+                            for (final destination in destinations)
+                              NavigationRailDestination(
+                                icon: Icon(destination.icon),
+                                label: Text(destination.label),
                               ),
-                            )
-                          : role == null
-                          ? const Center(
-                              child: Padding(
-                                padding: EdgeInsets.all(24),
-                                child: Text(
-                                  'Authenticated session unavailable. Return to sign in.',
-                                  key: ValueKey('p22-home-session-unavailable'),
+                          ],
+                          onDestinationSelected: (index) {
+                            if (index > 0) {
+                              _openDestination(destinations[index - 1]);
+                            }
+                          },
+                        ),
+                        const VerticalDivider(width: 1),
+                      ],
+                      Expanded(
+                        child: _loading
+                            ? const Center(
+                                child: CircularProgressIndicator(
+                                  key: ValueKey('p22-home-loading'),
                                 ),
-                              ),
-                            )
-                          : _overview(role, destinations, wide: wide),
-                    ),
-                  ],
-                );
-              },
+                              )
+                            : role == null
+                            ? const Center(
+                                child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: Text(
+                                    'Authenticated session unavailable. Return to sign in.',
+                                    key: ValueKey(
+                                      'p22-home-session-unavailable',
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : _overview(role, destinations, wide: wide),
+                      ),
+                    ],
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

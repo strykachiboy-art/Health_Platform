@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_home_screen.dart';
+import 'package:clinic_system_pro/features/home/presentation/windows_workstation_shortcuts.dart';
 
 /// Shared navigation around existing feature routes. It never authenticates a
 /// request or grants role/clinic permission; the backend checks every request.
@@ -36,6 +37,7 @@ class _AuthenticatedFeatureFrameState extends State<AuthenticatedFeatureFrame> {
   int? _clinicId;
   bool _loading = true;
   int _generation = 0;
+  int _workspaceEpoch = 0;
 
   @override
   void initState() {
@@ -47,6 +49,7 @@ class _AuthenticatedFeatureFrameState extends State<AuthenticatedFeatureFrame> {
   @override
   void didUpdateWidget(covariant AuthenticatedFeatureFrame oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.location != widget.location) _workspaceEpoch++;
     if (!identical(
       oldWidget.sessionNavigationGuard,
       widget.sessionNavigationGuard,
@@ -74,6 +77,7 @@ class _AuthenticatedFeatureFrameState extends State<AuthenticatedFeatureFrame> {
 
   void _onSessionChanged() {
     _generation++;
+    _workspaceEpoch++;
     if (!mounted) return;
     if (widget.sessionNavigationGuard?.canAccessProtectedRoutes == true) {
       unawaited(_load());
@@ -157,115 +161,130 @@ class _AuthenticatedFeatureFrameState extends State<AuthenticatedFeatureFrame> {
           widget.location == destination.path ||
           widget.location.startsWith('${destination.path}/'),
     );
-    return Scaffold(
-      key: const ValueKey('p22-feature-shell'),
-      appBar: AppBar(
-        title: const Text('Clinic System Pro'),
-        leading: IconButton(
-          key: const ValueKey('p22-feature-home'),
-          tooltip: 'Back to home',
-          onPressed: available ? () => _go('/home') : null,
-          icon: const Icon(Icons.home_outlined),
-        ),
-        actions: [
-          IconButton(
-            key: const ValueKey('p22-s05-open-account-feature'),
-            tooltip: 'Profile and clinic',
-            onPressed: available ? () => _go('/account') : null,
-            icon: const Icon(Icons.person_outline),
+    return WindowsWorkstationShortcuts(
+      onHome: available ? () => _go('/home') : null,
+      onPatients:
+          available &&
+              destinations.any((destination) => destination.id == 'patients')
+          ? () => _go('/patients')
+          : null,
+      child: Scaffold(
+        key: const ValueKey('p22-feature-shell'),
+        appBar: AppBar(
+          title: const Text('Clinic System Pro'),
+          leading: IconButton(
+            key: const ValueKey('p22-feature-home'),
+            tooltip: 'Back to home',
+            onPressed: available ? () => _go('/home') : null,
+            icon: const Icon(Icons.home_outlined),
           ),
-          if (!wide && destinations.isNotEmpty)
-            Builder(
-              builder: (menuContext) => IconButton(
-                key: const ValueKey('p22-feature-menu'),
-                tooltip: 'Open navigation menu',
-                onPressed: () => Scaffold.of(menuContext).openDrawer(),
-                icon: const Icon(Icons.menu),
-              ),
+          actions: [
+            IconButton(
+              key: const ValueKey('p22-s05-open-account-feature'),
+              tooltip: 'Profile and clinic',
+              onPressed: available ? () => _go('/account') : null,
+              icon: const Icon(Icons.person_outline),
             ),
-          IconButton(
-            key: const ValueKey('p22-feature-session-controls'),
-            tooltip: 'Session and sign out',
-            onPressed: available ? () => _go('/login?session=1') : null,
-            icon: const Icon(Icons.account_circle_outlined),
-          ),
-        ],
-      ),
-      drawer: !wide && destinations.isNotEmpty
-          ? Drawer(
-              child: SafeArea(
-                child: ListView(
-                  children: [
-                    ListTile(
-                      key: const ValueKey('p22-feature-drawer-home'),
-                      leading: const Icon(Icons.home_outlined),
-                      title: const Text('Home'),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        _go('/home');
-                      },
-                    ),
-                    for (final destination in destinations)
-                      ListTile(
-                        key: ValueKey('p22-feature-drawer-${destination.id}'),
-                        leading: Icon(destination.icon),
-                        title: Text(destination.label),
-                        onTap: () {
-                          Navigator.of(context).pop();
-                          _go(destination.path);
-                        },
-                      ),
-                  ],
+            if (!wide && destinations.isNotEmpty)
+              Builder(
+                builder: (menuContext) => IconButton(
+                  key: const ValueKey('p22-feature-menu'),
+                  tooltip: 'Open navigation menu',
+                  onPressed: () => Scaffold.of(menuContext).openDrawer(),
+                  icon: const Icon(Icons.menu),
                 ),
               ),
-            )
-          : null,
-      body: Column(
-        children: [
-          if (widget.statusStripBuilder != null) widget.statusStripBuilder!(),
-          Expanded(
-            child: _loading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                      key: ValueKey('p22-feature-loading'),
-                    ),
-                  )
-                : !available
-                ? const Center(
-                    child: Text(
-                      'Authenticated session unavailable. Return to sign in.',
-                      key: ValueKey('p22-feature-session-unavailable'),
-                    ),
-                  )
-                : Row(
+            IconButton(
+              key: const ValueKey('p22-feature-session-controls'),
+              tooltip: 'Session and sign out',
+              onPressed: available ? () => _go('/login?session=1') : null,
+              icon: const Icon(Icons.account_circle_outlined),
+            ),
+          ],
+        ),
+        drawer: !wide && destinations.isNotEmpty
+            ? Drawer(
+                child: SafeArea(
+                  child: ListView(
                     children: [
-                      if (wide) ...[
-                        NavigationRail(
-                          scrollable: true,
-                          selectedIndex: selected < 0 ? null : selected + 1,
-                          labelType: NavigationRailLabelType.all,
-                          destinations: [
-                            const NavigationRailDestination(
-                              icon: Icon(Icons.home_outlined),
-                              label: Text('Home'),
-                            ),
-                            for (final destination in destinations)
-                              NavigationRailDestination(
-                                icon: Icon(destination.icon),
-                                label: Text(destination.label),
-                              ),
-                          ],
-                          onDestinationSelected: (index) => _go(
-                            index == 0 ? '/home' : destinations[index - 1].path,
-                          ),
+                      ListTile(
+                        key: const ValueKey('p22-feature-drawer-home'),
+                        leading: const Icon(Icons.home_outlined),
+                        title: const Text('Home'),
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          _go('/home');
+                        },
+                      ),
+                      for (final destination in destinations)
+                        ListTile(
+                          key: ValueKey('p22-feature-drawer-${destination.id}'),
+                          leading: Icon(destination.icon),
+                          title: Text(destination.label),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            _go(destination.path);
+                          },
                         ),
-                        const VerticalDivider(width: 1),
-                      ],
-                      Expanded(child: widget.child),
                     ],
                   ),
-          ),
-        ],
+                ),
+              )
+            : null,
+        body: Column(
+          children: [
+            if (widget.statusStripBuilder != null) widget.statusStripBuilder!(),
+            Expanded(
+              child: _loading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        key: ValueKey('p22-feature-loading'),
+                      ),
+                    )
+                  : !available
+                  ? const Center(
+                      child: Text(
+                        'Authenticated session unavailable. Return to sign in.',
+                        key: ValueKey('p22-feature-session-unavailable'),
+                      ),
+                    )
+                  : Row(
+                      children: [
+                        if (wide) ...[
+                          NavigationRail(
+                            scrollable: true,
+                            selectedIndex: selected < 0 ? null : selected + 1,
+                            labelType: NavigationRailLabelType.all,
+                            destinations: [
+                              const NavigationRailDestination(
+                                icon: Icon(Icons.home_outlined),
+                                label: Text('Home'),
+                              ),
+                              for (final destination in destinations)
+                                NavigationRailDestination(
+                                  icon: Icon(destination.icon),
+                                  label: Text(destination.label),
+                                ),
+                            ],
+                            onDestinationSelected: (index) => _go(
+                              index == 0
+                                  ? '/home'
+                                  : destinations[index - 1].path,
+                            ),
+                          ),
+                          const VerticalDivider(width: 1),
+                        ],
+                        Expanded(
+                          child: KeyedSubtree(
+                            key: ValueKey('wd02-workspace-$_workspaceEpoch'),
+                            child: widget.child,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }

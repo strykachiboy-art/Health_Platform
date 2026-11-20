@@ -65,23 +65,27 @@ void main() {
             expect(scaffold.drawer, isNotNull);
           }
 
-          expect(
-            find.byKey(const ValueKey('p22-home-patients')),
-            findsOneWidget,
-          );
+          // ListView virtualizes offscreen navigation cards, especially
+          // at 390px with accessibility text scaling. Scroll to build and
+          // verify the real authorized patient destination; don't weaken it.
+          final patientsTile = find.byKey(const ValueKey('p22-home-patients'));
+          if (patientsTile.evaluate().isEmpty) {
+            await tester.scrollUntilVisible(patientsTile, 250);
+            await tester.pumpAndSettle();
+          }
+          expect(patientsTile, findsOneWidget);
 
-          if (width < 850) {
+          final authorityNotice = find.byKey(
+            const ValueKey('p22-home-server-authority'),
+          );
+          if (authorityNotice.evaluate().isEmpty) {
             await tester.scrollUntilVisible(
-              find.byKey(const ValueKey('p22-home-server-authority')),
-              250,
+              authorityNotice,
+              width < 850 ? 250 : -250,
             );
             await tester.pumpAndSettle();
           }
-
-          expect(
-            find.byKey(const ValueKey('p22-home-server-authority')),
-            findsOneWidget,
-          );
+          expect(authorityNotice, findsOneWidget);
 
           guard.invalidate();
           await tester.pumpAndSettle();

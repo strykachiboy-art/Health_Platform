@@ -7,6 +7,7 @@ import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
+import 'package:clinic_system_pro/features/home/presentation/windows_workstation_shortcuts.dart';
 
 class PatientDirectoryScreen extends StatefulWidget {
   const PatientDirectoryScreen({super.key, required this.dataSource});
@@ -21,6 +22,7 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   static const int _pageSize = 25;
 
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode(debugLabel: 'patient-search');
   Timer? _searchDebounce;
   List<Patient> _patients = <Patient>[];
   int _page = 0;
@@ -43,6 +45,7 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   void dispose() {
     _searchDebounce?.cancel();
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -184,109 +187,122 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Patient directory'),
-        actions: [
-          IconButton(
-            key: const ValueKey('patient-register-button'),
-            tooltip: 'Register patient',
-            icon: const Icon(Icons.person_add_alt_1),
-            onPressed: () =>
-                unawaited(context.push<void>('/patients/register')),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: TextField(
-              key: const ValueKey('patient-search-field'),
-              controller: _searchController,
-              onChanged: _onSearchChanged,
-              textInputAction: TextInputAction.search,
-              decoration: InputDecoration(
-                labelText: 'Search patients',
-                hintText: 'Name or patient number',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchController.text.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: 'Clear search',
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          _onSearchChanged('');
-                          setState(() {});
-                        },
-                      ),
-                border: const OutlineInputBorder(),
-              ),
+    return WindowsWorkstationShortcuts(
+      onSearch: () => _searchFocusNode.requestFocus(),
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Patient directory'),
+          actions: [
+            IconButton(
+              key: const ValueKey('patient-register-button'),
+              tooltip: 'Register patient',
+              icon: const Icon(Icons.person_add_alt_1),
+              onPressed: () =>
+                  unawaited(context.push<void>('/patients/register')),
             ),
-          ),
-          if (_total != null && _errorMessage == null)
+          ],
+        ),
+        body: Column(
+          children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('$_total active patient${_total == 1 ? '' : 's'}'),
-              ),
-            ),
-          Expanded(child: _buildResults()),
-          if (_patients.isNotEmpty &&
-              (_errorMessage != null || _resultsStale || _refreshing))
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Column(
-                children: [
-                  if (_resultsStale)
-                    const Text(
-                      'Showing previously loaded patients. These results may be out of date.',
-                      textAlign: TextAlign.center,
-                    ),
-                  if (_errorMessage != null)
-                    Text(_errorMessage!, textAlign: TextAlign.center),
-                  TextButton(
-                    onPressed: _refreshing
-                        ? null
-                        : () => unawaited(_loadPage(reset: !_needsSignIn)),
-                    child: Text(
-                      _refreshing
-                          ? 'Refreshing...'
-                          : (_needsSignIn ? 'Return to sign in' : 'Retry'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          if (_patients.isNotEmpty &&
-              _total != null &&
-              _patients.length < _total! &&
-              _errorMessage == null &&
-              !_resultsStale &&
-              !_refreshing)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-              child: SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  key: const ValueKey('patient-load-more-button'),
-                  onPressed: _loadingMore
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: TextField(
+                key: const ValueKey('patient-search-field'),
+                controller: _searchController,
+                focusNode: _searchFocusNode,
+                onChanged: _onSearchChanged,
+                onSubmitted: (_) {
+                  _searchDebounce?.cancel();
+                  unawaited(_loadPage(reset: true));
+                },
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  labelText: 'Search patients',
+                  hintText: 'Name or patient number',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchController.text.isEmpty
                       ? null
-                      : () => unawaited(_loadPage(reset: false)),
-                  icon: _loadingMore
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.expand_more),
-                  label: Text(_loadingMore ? 'Loading...' : 'Load more'),
+                      : IconButton(
+                          tooltip: 'Clear search',
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _searchController.clear();
+                            _onSearchChanged('');
+                            setState(() {});
+                          },
+                        ),
+                  border: const OutlineInputBorder(),
                 ),
               ),
             ),
-        ],
+            if (_total != null && _errorMessage == null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '$_total active patient${_total == 1 ? '' : 's'}',
+                  ),
+                ),
+              ),
+            Expanded(child: _buildResults()),
+            if (_patients.isNotEmpty &&
+                (_errorMessage != null || _resultsStale || _refreshing))
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Column(
+                  children: [
+                    if (_resultsStale)
+                      const Text(
+                        'Showing previously loaded patients. These results may be out of date.',
+                        textAlign: TextAlign.center,
+                      ),
+                    if (_errorMessage != null)
+                      Text(_errorMessage!, textAlign: TextAlign.center),
+                    TextButton(
+                      onPressed: _refreshing
+                          ? null
+                          : () => unawaited(_loadPage(reset: !_needsSignIn)),
+                      child: Text(
+                        _refreshing
+                            ? 'Refreshing...'
+                            : (_needsSignIn ? 'Return to sign in' : 'Retry'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (_patients.isNotEmpty &&
+                _total != null &&
+                _patients.length < _total! &&
+                _errorMessage == null &&
+                !_resultsStale &&
+                !_refreshing)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('patient-load-more-button'),
+                    onPressed: _loadingMore
+                        ? null
+                        : () => unawaited(_loadPage(reset: false)),
+                    icon: _loadingMore
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.expand_more),
+                    label: Text(_loadingMore ? 'Loading...' : 'Load more'),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
