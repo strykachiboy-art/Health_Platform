@@ -225,6 +225,8 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         _errorMessage = _messageFor(error);
         _loading = false;
         if (error is AuthenticatedSessionUnavailableException ||
+            error is PatientReadSessionMismatchException ||
+            error is PatientReadScopeViolationException ||
             (error is ApiException &&
                 const <int>{401, 403, 404}.contains(error.statusCode))) {
           // Do not keep showing a snapshot after access is rejected or
@@ -236,6 +238,12 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   }
 
   String _messageFor(Object error) {
+    if (error is PatientReadSessionMismatchException) {
+      return 'Session or clinic changed. Patient details were cleared. Revalidate access before returning.';
+    }
+    if (error is PatientReadScopeViolationException) {
+      return 'The backend returned a patient outside the authorized scope. Patient details were cleared.';
+    }
     if (error is AuthenticatedSessionUnavailableException) {
       return error.failure == AuthenticatedSessionAccessFailure.recoveryRequired
           ? 'Your saved session requires recovery before this patient can be loaded.'
@@ -272,6 +280,8 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   }
 
   bool get _needsSignIn =>
+      _lastError is PatientReadSessionMismatchException ||
+      _lastError is PatientReadScopeViolationException ||
       _lastError is AuthenticatedSessionUnavailableException ||
       (_lastError is ApiException &&
           (_lastError as ApiException).statusCode == 401);

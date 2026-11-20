@@ -2,20 +2,113 @@
 
 import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/session/authenticated_session_access.dart';
+import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
+import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
+import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
 
 import 'models/patient.dart';
 import 'models/patient_page.dart';
+
+/// A patient read from a previous user or clinic must never become visible.
+/// Client-side checks are defense in depth; Flask remains authoritative.
+class PatientReadSessionMismatchException implements Exception {
+  const PatientReadSessionMismatchException();
+
+  @override
+  String toString() => 'Patient read session changed or is unavailable.';
+}
+
+/// A scoped backend payload must not contain another clinic or patient.
+class PatientReadScopeViolationException implements Exception {
+  const PatientReadScopeViolationException();
+
+  @override
+  String toString() => 'Patient response did not match the authorized scope.';
+}
 
 /// Data access for the existing Flask patient endpoints.
 class PatientRemoteDataSource {
   const PatientRemoteDataSource({
     required ApiClient apiClient,
     required AuthenticatedAccessTokenLoader loadAccessToken,
+    Future<AuthSessionState> Function()? loadSession,
+    SessionNavigationGuard? sessionNavigationGuard,
   }) : _apiClient = apiClient,
-       _loadAccessToken = loadAccessToken;
+       _loadAccessToken = loadAccessToken,
+       _loadSession = loadSession,
+       _sessionNavigationGuard = sessionNavigationGuard;
 
   final ApiClient _apiClient;
   final AuthenticatedAccessTokenLoader _loadAccessToken;
+  final Future<AuthSessionState> Function()? _loadSession;
+  final SessionNavigationGuard? _sessionNavigationGuard;
+
+  static bool _sameSession(AuthTokenResponse before, AuthTokenResponse after) =>
+      before.userId == after.userId &&
+      before.clinicContextId == after.clinicContextId &&
+      before.tenantId == after.tenantId &&
+      before.role.trim().toLowerCase() == after.role.trim().toLowerCase() &&
+      before.accessToken == after.accessToken &&
+      before.refreshToken == after.refreshToken;
+
+  static Future<AuthTokenResponse> _requireReadSession(
+    Future<AuthSessionState> Function() loader,
+  ) async {
+    try {
+      final state = await loader();
+      final session = state.session;
+      if (state.disposition != AuthSessionDisposition.ready ||
+          session == null ||
+          session.userId <= 0 ||
+          session.clinicContextId == null ||
+          session.clinicContextId! <= 0 ||
+          session.role.trim().isEmpty ||
+          session.accessToken.trim().isEmpty ||
+          session.accessToken.trim() != session.accessToken ||
+          session.refreshToken.trim().isEmpty) {
+        throw const PatientReadSessionMismatchException();
+      }
+      return session;
+    } on Object {
+      // No tokens, patient details, or tenant identifiers in exception output.
+      throw const PatientReadSessionMismatchException();
+    }
+  }
+
+  Future<T> _scopedRead<T>(
+    Future<T> Function(String bearerToken) request, {
+    void Function(T result, int expectedClinicId)? validate,
+  }) async {
+    final guard = _sessionNavigationGuard;
+    final loader = _loadSession;
+    if (guard == null && loader == null) {
+      // Existing test/legacy adapter seam; production always injects both.
+      return request(await _loadAccessToken());
+    }
+    if (guard == null || loader == null) {
+      throw const PatientReadSessionMismatchException();
+    }
+    final revision = guard.revision;
+    if (!guard.canAccessProtectedRoutes) {
+      throw const PatientReadSessionMismatchException();
+    }
+    final before = await _requireReadSession(loader);
+    if (!guard.canAccessProtectedRoutes || guard.revision != revision) {
+      throw const PatientReadSessionMismatchException();
+    }
+    final result = await request(before.accessToken);
+    if (!guard.canAccessProtectedRoutes || guard.revision != revision) {
+      throw const PatientReadSessionMismatchException();
+    }
+    final after = await _requireReadSession(loader);
+    if (!guard.canAccessProtectedRoutes ||
+        guard.revision != revision ||
+        !_sameSession(before, after)) {
+      throw const PatientReadSessionMismatchException();
+    }
+    validate?.call(result, before.clinicContextId!);
+    return result;
+  }
 
   Future<PatientPage> fetchPatients({
     String? search,
@@ -55,10 +148,22 @@ class PatientRemoteDataSource {
       queryParameters: query,
     ).toString();
 
-    final bearerToken = await _loadAccessToken();
-    final envelope = await _apiClient.getJson(path, bearerToken: bearerToken);
-    final data = _dataFromEnvelope(envelope);
-    return PatientPage.fromJson(data);
+    return _scopedRead<PatientPage>(
+      (bearerToken) async {
+        final envelope = await _apiClient.getJson(
+          path,
+          bearerToken: bearerToken,
+        );
+        return PatientPage.fromJson(_dataFromEnvelope(envelope));
+      },
+      validate: (result, clinicId) {
+        if (result.page != page ||
+            result.perPage != perPage ||
+            result.items.any((patient) => patient.clinicId != clinicId)) {
+          throw const PatientReadScopeViolationException();
+        }
+      },
+    );
   }
 
   Future<Patient> fetchPatient({
@@ -76,16 +181,23 @@ class PatientRemoteDataSource {
       );
     }
 
-    final bearerToken = await _loadAccessToken();
-    final envelope = await _apiClient.getJson(
-      'api/v1/patients/$patientId',
-      bearerToken: bearerToken,
-      additionalHeaders: emergencyAccessId == null
-          ? null
-          : <String, String>{'X-Emergency-Access-ID': '$emergencyAccessId'},
+    return _scopedRead<Patient>(
+      (bearerToken) async {
+        final envelope = await _apiClient.getJson(
+          'api/v1/patients/$patientId',
+          bearerToken: bearerToken,
+          additionalHeaders: emergencyAccessId == null
+              ? null
+              : <String, String>{'X-Emergency-Access-ID': '$emergencyAccessId'},
+        );
+        return Patient.fromJson(_dataFromEnvelope(envelope));
+      },
+      validate: (result, clinicId) {
+        if (result.id != patientId || result.clinicId != clinicId) {
+          throw const PatientReadScopeViolationException();
+        }
+      },
     );
-    final data = _dataFromEnvelope(envelope);
-    return Patient.fromJson(data);
   }
 
   /// Sets a patient's active status through the existing status endpoint.

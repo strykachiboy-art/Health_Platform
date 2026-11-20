@@ -102,11 +102,6 @@ Future<void> main() async {
     sessionCoordinator: sessionCoordinator,
   );
 
-  final patientDataSource = PatientRemoteDataSource(
-    apiClient: apiClient,
-    loadAccessToken: authenticatedSessionAccess.requireAccessToken,
-  );
-
   final emergencyAccessDataSource = EmergencyAccessRemoteDataSource(
     apiClient: apiClient,
     loadAccessToken: authenticatedSessionAccess.requireAccessToken,
@@ -124,6 +119,14 @@ Future<void> main() async {
       '/emergency-access',
       '/clinical-safety',
     ],
+  );
+  // WD03: bind patient reads to both the authenticated session and its clinic
+  // at request start AND after every awaited HTTP response.
+  final patientDataSource = PatientRemoteDataSource(
+    apiClient: apiClient,
+    loadAccessToken: authenticatedSessionAccess.requireAccessToken,
+    loadSession: sessionCoordinator.restoreSession,
+    sessionNavigationGuard: sessionNavigationGuard,
   );
   final appointmentDataSource = AppointmentRemoteDataSource(
     apiClient: apiClient,

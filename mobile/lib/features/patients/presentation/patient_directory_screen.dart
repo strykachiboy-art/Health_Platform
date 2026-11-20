@@ -123,6 +123,8 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
 
       final accessRejected =
           error is AuthenticatedSessionUnavailableException ||
+          error is PatientReadSessionMismatchException ||
+          error is PatientReadScopeViolationException ||
           (error is ApiException &&
               const <int>{401, 403}.contains(error.statusCode));
 
@@ -151,6 +153,12 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   }
 
   String _messageFor(Object error) {
+    if (error is PatientReadSessionMismatchException) {
+      return 'Session or clinic changed. Patient results were cleared. Sign in or reopen the authorized clinic.';
+    }
+    if (error is PatientReadScopeViolationException) {
+      return 'The backend returned a patient outside the authorized clinic. Results were cleared.';
+    }
     if (error is AuthenticatedSessionUnavailableException) {
       return error.failure == AuthenticatedSessionAccessFailure.recoveryRequired
           ? 'Your saved session requires recovery before patient data can be loaded.'
@@ -181,6 +189,8 @@ class _PatientDirectoryScreenState extends State<PatientDirectoryScreen> {
   }
 
   bool get _needsSignIn =>
+      _lastError is PatientReadSessionMismatchException ||
+      _lastError is PatientReadScopeViolationException ||
       _lastError is AuthenticatedSessionUnavailableException ||
       (_lastError is ApiException &&
           (_lastError as ApiException).statusCode == 401);
