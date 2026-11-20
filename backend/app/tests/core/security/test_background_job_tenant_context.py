@@ -13,6 +13,9 @@ from app.core.enums.notification_enums import (
 from app.modules.appointment.models.appointment_model import Appointment
 from app.modules.appointment.services import appointment_service
 from app.core.notifications.services import notification_service
+from app.modules.clinic.models.organization_model import (
+    TenantMembership, ClinicMembership,
+)
 
 
 def test_appointment_background_job_requires_matching_clinic(
@@ -70,6 +73,18 @@ def test_notification_background_job_requires_matching_clinic(
     clinic_a = make_clinic(name="Notification Clinic A")
     clinic_b = make_clinic(name="Notification Clinic B")
     staff_b = make_staff(clinic_b)
+    # Legitimate own-clinic delivery requires an ACTIVE recipient grant.
+    # The foreign-clinic delivery must remain denied before provider egress.
+    db_session.add(TenantMembership(
+        user_id=staff_b.user.id, organization_id=clinic_b.organization_id,
+        role='member', status='active', is_active=True,
+    ))
+    db_session.flush()
+    db_session.add(ClinicMembership(
+        user_id=staff_b.user.id, organization_id=clinic_b.organization_id,
+        clinic_id=clinic_b.id, role=staff_b.user.role.value, is_active=True,
+    ))
+    db_session.flush()
 
     notification = make_notification(
         clinic_id=clinic_b.id,

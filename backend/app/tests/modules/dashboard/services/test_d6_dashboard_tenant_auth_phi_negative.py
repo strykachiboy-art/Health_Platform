@@ -5,6 +5,11 @@ from unittest.mock import Mock
 import app.modules.dashboard.routes.dashboard_route as dashboard_routes
 
 from app.core.enums.role_enums import Role
+from app.extensions import db
+from app.core.auth.user.services.user_service import issue_auth_tokens
+from app.modules.clinic.models.organization_model import (
+    TenantMembership, ClinicMembership,
+)
 from app.core.enums.ward_enums import AdmissionStatus, BedStatus
 from app.modules.dashboard.services import clinical_dashboard_service
 from app.modules.dashboard.services import management_dashboard_service
@@ -263,9 +268,24 @@ class _FakeDashboardResult:
 def test_dashboard_route_ignores_client_controlled_role_and_clinic_selectors(
     client,
     user,
-    make_auth_headers,
+    clinic,
     monkeypatch,
 ):
+    # A staff dashboard requires real server-side tenant AND clinic
+    # grants. Client-supplied selectors must still be ignored.
+    db.session.add(TenantMembership(
+        user_id=user.id, organization_id=clinic.organization_id,
+        role='member', status='active', is_active=True,
+    ))
+    db.session.flush()
+    db.session.add(ClinicMembership(
+        user_id=user.id, organization_id=clinic.organization_id,
+        clinic_id=clinic.id, role=user.role.value, is_active=True,
+    ))
+    db.session.flush()
+    issued = issue_auth_tokens(user)
+    assert issued['tenant_id'] == str(clinic.organization_id)
+    assert issued['clinic_context_id'] == clinic.id
     service = Mock(
         return_value=_FakeDashboardResult(),
     )
@@ -278,7 +298,7 @@ def test_dashboard_route_ignores_client_controlled_role_and_clinic_selectors(
 
     response = client.get(
         "/api/v1/dashboard",
-        headers=make_auth_headers(user),
+        headers={'Authorization': 'Bearer ' + issued['access_token']},
         query_string={
             "clinic_id": "999999",
             "role": Role.SUPER_ADMIN.value,

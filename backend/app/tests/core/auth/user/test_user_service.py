@@ -13,6 +13,25 @@ from app.core.exceptions import (
 
 import pytest
 
+from app.extensions import db
+from app.modules.clinic.services.session_authority import TenantContextDenied
+from app.modules.clinic.models.organization_model import (
+    TenantMembership, ClinicMembership,
+)
+
+
+def _grant_superadmin_clinic(user, clinic):
+    db.session.add(TenantMembership(
+        user_id=user.id, organization_id=clinic.organization_id,
+        role='member', status='active', is_active=True,
+    ))
+    db.session.flush()
+    db.session.add(ClinicMembership(
+        user_id=user.id, organization_id=clinic.organization_id,
+        clinic_id=clinic.id, role=user.role.value, is_active=True,
+    ))
+    db.session.flush()
+
 
 # ============================================================================
 # GET USER
@@ -949,6 +968,7 @@ def test_issue_auth_tokens_adds_context_to_super_admin_tokens(
         role=Role.SUPER_ADMIN,
     )
     clinic = make_clinic()
+    _grant_superadmin_clinic(user, clinic)
 
     result = user_service.issue_auth_tokens(
         user,
@@ -958,6 +978,7 @@ def test_issue_auth_tokens_adds_context_to_super_admin_tokens(
     assert result["user_id"] == user.id
     assert result["role"] == Role.SUPER_ADMIN.value
     assert result["clinic_context_id"] == clinic.id
+    assert result["tenant_id"] == str(clinic.organization_id)
 
     access_payload = decode_token(
         result["access_token"],
@@ -968,6 +989,8 @@ def test_issue_auth_tokens_adds_context_to_super_admin_tokens(
 
     assert access_payload["clinic_context_id"] == clinic.id
     assert refresh_payload["clinic_context_id"] == clinic.id
+    assert access_payload["tenant_id"] == str(clinic.organization_id)
+    assert refresh_payload["tenant_id"] == str(clinic.organization_id)
 
 
 def test_issue_auth_tokens_rejects_context_for_normal_user(
@@ -975,8 +998,8 @@ def test_issue_auth_tokens_rejects_context_for_normal_user(
     clinic,
 ):
     with pytest.raises(
-        ValidationError,
-        match="Only a super administrator can use a clinic context",
+        TenantContextDenied,
+        match="Clinic grant required",
     ):
         user_service.issue_auth_tokens(
             user,
@@ -998,8 +1021,8 @@ def test_issue_auth_tokens_rejects_inactive_clinic_context(
     )
 
     with pytest.raises(
-        ValidationError,
-        match="Selected clinic is not active",
+        TenantContextDenied,
+        match="Clinic unavailable",
     ):
         user_service.issue_auth_tokens(
             user,
@@ -1015,8 +1038,8 @@ def test_issue_auth_tokens_rejects_inactive_user(
     )
 
     with pytest.raises(
-        ValidationError,
-        match="This account has been deactivated",
+        TenantContextDenied,
+        match="Active authenticated user required",
     ):
         user_service.issue_auth_tokens(
             user,
@@ -1026,8 +1049,8 @@ def test_issue_auth_tokens_rejects_inactive_user(
 def test_issue_auth_tokens_rejects_invalid_user(
 ):
     with pytest.raises(
-        ValidationError,
-        match="Invalid user",
+        TenantContextDenied,
+        match="Active authenticated user required",
     ):
         user_service.issue_auth_tokens(
             object(),
