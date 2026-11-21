@@ -1,5 +1,7 @@
 import 'package:clinic_system_pro/features/surgery/data/models/surgery_read_models.dart';
 
+import 'dashboard_extended_sections.dart';
+
 /// P22.S03 — read-only backend dashboard contract. These values are advisory
 /// snapshots, never clinical authorization or permission grants.
 ///
@@ -414,6 +416,7 @@ class DashboardSnapshot {
     required this.recentActivity,
     this.chat,
     this.surgery,
+    this.extendedSections,
   });
 
   final DashboardContext context;
@@ -424,6 +427,7 @@ class DashboardSnapshot {
   final List<DashboardActivity> recentActivity;
   final DashboardChatSummary? chat;
   final SurgeryDashboardWidget? surgery;
+  final DashboardExtendedSections? extendedSections;
 
   factory DashboardSnapshot.fromEnvelope(Map<String, dynamic> envelope) {
     if (envelope['success'] != true) {
@@ -472,6 +476,10 @@ class DashboardSnapshot {
             .map(
               (item) => DashboardActivity.fromJson(_object(item, 'activity')),
             ),
+      ),
+      extendedSections: DashboardExtendedSections.fromPayload(
+        data,
+        context.role,
       ),
       chat: rawChat == null
           ? null

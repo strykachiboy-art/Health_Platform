@@ -7,6 +7,7 @@ import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/dashboard/data/models/dashboard_snapshot.dart';
 import 'package:clinic_system_pro/features/dashboard/presentation/dashboard_role_presentation.dart';
+import 'package:clinic_system_pro/features/dashboard/presentation/dashboard_extended_section_panel.dart';
 import 'package:clinic_system_pro/features/surgery/presentation/surgery_read_screens.dart';
 
 /// GET-only, in-memory dashboard view. No KPI is shown until a fresh,
@@ -294,6 +295,9 @@ class _DashboardOverviewPanelState extends State<DashboardOverviewPanel> {
                     );
                   },
                 ),
+              if (snapshot.extendedSections != null)
+                for (final section in snapshot.extendedSections!.sections)
+                  DashboardExtendedSectionPanel(section: section),
               if (snapshot.surgery != null) ...[
                 const SizedBox(height: 12),
                 SurgeryDashboardSummary(widgetData: snapshot.surgery!),
