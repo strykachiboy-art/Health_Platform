@@ -13,6 +13,7 @@ import 'package:clinic_system_pro/features/profile/presentation/account_clinic_s
 import 'package:clinic_system_pro/features/home/presentation/authenticated_home_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workflow_hub.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_hub.dart';
+import 'package:clinic_system_pro/features/coordination/presentation/wd06_coordination_hub.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_read_screen.dart';
 import 'package:clinic_system_pro/features/administration/data/wd05_administration_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_generated_reports_screen.dart';
@@ -425,6 +426,12 @@ GoRouter createAppRouter({
       // RAD7 direct links are protected under the default /patients-only
       // navigation guard. The backend still rechecks role and clinic.
       if ((state.uri.path == '/radiology' || state.uri.path == '/printing') &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
+      // WD06 coordination deep links require an available signed-in session.
+      // This does not grant clinic permissions or a backend-authenticated role.
+      if (state.matchedLocation == '/coordination' &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -902,6 +909,31 @@ GoRouter createAppRouter({
                   loadSession: admissions.loadSession,
                   sessionNavigationGuard: guard,
                 ),
+              );
+            },
+          ),
+          // WD06: one coordination entry to existing, backend-authorized UIs.
+          GoRoute(
+            path: '/coordination',
+            name: 'wd06-coordination',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final loader = loadHomeSession;
+              if (guard == null ||
+                  loader == null ||
+                  !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Coordination unavailable.')),
+                );
+              }
+              return Wd06CoordinationHub(
+                loadSession: loader,
+                sessionNavigationGuard: guard,
+                apiClient: dashboardDataSource?.apiClient,
+                connectivity:
+                    deviceRegistrationConnectivitySource ??
+                    ConnectivityPlusDeviceConnectivitySource(),
+                onOpen: (path) => context.push<void>(path),
               );
             },
           ),

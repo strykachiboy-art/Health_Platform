@@ -10,6 +10,7 @@ import 'package:clinic_system_pro/features/dashboard/presentation/dashboard_over
 import 'package:clinic_system_pro/features/home/presentation/windows_workstation_shortcuts.dart';
 import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workflow_hub.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_hub.dart';
+import 'package:clinic_system_pro/features/coordination/presentation/wd06_coordination_hub.dart';
 
 /// Navigation suggestions, never authorization grants. The backend enforces
 /// identity, clinic and role for every requested resource.
@@ -441,6 +442,20 @@ List<HomeDestination> homeDestinationsFor({
         'Hospital administration',
         '/administration',
         Icons.business_outlined,
+      ),
+    );
+  }
+  // WD06: one role-aware coordination shortcut, no second queue or metrics.
+  if (wd06CoordinationLinks(
+    role: normalizedRole,
+    clinicContextId: clinicContextId,
+  ).isNotEmpty) {
+    destinations.add(
+      const HomeDestination(
+        'coordination',
+        'Coordination and resilience',
+        '/coordination',
+        Icons.hub_outlined,
       ),
     );
   }
