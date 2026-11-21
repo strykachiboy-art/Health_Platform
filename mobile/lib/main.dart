@@ -39,6 +39,7 @@ import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.da
 import 'package:clinic_system_pro/features/auth/data/coordinator_authenticated_session_access.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_store.dart';
 import 'package:clinic_system_pro/core/networking/local_debug_tls_client.dart';
+import 'package:clinic_system_pro/core/networking/windows_wd07b_tls_client.dart';
 import 'package:clinic_system_pro/features/auth/data/google_sign_in_provider.dart';
 import 'package:clinic_system_pro/features/auth/data/google_desktop_oauth.dart';
 import 'package:clinic_system_pro/features/auth/presentation/google_login_screen.dart';
@@ -83,9 +84,10 @@ Future<void> main() async {
       ? null
       : FcmNotificationReceiver(messaging);
   final backendConfig = BackendConfig.fromEnvironment();
+  final wd07bWindowsClient = await createWd07bWindowsTlsClient(backendConfig);
   final apiClient = ApiClient(
     config: backendConfig,
-    client: createLocalDebugTlsClient(backendConfig),
+    client: wd07bWindowsClient ?? createLocalDebugTlsClient(backendConfig),
   );
   final connectivitySource = ConnectivityPlusDeviceConnectivitySource();
 

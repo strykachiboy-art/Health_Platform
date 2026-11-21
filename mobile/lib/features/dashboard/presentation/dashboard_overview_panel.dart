@@ -6,6 +6,7 @@ import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/dashboard/data/models/dashboard_snapshot.dart';
+import 'package:clinic_system_pro/features/dashboard/presentation/dashboard_role_presentation.dart';
 import 'package:clinic_system_pro/features/surgery/presentation/surgery_read_screens.dart';
 
 /// GET-only, in-memory dashboard view. No KPI is shown until a fresh,
@@ -184,6 +185,10 @@ class _DashboardOverviewPanelState extends State<DashboardOverviewPanel> {
   @override
   Widget build(BuildContext context) {
     final snapshot = _snapshot;
+    final visibleMetrics = snapshot == null
+        ? const <DashboardMetric>[]
+        : visibleDashboardMetricsForRole(widget.expectedRole, snapshot.metrics);
+    final roleContext = dashboardMetricContextForRole(widget.expectedRole);
     return Card(
       key: const ValueKey('p22-dashboard-panel'),
       child: Padding(
@@ -226,10 +231,22 @@ class _DashboardOverviewPanelState extends State<DashboardOverviewPanel> {
                 key: const ValueKey('p22-dashboard-period'),
               ),
               const SizedBox(height: 12),
+              if (roleContext != null) ...[
+                Text(
+                  roleContext,
+                  key: const ValueKey('wd07b-s10b-role-metric-context'),
+                ),
+                const SizedBox(height: 8),
+              ],
               if (snapshot.metrics.isEmpty)
                 const Text(
                   'The backend returned no dashboard metrics.',
                   key: ValueKey('p22-dashboard-empty'),
+                )
+              else if (visibleMetrics.isEmpty)
+                const Text(
+                  'No role-specific KPI cards are supplied for this role.',
+                  key: ValueKey('wd07b-s10b-no-role-metrics'),
                 )
               else
                 LayoutBuilder(
@@ -241,7 +258,7 @@ class _DashboardOverviewPanelState extends State<DashboardOverviewPanel> {
                       spacing: 12,
                       runSpacing: 12,
                       children: [
-                        for (final metric in snapshot.metrics)
+                        for (final metric in visibleMetrics)
                           SizedBox(
                             width: tileWidth,
                             child: Card(

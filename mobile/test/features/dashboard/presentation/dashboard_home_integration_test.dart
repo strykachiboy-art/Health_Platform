@@ -471,6 +471,124 @@ void main() {
     });
   }
 
+  testWidgets('S10B paramedic does not display generic doctor KPI cards', (
+    tester,
+  ) async {
+    final response = _envelope(
+      role: 'paramedic',
+      metrics: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'key': 'appointments',
+          'label': 'Appointments',
+          'value': 4,
+          'unit': 'appointments',
+        },
+        <String, dynamic>{
+          'key': 'my_patients',
+          'label': 'My patients',
+          'value': 0,
+          'unit': 'patients',
+        },
+        <String, dynamic>{
+          'key': 'unread_chat',
+          'label': 'Unread chat messages',
+          'value': 0,
+          'unit': 'messages',
+        },
+      ],
+    );
+    final client = MockClient(
+      (_) async => http.Response(jsonEncode(response), 200),
+    );
+    addTearDown(client.close);
+    Future<AuthSessionState> loader() async => _ready(role: 'paramedic');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AuthenticatedHomeScreen(
+          loadSession: loader,
+          dashboardDataSource: _source(client, loadSession: loader),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Emergency response workspace'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('wd07b-s10b-no-role-metrics')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Ambulance & trips'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('p22-dashboard-metric-my_patients')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('p22-dashboard-metric-unread_chat')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('p22-dashboard-metric-appointments')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('S10B pharmacist sees backend medication KPI, not staff chat', (
+    tester,
+  ) async {
+    final response = _envelope(
+      role: 'pharmacist',
+      metrics: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'key': 'my_patients',
+          'label': 'My patients',
+          'value': 0,
+          'unit': 'patients',
+        },
+        <String, dynamic>{
+          'key': 'unread_chat',
+          'label': 'Unread chat messages',
+          'value': 0,
+          'unit': 'messages',
+        },
+        <String, dynamic>{
+          'key': 'draft_medication_reconciliations',
+          'label': 'Draft medication reconciliations',
+          'value': 7,
+          'unit': 'reconciliations',
+        },
+      ],
+    );
+    final client = MockClient(
+      (_) async => http.Response(jsonEncode(response), 200),
+    );
+    addTearDown(client.close);
+    Future<AuthSessionState> loader() async => _ready(role: 'pharmacist');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AuthenticatedHomeScreen(
+          loadSession: loader,
+          dashboardDataSource: _source(client, loadSession: loader),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Pharmacy workspace'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('p22-dashboard-metric-draft_medication_reconciliations'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('7 reconciliations'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('p22-dashboard-metric-my_patients')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('p22-dashboard-metric-unread_chat')),
+      findsNothing,
+    );
+  });
+
   testWidgets('S03 no authenticated session means zero dashboard requests', (
     tester,
   ) async {

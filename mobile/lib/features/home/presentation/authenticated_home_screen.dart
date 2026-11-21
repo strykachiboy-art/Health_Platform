@@ -465,12 +465,10 @@ List<HomeDestination> homeDestinationsFor({
 String _dashboardFamily(String role) => switch (role.trim().toLowerCase()) {
   'super_admin' => 'System administration',
   'admin' => 'Clinic management',
-  'doctor' ||
-  'nurse' ||
-  'pharmacist' ||
-  'lab_technician' ||
-  'paramedic' ||
-  'emt' => 'Clinical workspace',
+  'doctor' || 'nurse' => 'Clinical workspace',
+  'pharmacist' => 'Pharmacy workspace',
+  'lab_technician' => 'Laboratory workspace',
+  'paramedic' || 'emt' => 'Emergency response workspace',
   'receptionist' ||
   'driver' ||
   'ambulance_dispatcher' ||
