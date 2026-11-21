@@ -20,6 +20,7 @@ from app.core.auth.user.models.user_model import User
 from app.core.auth.user.schema.user_schema import (
     GoogleAuthCallbackSchema,
     GoogleMobileAuthSchema,
+    GoogleDesktopCodeSchema,
     UserLoginSchema,
     UserRegisterSchema,
 )
@@ -31,6 +32,9 @@ from app.core.auth.user.services.google_auth_service import (
     authenticate_google_id_token,
     get_google_authorization_url,
     validate_google_oauth_state,
+)
+from app.core.auth.user.services.google_desktop_auth_service import (
+    authenticate_desktop_google_code,
 )
 from app.core.auth.user.services.token_service import (
     revoke_current_token,
@@ -219,6 +223,34 @@ def google_mobile_login():
             "data": result,
         }
     ), 200
+
+
+@auth_bp.post("/google/desktop/code")
+@limiter.limit(
+    lambda: current_app.config.get("AUTH_GOOGLE_RATE_LIMIT", "5 per minute")
+)
+def google_desktop_code_login():
+    # One attempt only: ambiguous code-exchange outcomes must not auto-replay.
+    payload = request.get_json(silent=True)
+    try:
+        data = GoogleDesktopCodeSchema.model_validate(payload)
+    except PydanticValidationError as exc:
+        return jsonify({
+            "success": False,
+            "error": "Validation failed",
+            "details": _safe_validation_errors(exc),
+        }), 400
+    try:
+        result = authenticate_desktop_google_code(
+            code=data.code,
+            code_verifier=data.code_verifier,
+            redirect_uri=data.redirect_uri,
+            nonce=data.nonce,
+        )
+    except DomainError as exc:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(exc)}), exc.status_code
+    return jsonify({"success": True, "data": result}), 200
 
 
 @auth_bp.get("/google")
