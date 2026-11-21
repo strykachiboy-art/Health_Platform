@@ -42,6 +42,13 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
   }
   final links = <Wd05AdministrationLink>[
     const Wd05AdministrationLink(
+      id: 'dashboard',
+      title: 'My role dashboard',
+      path: '/home',
+      description: 'Existing Flask-backed dashboard. No new or estimated KPIs.',
+      icon: Icons.dashboard_outlined,
+    ),
+    const Wd05AdministrationLink(
       id: 'account',
       title: 'My account and clinic context',
       path: '/account',
@@ -84,13 +91,67 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
       ),
     );
   }
+  if (normalized == 'admin') {
+    links.addAll(const <Wd05AdministrationLink>[
+      Wd05AdministrationLink(
+        id: 'staff',
+        title: 'Staff directory',
+        path: '/administration/staff',
+        description: 'Read current-clinic staff only. Personnel writes are disabled here.',
+        icon: Icons.people_outline,
+      ),
+      Wd05AdministrationLink(
+        id: 'departments',
+        title: 'Departments',
+        path: '/administration/departments',
+        description: 'Read current-clinic departments. No changes are sent.',
+        icon: Icons.apartment_outlined,
+      ),
+      Wd05AdministrationLink(
+        id: 'inventory',
+        title: 'Hospital supplies inventory',
+        path: '/administration/inventory',
+        description: 'Server quantities only; no stock movements or changes.',
+        icon: Icons.inventory_outlined,
+      ),
+    ]);
+  } else if (normalized == 'pharmacist') {
+    links.add(
+      const Wd05AdministrationLink(
+        id: 'inventory',
+        title: 'Hospital supplies inventory',
+        path: '/administration/inventory',
+        description: 'Server quantities only; no stock mutations.',
+        icon: Icons.inventory_outlined,
+      ),
+    );
+  }
+  if (normalized == 'admin' || normalized == 'accountant') {
+    links.addAll(const <Wd05AdministrationLink>[
+      Wd05AdministrationLink(
+        id: 'assets',
+        title: 'Asset register',
+        path: '/administration/assets',
+        description: 'Server asset records; assignment and disposal disabled.',
+        icon: Icons.precision_manufacturing_outlined,
+      ),
+      Wd05AdministrationLink(
+        id: 'settings',
+        title: 'Clinic display settings',
+        path: '/administration/settings',
+        description:
+            'Approved display fields only; credentials and writes hidden.',
+        icon: Icons.settings_outlined,
+      ),
+    ]);
+  }
   return List<Wd05AdministrationLink>.unmodifiable(links);
 }
 
 const wd05PendingAdministrationCapabilities = <String>[
-  'Staff and department management - Windows UI pending',
-  'Asset registry and maintenance - Windows UI pending',
-  'Clinic administrative settings - Windows UI pending',
+  'Staff/department creation, edits and status changes - not enabled',
+  'Asset lifecycle, assignment and maintenance mutations - not enabled',
+  'Clinic settings and integration credentials editing - not enabled',
   'Report generation and protected exports - separate approval pending',
   'Accounting summaries and payments by role - further verification pending',
 ];

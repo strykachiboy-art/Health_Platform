@@ -33,13 +33,30 @@ List<String> _ids(String role, {int? clinic = 7}) => wd05AdministrationLinks(
 void main() {
   test('WD05 clinic/role matrix links only registered safe Windows routes', () {
     expect(_ids('admin'), <String>[
+      'dashboard',
       'account',
       'billing',
       'pharmacy_stock',
       'reports',
+      'staff',
+      'departments',
+      'inventory',
+      'assets',
+      'settings',
     ]);
-    expect(_ids('accountant'), <String>['account', 'reports']);
-    expect(_ids('pharmacist'), <String>['account', 'pharmacy_stock']);
+    expect(_ids('accountant'), <String>[
+      'dashboard',
+      'account',
+      'reports',
+      'assets',
+      'settings',
+    ]);
+    expect(_ids('pharmacist'), <String>[
+      'dashboard',
+      'account',
+      'pharmacy_stock',
+      'inventory',
+    ]);
     for (final role in <String>['admin', 'accountant', 'pharmacist']) {
       expect(_ids(role, clinic: null), isEmpty);
       expect(_ids(role, clinic: 0), isEmpty);
@@ -61,7 +78,18 @@ void main() {
     )) {
       expect(
         item.path,
-        isIn(<String>['/account', '/billing', '/pharmacy/stock', '/reports']),
+        isIn(<String>[
+          '/home',
+          '/account',
+          '/billing',
+          '/pharmacy/stock',
+          '/reports',
+          '/administration/staff',
+          '/administration/departments',
+          '/administration/inventory',
+          '/administration/assets',
+          '/administration/settings',
+        ]),
       );
       expect(item.path, isNot(contains(':')));
     }
@@ -194,7 +222,15 @@ void main() {
       );
       addTearDown(router.dispose);
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
-      for (final path in <String>['/administration', '/reports']) {
+      for (final path in <String>[
+        '/administration',
+        '/reports',
+        '/administration/staff',
+        '/administration/departments',
+        '/administration/inventory',
+        '/administration/assets',
+        '/administration/settings',
+      ]) {
         router.go(path);
         await tester.pumpAndSettle();
         expect(find.text('Login sentinel'), findsOneWidget, reason: path);

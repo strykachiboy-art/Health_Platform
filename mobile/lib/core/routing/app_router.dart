@@ -13,6 +13,8 @@ import 'package:clinic_system_pro/features/profile/presentation/account_clinic_s
 import 'package:clinic_system_pro/features/home/presentation/authenticated_home_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workflow_hub.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_hub.dart';
+import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_read_screen.dart';
+import 'package:clinic_system_pro/features/administration/data/wd05_administration_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_generated_reports_screen.dart';
 import 'package:clinic_system_pro/features/administration/data/wd05_report_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_feature_frame.dart';
@@ -429,6 +431,7 @@ GoRouter createAppRouter({
       // WD05 administrative routes also fail closed with the default
       // /patients-only test guard. Backend roles/clinic are still authoritative.
       if ((state.matchedLocation == '/administration' ||
+              state.uri.path.startsWith('/administration/') ||
               state.matchedLocation == '/reports') &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
@@ -923,6 +926,33 @@ GoRouter createAppRouter({
               );
             },
           ),
+          for (final section in Wd05AdministrationSection.values)
+            GoRoute(
+              path: '/administration/${section.name}',
+              name: 'wd05-${section.name}-read-only',
+              builder: (context, state) {
+                final guard = sessionNavigationGuard;
+                final dashboard = dashboardDataSource;
+                if (guard == null ||
+                    dashboard == null ||
+                    !guard.canAccessProtectedRoutes ||
+                    !identical(dashboard.sessionNavigationGuard, guard)) {
+                  return const Scaffold(
+                    body: Center(
+                      child: Text('Administration reader unavailable.'),
+                    ),
+                  );
+                }
+                return Wd05AdministrationReadScreen(
+                  section: section,
+                  source: Wd05AdministrationReadRemoteDataSource(
+                    apiClient: dashboard.apiClient,
+                    loadSession: dashboard.loadSession,
+                    sessionNavigationGuard: guard,
+                  ),
+                );
+              },
+            ),
           GoRoute(
             path: '/reports',
             name: 'wd05-generated-reports-read-only',

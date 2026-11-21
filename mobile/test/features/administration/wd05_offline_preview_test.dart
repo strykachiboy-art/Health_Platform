@@ -10,6 +10,10 @@ void main() {
     await tester.pumpWidget(const preview.Wd05OfflinePreviewApp());
     expect(find.byKey(const ValueKey('wd05-preview-warning')), findsOneWidget);
     expect(find.textContaining('No login, backend calls'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('wd05-preview-dashboard')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('wd05-preview-billing')), findsOneWidget);
     expect(find.byKey(const ValueKey('wd05-preview-reports')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('wd05-preview-billing')));
@@ -21,5 +25,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('wd05-preview-billing')), findsNothing);
     expect(find.byKey(const ValueKey('wd05-preview-reports')), findsNothing);
+    expect(find.byKey(const ValueKey('wd05-preview-dashboard')), findsNothing);
   });
 }
