@@ -9,6 +9,7 @@ import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_
 import 'package:clinic_system_pro/features/dashboard/presentation/dashboard_overview_panel.dart';
 import 'package:clinic_system_pro/features/home/presentation/windows_workstation_shortcuts.dart';
 import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workflow_hub.dart';
+import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_hub.dart';
 
 /// Navigation suggestions, never authorization grants. The backend enforces
 /// identity, clinic and role for every requested resource.
@@ -425,6 +426,21 @@ List<HomeDestination> homeDestinationsFor({
         'Clinical workflows',
         '/clinical-workflows',
         Icons.medical_services_outlined,
+      ),
+    );
+  }
+  // WD05: append administration after established P22/WD04 navigation.
+  // The server, never this suggestion, grants administrative authority.
+  if (wd05AdministrationLinks(
+    role: normalizedRole,
+    clinicContextId: clinicContextId,
+  ).isNotEmpty) {
+    destinations.add(
+      const HomeDestination(
+        'administration',
+        'Hospital administration',
+        '/administration',
+        Icons.business_outlined,
       ),
     );
   }
