@@ -614,6 +614,85 @@ def _get_or_create_google_user(
     )
 
 
+
+
+def _ensure_google_patient_profile(
+    *, user: User, google_user: GoogleUserInfoSchema,
+) -> None:
+    """Own-record provisioning; never match existing patients by email.
+
+    An explicitly assigned active clinic takes precedence. Otherwise a
+    deployment-approved enrollment clinic is required. All writes share the
+    original Google login transaction. No new tables, queue or migration.
+    """
+    if user.role is not Role.PATIENT:
+        return  # Super-admin role assignments remain authoritative.
+
+    linked = user.patient
+    if linked is not None:
+        if (not linked.is_active or user.clinic_id is None
+                or linked.clinic_id != user.clinic_id):
+            raise ConflictError(
+                "Patient clinic enrollment mismatch",
+                code="PATIENT_ENROLLMENT_REQUIRED",
+            )
+        return
+
+    from app.core.enums.clinic_enums import ClinicStatus
+    from app.modules.clinic.models.clinic_model import Clinic
+    from app.modules.patient.models.patient_model import Patient
+    from app.modules.patient.services.patient_service import _generate_patient_number
+
+    if user.clinic_id is not None:
+        target_clinic_id = user.clinic_id
+    else:
+        raw = current_app.config.get("GOOGLE_PATIENT_ENROLLMENT_CLINIC_ID")
+        if raw is None or raw == "":
+            return  # No implicit clinic assignment, especially across tenants.
+        if (isinstance(raw, bool)
+                or not isinstance(raw, (str, int))
+                or not str(raw).isascii()
+                or not str(raw).isdecimal()
+                or int(raw) <= 0):
+            raise ValidationError("Google patient enrollment clinic is invalid")
+        target_clinic_id = int(raw)
+
+    clinic = db.session.get(Clinic, target_clinic_id)
+    if clinic is None or clinic.status is not ClinicStatus.ACTIVE:
+        raise ValidationError("Google patient enrollment clinic is not active")
+
+    first = google_user.first_name
+    last = google_user.last_name
+    if (not isinstance(first, str) or not isinstance(last, str)
+            or not first.strip() or not last.strip()
+            or len(first.strip()) > 80 or len(last.strip()) > 80
+            or not first.strip().isprintable() or not last.strip().isprintable()):
+        return  # Never fabricate clinical identity from email or a placeholder.
+
+    patient = Patient(
+        user=user,
+        clinic_id=clinic.id,
+        patient_number=_generate_patient_number(clinic.id),
+        first_name=first.strip(),
+        last_name=last.strip(),
+        email=user.email,
+        is_active=True,
+    )
+    db.session.add(patient)
+    if user.clinic_id is None:
+        user.clinic_id = clinic.id
+    db.session.flush()
+    create_audit_log(
+        action=AuditAction.CREATE,
+        entity_type="patient",
+        entity_id=patient.id,
+        description="Google-verified patient profile provisioned",
+        user_id=user.id,
+        clinic_id=clinic.id,
+        patient_id=patient.id,
+        new_value={"clinic_id": clinic.id, "linked_user_id": user.id},
+    )
+
 # ============================================================================
 # GOOGLE USER AUTHENTICATION
 # ============================================================================
@@ -640,6 +719,8 @@ def authenticate_google_user(
         raise ValidationError(
             "This account has been deactivated"
         )
+
+    _ensure_google_patient_profile(user=user, google_user=google_user)
 
     tokens = issue_auth_tokens(
         user

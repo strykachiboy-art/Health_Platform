@@ -53,6 +53,12 @@ class Config:
         "GOOGLE_CLIENT_SECRET"
     )
 
+    # G01: Explicit active clinic for new Google patient records.
+    # Unset by default: never infer a tenant or clinic from email.
+    GOOGLE_PATIENT_ENROLLMENT_CLINIC_ID = os.environ.get(
+        "GOOGLE_PATIENT_ENROLLMENT_CLINIC_ID"
+    )
+
     GOOGLE_REDIRECT_URI = os.environ.get(
         "GOOGLE_REDIRECT_URI",
         "http://localhost:5000/api/v1/auth/google/callback",
