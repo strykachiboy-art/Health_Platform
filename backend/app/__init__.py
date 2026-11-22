@@ -309,6 +309,10 @@ def register_blueprints(app):
         patient_portal_bp,
     )
 
+    from app.modules.patient.routes.patient_portal_services_route import (
+        patient_portal_services_bp,
+    )
+
     from app.modules.pharmacy.routes.pharmacy_routes import (
         pharmacy_bp,
     )
@@ -428,6 +432,7 @@ def register_blueprints(app):
         lab_bp,
         patient_bp,
         patient_portal_bp,
+        patient_portal_services_bp,
         prescription_bp,
         emar_bp,
         reports_bp,
