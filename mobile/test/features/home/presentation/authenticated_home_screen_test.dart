@@ -31,7 +31,15 @@ void main() {
       clinicContextId: clinic,
     ).map((destination) => destination.id).toList();
 
-    expect(ids('PATIENT'), ['device_management', 'health']);
+    expect(ids('PATIENT'), [
+      'device_management',
+      'patient_portal',
+      'patient_appointments',
+      'patient_prescriptions',
+      'patient_billing',
+      'patient_messages',
+      'health',
+    ]);
     expect(ids('accountant'), ['device_management', 'health']);
     expect(ids('driver'), ['device_management', 'health']);
     expect(ids('doctor'), [
@@ -132,6 +140,52 @@ void main() {
     expect(find.byKey(const ValueKey('p22-home-shell')), findsNothing);
   });
 
+  testWidgets('S14 Google-equivalent Patient home offers My care without clinic', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AuthenticatedHomeScreen(
+          loadSession: () async => _ready('patient'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('s14-patient-enrollment-notice')), findsOneWidget);
+    expect(find.byKey(const ValueKey('s14-patient-features-summary')), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('p22-home-patient_portal')), 120,
+    );
+    expect(find.byKey(const ValueKey('p22-home-patient_portal')), findsOneWidget);
+    expect(find.byKey(const ValueKey('p22-home-patients')), findsNothing);
+    expect(find.byKey(const ValueKey('p22-home-administration')), findsNothing);
+  });
+
+  test('S14 My care without clinic is still patient-role exclusive', () {
+    final patient = homeDestinationsFor(role: 'patient', clinicContextId: null);
+    final doctor = homeDestinationsFor(role: 'doctor', clinicContextId: null);
+    final patientIds = patient.map((d) => d.id).toList();
+    final doctorIds = doctor.map((d) => d.id).toList();
+    expect(patientIds, contains('patient_portal'));
+    expect(doctorIds, isNot(contains('patient_portal')));
+    expect(patientIds, isNot(contains('patients')));
+  });
+
+  test('S15 patient-only workspaces do not grant staff-only routes', () {
+    final patient = homeDestinationsFor(role: 'patient', clinicContextId: null);
+    final doctor = homeDestinationsFor(role: 'doctor', clinicContextId: 3);
+    final patientIds = patient.map((d) => d.id).toSet();
+    final doctorIds = doctor.map((d) => d.id).toSet();
+    expect(patientIds, containsAll(<String>[
+      'patient_portal', 'patient_appointments', 'patient_prescriptions',
+      'patient_billing', 'patient_messages',
+    ]));
+    expect(doctorIds, isNot(contains('patient_billing')));
+    expect(patientIds, isNot(contains('billing')));
+    expect(patientIds, isNot(contains('patients')));
+    expect(patientIds, isNot(contains('administration')));
+  });
+
   testWidgets('P22.S01 patient home shows no staff routes or fake KPIs', (
     tester,
   ) async {
@@ -145,13 +199,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Patient workspace'), findsOneWidget);
-    expect(find.byKey(const ValueKey('p22-home-health')), findsOneWidget);
+    // Health is still a route; verify after content above the fold.
     expect(find.byKey(const ValueKey('p22-home-patients')), findsNothing);
     expect(
       find.byKey(const ValueKey('p22-home-clinical_safety')),
       findsNothing,
     );
     expect(find.textContaining('does not invent counts'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('p22-home-health')), 120,
+    );
+    expect(find.byKey(const ValueKey('p22-home-health')), findsOneWidget);
   });
 
   testWidgets('P22.S01 admin home advertises only supported routes', (

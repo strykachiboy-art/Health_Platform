@@ -51,6 +51,7 @@ import 'package:clinic_system_pro/features/appointments/data/models/appointment_
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patient_portal/data/patient_portal_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patient_portal/presentation/patient_portal_screen.dart';
+import 'package:clinic_system_pro/features/patient_portal/presentation/patient_section_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
@@ -398,8 +399,10 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
-      // S12: direct patient portal links require an active session.
-      if (state.matchedLocation == '/patient-portal' &&
+      // S12/S15: patient portal and section deep links require a live session.
+      // The section screen separately enforces Patient role and session stamp.
+      if ((state.matchedLocation == '/patient-portal' ||
+              state.uri.path.startsWith('/patient-care/')) &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -561,6 +564,31 @@ GoRouter createAppRouter({
                 return const Scaffold(body: Center(child: Text('Patient portal unavailable.')));
               }
               return PatientPortalScreen(source: source);
+            },
+          ),
+          // S15: standalone read-only Patient sections, without new endpoints.
+          GoRoute(
+            path: '/patient-care/:section',
+            name: 's15-patient-care-section',
+            builder: (context, state) {
+              final section = PatientWorkspaceSection.fromRoute(
+                state.pathParameters['section'] ?? '',
+              );
+              final source = patientPortalSource;
+              final guard = sessionNavigationGuard;
+              final loader = loadHomeSession;
+              if (section == null || source == null || guard == null ||
+                  loader == null || !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Patient section unavailable.')),
+                );
+              }
+              return PatientSectionScreen(
+                section: section,
+                source: source,
+                loadSession: loader,
+                sessionNavigationGuard: guard,
+              );
             },
           ),
           GoRoute(

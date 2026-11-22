@@ -77,10 +77,10 @@ List<HomeDestination> homeDestinationsFor({
       Icons.monitor_heart_outlined,
     ),
   ];
-  // S12: personal care portal is separate from staff-only patient directory.
-  if (normalizedRole == 'patient' &&
-      clinicContextId != null &&
-      clinicContextId > 0) {
+  // S14: Show the patient-owned portal after any verified Patient login.
+  // This is a navigation suggestion, NOT a grant of enrollment or PHI access.
+  // Flask resolves and authorizes the actual patient and clinic on every read.
+  if (normalizedRole == 'patient') {
     destinations.insert(0, const HomeDestination(
       'patient_portal', 'My care', '/patient-portal', Icons.favorite_outline,
     ));
@@ -467,6 +467,25 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  // S15: Personal patient workspaces are independent navigation suggestions.
+  // The existing patient-owned backend, never this list, grants data access.
+  if (normalizedRole == 'patient') {
+    final careIndex = destinations.indexWhere(
+      (destination) => destination.id == 'patient_portal',
+    );
+    if (careIndex >= 0) {
+      destinations.insertAll(careIndex + 1, const <HomeDestination>[
+        HomeDestination('patient_appointments', 'My appointments',
+            '/patient-care/appointments', Icons.event_note_outlined),
+        HomeDestination('patient_prescriptions', 'My prescriptions',
+            '/patient-care/prescriptions', Icons.medication_outlined),
+        HomeDestination('patient_billing', 'Billing & invoices',
+            '/patient-care/billing', Icons.receipt_long_outlined),
+        HomeDestination('patient_messages', 'My care messages',
+            '/patient-care/messages', Icons.chat_bubble_outline),
+      ]);
+    }
+  }
   return List<HomeDestination>.unmodifiable(destinations);
 }
 
@@ -771,6 +790,30 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 10),
+        if (role.trim().toLowerCase() == 'patient' &&
+            (_clinicId == null || _clinicId! <= 0))
+          const Card(
+            key: ValueKey('s14-patient-enrollment-notice'),
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'You are signed in, but this session has no verified clinic. '
+                'Open My care to check your enrollment status. Your clinic '
+                'must link your account to your clinical patient profile '
+                'before personal records and appointments can be accessed.',
+              ),
+            ),
+          ),
+        if (role.trim().toLowerCase() == 'patient')
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text(
+              'In My care: appointments and booking requests, clinic '
+              'clinicians, prescriptions, and billing/invoices. '
+              'Your clinic backend verifies access and confirms bookings.',
+              key: ValueKey('s14-patient-features-summary'),
+            ),
+          ),
         if (dashboard == null)
           const Text(
             'Dashboard metrics will be loaded from the backend in P22.S03. '

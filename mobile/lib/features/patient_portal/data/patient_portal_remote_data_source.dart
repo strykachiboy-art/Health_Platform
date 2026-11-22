@@ -33,7 +33,17 @@ class PatientPortalView {
   final List<Map<String, dynamic>> invoices;
 }
 
-class BackendPatientPortalDataSource implements PatientPortalDataSource {
+abstract class PatientPortalServiceActions {
+  Future<Map<String, dynamic>> prescriptionDetail(int id);
+  Future<Map<String, dynamic>> invoiceDetail(int id);
+  Future<Map<String, dynamic>> checkout(int invoiceId, String idempotencyKey);
+  Future<List<Map<String, dynamic>>> careConversations();
+  Future<List<Map<String, dynamic>>> careMessages(int conversationId);
+  Future<void> sendCareMessage(int conversationId, String content);
+}
+
+class BackendPatientPortalDataSource
+    implements PatientPortalDataSource, PatientPortalServiceActions {
   const BackendPatientPortalDataSource(this.dashboard);
 
   final DashboardRemoteDataSource dashboard;
@@ -167,6 +177,65 @@ class BackendPatientPortalDataSource implements PatientPortalDataSource {
       throw const FormatException(
         'Booking result was not confirmed by the backend.',
       );
+    }
+  }
+
+  @override
+  Future<Map<String, dynamic>> prescriptionDetail(int id) {
+    if (id <= 0) {
+      throw ArgumentError.value(id, 'id');
+    }
+    return _request('prescriptions/$id');
+  }
+
+  @override
+  Future<Map<String, dynamic>> invoiceDetail(int id) {
+    if (id <= 0) {
+      throw ArgumentError.value(id, 'id');
+    }
+    return _request('invoices/$id');
+  }
+
+  @override
+  Future<Map<String, dynamic>> checkout(int invoiceId, String idempotencyKey) {
+    if (invoiceId <= 0) {
+      throw ArgumentError.value(invoiceId, 'invoiceId');
+    }
+    if (!RegExp(r'^[A-Za-z0-9_-]{16,128}$').hasMatch(idempotencyKey)) {
+      throw ArgumentError.value(idempotencyKey, 'idempotencyKey');
+    }
+    return _request(
+      'invoices/$invoiceId/checkout',
+      body: {'gateway': 'paystack'},
+      key: idempotencyKey,
+    );
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> careConversations() async =>
+      _items(await _request('conversations'));
+
+  @override
+  Future<List<Map<String, dynamic>>> careMessages(int conversationId) async {
+    if (conversationId <= 0) {
+      throw ArgumentError.value(conversationId, 'conversationId');
+    }
+    return _items(await _request('conversations/$conversationId/messages'));
+  }
+
+  @override
+  Future<void> sendCareMessage(int conversationId, String content) async {
+    if (conversationId <= 0 ||
+        content.trim().isEmpty ||
+        content.length > 2000) {
+      throw const FormatException('Invalid care message');
+    }
+    final result = await _request(
+      'conversations/$conversationId/messages',
+      body: {'content': content.trim()},
+    );
+    if (result['id'] is! int || result['status'] is! String) {
+      throw const FormatException('Care message acknowledgement invalid');
     }
   }
 

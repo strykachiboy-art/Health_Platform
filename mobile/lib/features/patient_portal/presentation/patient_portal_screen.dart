@@ -7,6 +7,8 @@ import 'package:clinic_system_pro/core/networking/api_exception.dart';
 
 import 'package:clinic_system_pro/features/patient_portal/data/patient_portal_remote_data_source.dart';
 
+import 'patient_portal_service_screens.dart';
+
 /// Patient-specific, owned-data portal. Server authorization is authoritative.
 /// Neither queued mutations nor arbitrary patient IDs are supported here.
 class PatientPortalScreen extends StatefulWidget {
@@ -441,12 +443,44 @@ class _PatientPortalScreenState extends State<PatientPortalScreen> {
                     ),
                   ),
                 ),
+                if (widget.source is PatientPortalServiceActions)
+                  OutlinedButton.icon(
+                    key: const ValueKey('s13-care-messages'),
+                    onPressed: () => Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) => PatientCareMessagesPage(
+                          actions: widget.source as PatientPortalServiceActions,
+                        ),
+                      ),
+                    ),
+                    icon: const Icon(Icons.forum_outlined),
+                    label: const Text('My care messages'),
+                  ),
                 _group(
                   'My prescriptions',
                   view.prescriptions,
                   (item) => ListTile(
                     leading: const Icon(Icons.medication_outlined),
                     title: Text('Prescription #${item['id']}'),
+                    trailing:
+                        item['id'] is int &&
+                            widget.source is PatientPortalServiceActions
+                        ? const Icon(Icons.chevron_right)
+                        : null,
+                    onTap:
+                        item['id'] is int &&
+                            widget.source is PatientPortalServiceActions
+                        ? () => Navigator.of(context).push<void>(
+                            MaterialPageRoute(
+                              builder: (_) => PatientPrescriptionDetailPage(
+                                actions:
+                                    widget.source
+                                        as PatientPortalServiceActions,
+                                recordId: item['id'] as int,
+                              ),
+                            ),
+                          )
+                        : null,
                     subtitle: Text(
                       'Status: ${_display(item['status'])} · Issued: ${_display(item['issued_at'])}',
                     ),
@@ -458,6 +492,25 @@ class _PatientPortalScreenState extends State<PatientPortalScreen> {
                   (item) => ListTile(
                     leading: const Icon(Icons.receipt_long_outlined),
                     title: Text(_display(item['invoice_number'])),
+                    trailing:
+                        item['id'] is int &&
+                            widget.source is PatientPortalServiceActions
+                        ? const Icon(Icons.chevron_right)
+                        : null,
+                    onTap:
+                        item['id'] is int &&
+                            widget.source is PatientPortalServiceActions
+                        ? () => Navigator.of(context).push<void>(
+                            MaterialPageRoute(
+                              builder: (_) => PatientInvoiceDetailPage(
+                                actions:
+                                    widget.source
+                                        as PatientPortalServiceActions,
+                                recordId: item['id'] as int,
+                              ),
+                            ),
+                          )
+                        : null,
                     subtitle: Text(
                       'Status: ${_display(item['status'])} · Due: ${_display(item['due_date'])}\n'
                       'Total: ${_display(item['total_amount'])} ${_display(item['currency'])} · '
@@ -467,7 +520,7 @@ class _PatientPortalScreenState extends State<PatientPortalScreen> {
                   ),
                 ),
                 const Text(
-                  'Payments, clinical record release and messaging require separate verified contracts; no unsupported action is enabled.',
+                  'Invoice details, test-only payment checkout and approved care messages are available where authorized by your clinic. Clinical record release is separate.',
                 ),
               ],
             ),
