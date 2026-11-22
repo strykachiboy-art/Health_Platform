@@ -2,6 +2,7 @@ import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
+import 'package:clinic_system_pro/features/administration/data/wd09cf_operation_contract.dart';
 
 class Wd05ReportSessionUnavailable implements Exception {
   const Wd05ReportSessionUnavailable();
@@ -174,10 +175,8 @@ class Wd05ReportReadRemoteDataSource {
           session.clinicContextId! <= 0 ||
           session.accessToken.isEmpty ||
           session.accessToken.trim() != session.accessToken ||
-          !const <String>{
-            'admin',
-            'accountant',
-          }.contains(session.role.trim().toLowerCase()) ||
+          !(wd09cfReportRoles.contains(session.role.trim().toLowerCase()) &&
+              session.role.trim().toLowerCase() != 'super_admin') ||
           !_current(revision)) {
         throw const Wd05ReportSessionUnavailable();
       }

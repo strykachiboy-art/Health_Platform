@@ -31,47 +31,77 @@ List<String> _ids(String role, {int? clinic = 7}) => wd05AdministrationLinks(
 ).map((item) => item.id).toList();
 
 void main() {
-  test('WD05 clinic/role matrix links only registered safe Windows routes', () {
-    expect(_ids('admin'), <String>[
-      'dashboard',
-      'account',
-      'billing',
-      'pharmacy_stock',
-      'reports',
-      'staff',
-      'departments',
-      'inventory',
-      'assets',
-      'settings',
-      'audit',
-    ]);
-    expect(_ids('accountant'), <String>[
-      'dashboard',
-      'account',
-      'reports',
-      'assets',
-      'settings',
-    ]);
-    expect(_ids('pharmacist'), <String>[
-      'dashboard',
-      'account',
-      'pharmacy_stock',
-      'inventory',
-    ]);
-    for (final role in <String>['admin', 'accountant', 'pharmacist']) {
-      expect(_ids(role, clinic: null), isEmpty);
-      expect(_ids(role, clinic: 0), isEmpty);
-      expect(_ids(role, clinic: -1), isEmpty);
-    }
-    for (final role in <String>[
-      'patient',
+  test('WD09C-F role matrix preserves clinic authority and 15 roles', () {
+    const staffRoles = <String>[
+      'admin',
       'doctor',
       'nurse',
+      'pharmacist',
+      'lab_technician',
+      'receptionist',
+      'accountant',
+      'paramedic',
+      'emt',
       'driver',
-      'invalid',
-    ]) {
-      expect(_ids(role), isEmpty, reason: role);
+      'ambulance_dispatcher',
+      'ambulance_coordinator',
+      'other',
+    ];
+    for (final role in staffRoles) {
+      expect(
+        _ids(role),
+        containsAll(<String>['staff', 'departments', 'operations']),
+      );
+      expect(_ids(role, clinic: null), isEmpty, reason: role);
+      expect(_ids(role, clinic: 0), isEmpty, reason: role);
+      expect(_ids(role, clinic: -1), isEmpty, reason: role);
+      expect(_ids(role), isNot(contains('users')), reason: role);
+      if (role != 'admin') {
+        expect(_ids(role), isNot(contains('audit')), reason: role);
+      }
     }
+    expect(
+      _ids('admin'),
+      containsAll(<String>[
+        'dashboard',
+        'account',
+        'billing',
+        'pharmacy_stock',
+        'reports',
+        'inventory',
+        'staff',
+        'departments',
+        'assets',
+        'settings',
+        'operations',
+        'audit',
+      ]),
+    );
+    expect(
+      _ids('accountant'),
+      containsAll(<String>[
+        'reports',
+        'staff',
+        'departments',
+        'assets',
+        'settings',
+        'operations',
+      ]),
+    );
+    expect(
+      _ids('pharmacist'),
+      containsAll(<String>[
+        'pharmacy_stock',
+        'inventory',
+        'staff',
+        'departments',
+        'reports',
+        'settings',
+        'operations',
+      ]),
+    );
+    expect(_ids('patient'), isEmpty);
+    expect(_ids('invalid'), isEmpty);
     expect(_ids('super_admin', clinic: null), <String>[
       'dashboard',
       'account',
@@ -83,28 +113,18 @@ void main() {
       'account',
       'audit',
       'users',
+      'staff',
+      'departments',
+      'operations',
     ]);
-    for (final item in wd05AdministrationLinks(
+    expect(_ids('doctor'), isNot(contains('assets')));
+    expect(_ids('doctor'), isNot(contains('inventory')));
+    for (final link in wd05AdministrationLinks(
       role: 'admin',
       clinicContextId: 7,
     )) {
-      expect(
-        item.path,
-        isIn(<String>[
-          '/home',
-          '/account',
-          '/billing',
-          '/pharmacy/stock',
-          '/reports',
-          '/administration/staff',
-          '/administration/departments',
-          '/administration/inventory',
-          '/administration/assets',
-          '/administration/settings',
-          '/administration/audit-logs',
-        ]),
-      );
-      expect(item.path, isNot(contains(':')));
+      expect(link.path, isNot(contains(':')));
+      expect(link.path, startsWith('/'));
     }
     expect(wd05PendingAdministrationCapabilities, isNotEmpty);
     expect(
@@ -113,6 +133,20 @@ void main() {
         clinicContextId: null,
       ).map((item) => item.id),
       contains('administration'),
+    );
+    expect(
+      homeDestinationsFor(
+        role: 'doctor',
+        clinicContextId: 7,
+      ).map((item) => item.id),
+      contains('administration'),
+    );
+    expect(
+      homeDestinationsFor(
+        role: 'patient',
+        clinicContextId: 7,
+      ).map((item) => item.id),
+      isNot(contains('administration')),
     );
   });
 

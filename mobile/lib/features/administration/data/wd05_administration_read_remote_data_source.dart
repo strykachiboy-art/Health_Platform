@@ -2,6 +2,7 @@ import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
+import 'package:clinic_system_pro/features/administration/data/wd09cf_operation_contract.dart';
 
 /// No new backend permission: every GET is checked against live session and
 /// the Flask route's own role + clinic enforcement.
@@ -32,12 +33,19 @@ extension Wd05AdministrationSectionDetails on Wd05AdministrationSection {
 
   bool allowedFor(String role) => switch (this) {
     Wd05AdministrationSection.staff ||
-    Wd05AdministrationSection.departments => role == 'admin',
+    Wd05AdministrationSection.departments => wd09cfStaffRoles.contains(role),
     Wd05AdministrationSection.inventory =>
       role == 'admin' || role == 'pharmacist',
     Wd05AdministrationSection.assets => role == 'admin' || role == 'accountant',
-    Wd05AdministrationSection.settings =>
-      role == 'admin' || role == 'accountant',
+    Wd05AdministrationSection.settings => const <String>{
+      'admin',
+      'doctor',
+      'nurse',
+      'receptionist',
+      'accountant',
+      'pharmacist',
+      'lab_technician',
+    }.contains(role),
   };
 
   bool get paged => switch (this) {

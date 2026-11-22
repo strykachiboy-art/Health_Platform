@@ -23,55 +23,91 @@ class Wd05AdministrationLink {
   final IconData icon;
 }
 
-/// Only existing authenticated Flutter routes are linked. Pending staff,
-/// department, asset, accounting and export interfaces are NOT invented.
+/// Backend-role-aligned navigation only; no Flutter link grants authority.
+/// Patient uses the patient portal, and Super Admin system links never
+/// require a selected clinic. Clinic operations require an explicit context.
 List<Wd05AdministrationLink> wd05AdministrationLinks({
   required String role,
   required int? clinicContextId,
 }) {
   final normalized = role.trim().toLowerCase();
-  // WD09A: super-admin system authority never requires a selected clinic.
-  // Clinic-scoped links remain restricted to their actual backend allowlists.
+  final selected = clinicContextId != null && clinicContextId > 0;
   if (normalized == 'super_admin') {
-    return const <Wd05AdministrationLink>[
-      Wd05AdministrationLink(
+    final links = <Wd05AdministrationLink>[
+      const Wd05AdministrationLink(
         id: 'dashboard',
         title: 'System dashboard',
         path: '/home',
         description: 'Backend system overview',
         icon: Icons.dashboard_outlined,
       ),
-      Wd05AdministrationLink(
+      const Wd05AdministrationLink(
         id: 'account',
         title: 'My account and clinic context',
         path: '/account',
         description: 'Authenticated profile and clinic selection',
         icon: Icons.manage_accounts_outlined,
       ),
-      Wd05AdministrationLink(
+      const Wd05AdministrationLink(
         id: 'audit',
         title: 'System audit logs',
         path: '/administration/audit-logs',
         description: 'Flask-authorized system audit trail',
         icon: Icons.history_outlined,
       ),
-      Wd05AdministrationLink(
+      const Wd05AdministrationLink(
         id: 'users',
         title: 'User access directory',
         path: '/administration/users',
-        description: 'Read server-authorized users; write controls require separate verification',
+        description:
+            'Read users and explicitly manage backend-authorized access',
         icon: Icons.admin_panel_settings_outlined,
       ),
     ];
+    if (selected) {
+      links.addAll(const <Wd05AdministrationLink>[
+        Wd05AdministrationLink(
+          id: 'staff',
+          title: 'Selected-clinic staff',
+          path: '/administration/staff',
+          description: 'Assigned-clinic staff records; Flask checks context',
+          icon: Icons.people_outline,
+        ),
+        Wd05AdministrationLink(
+          id: 'departments',
+          title: 'Selected-clinic departments',
+          path: '/administration/departments',
+          description: 'Read departments in the selected clinic',
+          icon: Icons.apartment_outlined,
+        ),
+        Wd05AdministrationLink(
+          id: 'operations',
+          title: 'Selected-clinic operations',
+          path: '/administration/operations',
+          description:
+              'Explicit verified staff, department, report and payroll actions',
+          icon: Icons.fact_check_outlined,
+        ),
+      ]);
+    }
+    return List<Wd05AdministrationLink>.unmodifiable(links);
   }
-  if (clinicContextId == null || clinicContextId <= 0) {
-    return const <Wd05AdministrationLink>[];
-  }
-  if (!(const <String>{
-    'admin',
-    'accountant',
-    'pharmacist',
-  }).contains(normalized)) {
+  if (!selected ||
+      !const <String>{
+        'admin',
+        'doctor',
+        'nurse',
+        'pharmacist',
+        'lab_technician',
+        'receptionist',
+        'accountant',
+        'paramedic',
+        'emt',
+        'driver',
+        'ambulance_dispatcher',
+        'ambulance_coordinator',
+        'other',
+      }.contains(normalized)) {
     return const <Wd05AdministrationLink>[];
   }
   final links = <Wd05AdministrationLink>[
@@ -79,15 +115,14 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
       id: 'dashboard',
       title: 'My role dashboard',
       path: '/home',
-      description: 'Existing Flask-backed dashboard. No new or estimated KPIs.',
+      description: 'Authenticated backend dashboard',
       icon: Icons.dashboard_outlined,
     ),
     const Wd05AdministrationLink(
       id: 'account',
       title: 'My account and clinic context',
       path: '/account',
-      description:
-          'Existing account/clinic screen; not a clinic-management grant.',
+      description: 'Existing account and clinic selection',
       icon: Icons.manage_accounts_outlined,
     ),
   ];
@@ -95,97 +130,112 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
     links.add(
       const Wd05AdministrationLink(
         id: 'billing',
-        title: 'Billing and outstanding invoices',
+        title: 'Billing and invoices',
         path: '/billing',
-        description: 'Existing backend-authorized billing worklist and one-shot actions.',
+        description: 'Existing backend-authorized billing workspace',
         icon: Icons.receipt_long_outlined,
       ),
     );
   }
   if (normalized == 'admin' || normalized == 'pharmacist') {
-    links.add(
-      const Wd05AdministrationLink(
+    links.addAll(const <Wd05AdministrationLink>[
+      Wd05AdministrationLink(
         id: 'pharmacy_stock',
         title: 'Pharmacy stock',
         path: '/pharmacy/stock',
-        description: 'Read server-verified stock; no new inventory mutations.',
+        description: 'Verified pharmacy inventory',
         icon: Icons.inventory_2_outlined,
       ),
-    );
+      Wd05AdministrationLink(
+        id: 'inventory',
+        title: 'Hospital supplies inventory',
+        path: '/administration/inventory',
+        description: 'Backend-authorized current-clinic inventory',
+        icon: Icons.inventory_outlined,
+      ),
+    ]);
   }
-  if (normalized == 'admin' || normalized == 'accountant') {
+  if (const <String>{
+    'admin',
+    'doctor',
+    'nurse',
+    'receptionist',
+    'accountant',
+    'pharmacist',
+    'lab_technician',
+  }.contains(normalized)) {
     links.add(
       const Wd05AdministrationLink(
         id: 'reports',
-        title: 'Generated reports (read-only)',
+        title: 'Generated report records',
         path: '/reports',
-        description:
-            'Clinic-scoped report metadata; exports and generation disabled.',
+        description: 'Verified current-clinic report metadata',
         icon: Icons.assessment_outlined,
       ),
     );
   }
-  if (normalized == 'admin') {
-    links.addAll(const <Wd05AdministrationLink>[
-      Wd05AdministrationLink(
-        id: 'staff',
-        title: 'Staff directory',
-        path: '/administration/staff',
-        description: 'Read current-clinic staff only. Personnel writes are disabled here.',
-        icon: Icons.people_outline,
-      ),
-      Wd05AdministrationLink(
-        id: 'departments',
-        title: 'Departments',
-        path: '/administration/departments',
-        description: 'Read current-clinic departments. No changes are sent.',
-        icon: Icons.apartment_outlined,
-      ),
-      Wd05AdministrationLink(
-        id: 'inventory',
-        title: 'Hospital supplies inventory',
-        path: '/administration/inventory',
-        description: 'Server quantities only; no stock movements or changes.',
-        icon: Icons.inventory_outlined,
-      ),
-    ]);
-  } else if (normalized == 'pharmacist') {
+  links.addAll(const <Wd05AdministrationLink>[
+    Wd05AdministrationLink(
+      id: 'staff',
+      title: 'Staff directory',
+      path: '/administration/staff',
+      description: 'Read current-clinic staff via Flask',
+      icon: Icons.people_outline,
+    ),
+    Wd05AdministrationLink(
+      id: 'departments',
+      title: 'Departments',
+      path: '/administration/departments',
+      description: 'Read current-clinic departments via Flask',
+      icon: Icons.apartment_outlined,
+    ),
+  ]);
+  if (normalized == 'admin' || normalized == 'accountant') {
     links.add(
       const Wd05AdministrationLink(
-        id: 'inventory',
-        title: 'Hospital supplies inventory',
-        path: '/administration/inventory',
-        description: 'Server quantities only; no stock mutations.',
-        icon: Icons.inventory_outlined,
+        id: 'assets',
+        title: 'Hospital assets',
+        path: '/administration/assets',
+        description: 'Current-clinic asset register',
+        icon: Icons.precision_manufacturing_outlined,
       ),
     );
   }
-  if (normalized == 'admin' || normalized == 'accountant') {
-    links.addAll(const <Wd05AdministrationLink>[
-      Wd05AdministrationLink(
-        id: 'assets',
-        title: 'Asset register',
-        path: '/administration/assets',
-        description: 'Server asset records; assignment and disposal disabled.',
-        icon: Icons.precision_manufacturing_outlined,
-      ),
-      Wd05AdministrationLink(
+  if (const <String>{
+    'admin',
+    'doctor',
+    'nurse',
+    'receptionist',
+    'accountant',
+    'pharmacist',
+    'lab_technician',
+  }.contains(normalized)) {
+    links.add(
+      const Wd05AdministrationLink(
         id: 'settings',
         title: 'Clinic display settings',
         path: '/administration/settings',
-        description:
-            'Approved display fields only; credentials and writes hidden.',
+        description: 'Approved display fields; secrets excluded',
         icon: Icons.settings_outlined,
       ),
-    ]);
+    );
   }
+  links.add(
+    const Wd05AdministrationLink(
+      id: 'operations',
+      title: 'Authorized operations',
+      path: '/administration/operations',
+      description: 'Explicit, confirmation-gated Flask actions for this role',
+      icon: Icons.fact_check_outlined,
+    ),
+  );
   if (normalized == 'admin') {
     links.add(
       const Wd05AdministrationLink(
         id: 'audit',
         title: 'Clinic audit logs',
         path: '/administration/audit-logs',
-        description: 'Read assigned-clinic audit events authorized by Flask',
+        description: 'Assigned-clinic audit events',
         icon: Icons.history_outlined,
       ),
     );
@@ -194,11 +244,10 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
 }
 
 const wd05PendingAdministrationCapabilities = <String>[
-  'Staff/department creation, edits and status changes - not enabled',
-  'Asset lifecycle, assignment and maintenance mutations - not enabled',
-  'Clinic settings and integration credentials editing - not enabled',
-  'Report generation and protected exports - separate approval pending',
-  'Accounting summaries and payments by role - further verification pending',
+  'Protected report file downloads/exports require release proof',
+  'Integration secrets and credential rotation are not exposed here',
+  'Asset maintenance history and cross-clinic movements require separate proof',
+  'Payroll batch generation, ledger settlement and full accounting reconciliation remain gated',
 ];
 
 /// Pure router entry which checks the real session before navigating. No

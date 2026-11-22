@@ -164,51 +164,65 @@ void main() {
     },
   );
 
-  test(
-    'WD05 role/clinic preflight blocks HTTP, including super admin',
-    () async {
-      final guard = SessionNavigationGuard()..markSessionAvailable();
-      addTearDown(guard.dispose);
-      var calls = 0;
-      final client = MockClient((request) async {
-        calls++;
-        return _response(Wd05AdministrationSection.assets);
-      });
-      addTearDown(client.close);
-      for (final session in <AuthSessionState>[
-        _ready(role: 'super_admin'),
-        _ready(role: 'patient'),
-        _ready(role: 'accountant', clinic: 0),
-      ]) {
-        await expectLater(
-          _source(
-            client,
-            guard,
-            () async => session,
-          ).load(section: Wd05AdministrationSection.assets),
-          throwsA(isA<Wd05AdministrationReadUnavailable>()),
-        );
-      }
+  test('WD05 unauthorized clinic/role preflight blocks HTTP', () async {
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls++;
+      return _response(Wd05AdministrationSection.assets);
+    });
+    addTearDown(client.close);
+    for (final session in <AuthSessionState>[
+      _ready(role: 'super_admin'),
+      _ready(role: 'patient'),
+      _ready(role: 'accountant', clinic: 0),
+    ]) {
       await expectLater(
         _source(
           client,
           guard,
-          () async => _ready(role: 'pharmacist'),
-        ).load(section: Wd05AdministrationSection.staff),
-        throwsA(isA<Wd05AdministrationReadUnavailable>()),
-      );
-      guard.invalidate();
-      await expectLater(
-        _source(
-          client,
-          guard,
-          () async => _ready(),
+          () async => session,
         ).load(section: Wd05AdministrationSection.assets),
         throwsA(isA<Wd05AdministrationReadUnavailable>()),
       );
-      expect(calls, 0);
-    },
-  );
+    }
+    await expectLater(
+      _source(
+        client,
+        guard,
+        () async => _ready(role: 'patient'),
+      ).load(section: Wd05AdministrationSection.staff),
+      throwsA(isA<Wd05AdministrationReadUnavailable>()),
+    );
+    guard.invalidate();
+    await expectLater(
+      _source(
+        client,
+        guard,
+        () async => _ready(),
+      ).load(section: Wd05AdministrationSection.assets),
+      throwsA(isA<Wd05AdministrationReadUnavailable>()),
+    );
+    expect(calls, 0);
+  });
+
+  test('WD09F pharmacist staff reader matches the Flask allowlist', () async {
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    final client = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/api/v1/staff');
+      return _response(Wd05AdministrationSection.staff);
+    });
+    addTearDown(client.close);
+    final page = await _source(
+      client,
+      guard,
+      () async => _ready(role: 'pharmacist'),
+    ).load(section: Wd05AdministrationSection.staff);
+    expect(page.items, hasLength(1));
+  });
 
   test(
     'WD05 all five directories reject forged other-clinic records',
