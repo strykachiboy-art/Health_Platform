@@ -132,19 +132,30 @@ def issue_auth_tokens(
             "This account has been deactivated"
         )
 
-    if clinic_context_id is not None:
-        if user.role is not Role.SUPER_ADMIN:
+    # A client-supplied clinic selection is reserved for Super Admin.
+    # For all other roles, the response exposes only the current, verified
+    # server-assigned clinic; it must never become a selectable JWT claim.
+    if user.role is Role.SUPER_ADMIN:
+        if clinic_context_id is not None:
+            from app.core.auth.user.services.clinic_context_service import (
+                _get_active_clinic,
+            )
+
+            clinic_context_id = _get_active_clinic(
+                clinic_context_id
+            ).id
+    else:
+        if clinic_context_id is not None:
             raise ValidationError(
                 "Only a super administrator can use a clinic context"
             )
-
         from app.core.auth.user.services.clinic_context_service import (
-            _get_active_clinic,
+            _resolve_assigned_clinic_id,
         )
 
-        clinic_context_id = _get_active_clinic(
-            clinic_context_id
-        ).id
+        clinic_context_id = _resolve_assigned_clinic_id(
+            user.clinic_id
+        )
 
     access_claims = {
         "role": user.role.value,
@@ -155,7 +166,7 @@ def issue_auth_tokens(
         "token_version": user.token_version,
     }
 
-    if clinic_context_id is not None:
+    if user.role is Role.SUPER_ADMIN and clinic_context_id is not None:
         access_claims["clinic_context_id"] = clinic_context_id
         refresh_claims["clinic_context_id"] = clinic_context_id
 

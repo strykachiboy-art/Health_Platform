@@ -92,6 +92,7 @@ from app.modules.nursing.models.nursing_model import (
     NursingNote,
     NursingHandoff,
 )
+from app.modules.nursing.models.admission_care_assignment_model import AdmissionCareAssignment
 
 # Clinical Orders
 from app.modules.clinical_orders.models.imaging_order_model import (
@@ -175,6 +176,8 @@ from app.modules.asset_control.models.asset_maintenance_model import AssetMainte
 
 # Chat
 from app.modules.chat.models.conversation_model import Conversation
+from app.modules.chat.models.admission_case_conversation_model import AdmissionCaseConversation
+from app.modules.chat.models.admission_case_chat_sync_request_model import AdmissionCaseChatSyncRequest
 from app.modules.chat.models.conversation_participant_model import (
     ConversationParticipant,
 )
@@ -285,6 +288,7 @@ __all__ = [
     "NursingCareTask",
     "NursingNote",
     "NursingHandoff",
+    "AdmissionCareAssignment",
 
     # Clinical Orders
     "ImagingOrder",
@@ -353,6 +357,8 @@ __all__ = [
 
     # Chat
     "Conversation",
+    "AdmissionCaseConversation",
+    "AdmissionCaseChatSyncRequest",
     "ConversationParticipant",
     "Message",
     "MessageAttachment",

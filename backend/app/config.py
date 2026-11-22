@@ -53,10 +53,21 @@ class Config:
         "GOOGLE_CLIENT_SECRET"
     )
 
+    # G01: Explicit active clinic for new Google patient records.
+    # Unset by default: never infer a tenant or clinic from email.
+    GOOGLE_PATIENT_ENROLLMENT_CLINIC_ID = os.environ.get(
+        "GOOGLE_PATIENT_ENROLLMENT_CLINIC_ID"
+    )
+
     GOOGLE_REDIRECT_URI = os.environ.get(
         "GOOGLE_REDIRECT_URI",
         "http://localhost:5000/api/v1/auth/google/callback",
     )
+
+    # Separate audience for the Windows installed-app OAuth / PKCE flow.
+    # The Google desktop token exchange happens only on Flask.
+    GOOGLE_WINDOWS_CLIENT_ID = os.environ.get("GOOGLE_WINDOWS_CLIENT_ID", "")
+    GOOGLE_WINDOWS_CLIENT_SECRET = os.environ.get("GOOGLE_WINDOWS_CLIENT_SECRET", "")
 
     # ------------------------------------------------------------------
     # Redis

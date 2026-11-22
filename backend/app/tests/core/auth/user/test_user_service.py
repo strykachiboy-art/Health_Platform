@@ -916,6 +916,7 @@ def test_authenticate_user_does_not_change_token_version(
 def test_issue_auth_tokens_returns_tokens_without_context_for_normal_user(
     app,
     user,
+    clinic,
 ):
     result = user_service.issue_auth_tokens(
         user,
@@ -923,7 +924,8 @@ def test_issue_auth_tokens_returns_tokens_without_context_for_normal_user(
 
     assert result["user_id"] == user.id
     assert result["role"] == user.role.value
-    assert result["clinic_context_id"] is None
+    # The response describes the assigned clinic, not a JWT selection grant.
+    assert result["clinic_context_id"] == clinic.id
 
     access_payload = decode_token(
         result["access_token"],

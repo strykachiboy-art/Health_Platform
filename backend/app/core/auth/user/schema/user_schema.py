@@ -91,6 +91,24 @@ class GoogleMobileAuthSchema(BaseModel):
     )
 
 
+class GoogleDesktopCodeSchema(BaseModel):
+    # Reject unknown fields and coercion on the credential handoff boundary.
+    model_config = ConfigDict(extra="forbid", strict=True)
+    code: str = Field(min_length=1, max_length=4096)
+    code_verifier: str = Field(
+        min_length=43, max_length=128,
+        pattern=r"^[A-Za-z0-9._~-]+$",
+    )
+    redirect_uri: str = Field(
+        min_length=19, max_length=24,
+        pattern=r"^http://127\.0\.0\.1:[0-9]{2,5}$",
+    )
+    nonce: str = Field(
+        min_length=43, max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
 class GoogleUserInfoSchema(BaseModel):
     provider_user_id: str = Field(
         min_length=1,
