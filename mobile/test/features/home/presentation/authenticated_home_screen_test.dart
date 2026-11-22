@@ -56,13 +56,14 @@ void main() {
       'device_management',
       'health',
     ]);
-    expect(ids('SUPER_ADMIN'), ['health']);
+    expect(ids('SUPER_ADMIN'), ['health', 'administration']);
     expect(ids('SUPER_ADMIN', clinic: 3), [
       'surgery',
       'clinical_safety',
       'feedback',
       'notifications',
       'health',
+      'administration',
     ]);
     expect(ids('PATIENT', clinic: 3), contains('feedback'));
     expect(ids('doctor', clinic: 3), contains('feedback'));
@@ -140,26 +141,40 @@ void main() {
     expect(find.byKey(const ValueKey('p22-home-shell')), findsNothing);
   });
 
-  testWidgets('S14 Google-equivalent Patient home offers My care without clinic', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AuthenticatedHomeScreen(
-          loadSession: () async => _ready('patient'),
+  testWidgets(
+    'S14 Google-equivalent Patient home offers My care without clinic',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AuthenticatedHomeScreen(
+            loadSession: () async => _ready('patient'),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('s14-patient-enrollment-notice')), findsOneWidget);
-    expect(find.byKey(const ValueKey('s14-patient-features-summary')), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('p22-home-patient_portal')), 120,
-    );
-    expect(find.byKey(const ValueKey('p22-home-patient_portal')), findsOneWidget);
-    expect(find.byKey(const ValueKey('p22-home-patients')), findsNothing);
-    expect(find.byKey(const ValueKey('p22-home-administration')), findsNothing);
-  });
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('s14-patient-enrollment-notice')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('s14-patient-features-summary')),
+        findsOneWidget,
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('p22-home-patient_portal')),
+        120,
+      );
+      expect(
+        find.byKey(const ValueKey('p22-home-patient_portal')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('p22-home-patients')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('p22-home-administration')),
+        findsNothing,
+      );
+    },
+  );
 
   test('S14 My care without clinic is still patient-role exclusive', () {
     final patient = homeDestinationsFor(role: 'patient', clinicContextId: null);
@@ -176,10 +191,16 @@ void main() {
     final doctor = homeDestinationsFor(role: 'doctor', clinicContextId: 3);
     final patientIds = patient.map((d) => d.id).toSet();
     final doctorIds = doctor.map((d) => d.id).toSet();
-    expect(patientIds, containsAll(<String>[
-      'patient_portal', 'patient_appointments', 'patient_prescriptions',
-      'patient_billing', 'patient_messages',
-    ]));
+    expect(
+      patientIds,
+      containsAll(<String>[
+        'patient_portal',
+        'patient_appointments',
+        'patient_prescriptions',
+        'patient_billing',
+        'patient_messages',
+      ]),
+    );
     expect(doctorIds, isNot(contains('patient_billing')));
     expect(patientIds, isNot(contains('billing')));
     expect(patientIds, isNot(contains('patients')));
@@ -207,7 +228,8 @@ void main() {
     );
     expect(find.textContaining('does not invent counts'), findsOneWidget);
     await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('p22-home-health')), 120,
+      find.byKey(const ValueKey('p22-home-health')),
+      120,
     );
     expect(find.byKey(const ValueKey('p22-home-health')), findsOneWidget);
   });

@@ -43,6 +43,7 @@ void main() {
       'inventory',
       'assets',
       'settings',
+      'audit',
     ]);
     expect(_ids('accountant'), <String>[
       'dashboard',
@@ -67,11 +68,22 @@ void main() {
       'doctor',
       'nurse',
       'driver',
-      'super_admin',
       'invalid',
     ]) {
       expect(_ids(role), isEmpty, reason: role);
     }
+    expect(_ids('super_admin', clinic: null), <String>[
+      'dashboard',
+      'account',
+      'audit',
+      'users',
+    ]);
+    expect(_ids('super_admin', clinic: 7), <String>[
+      'dashboard',
+      'account',
+      'audit',
+      'users',
+    ]);
     for (final item in wd05AdministrationLinks(
       role: 'admin',
       clinicContextId: 7,
@@ -89,11 +101,19 @@ void main() {
           '/administration/inventory',
           '/administration/assets',
           '/administration/settings',
+          '/administration/audit-logs',
         ]),
       );
       expect(item.path, isNot(contains(':')));
     }
     expect(wd05PendingAdministrationCapabilities, isNotEmpty);
+    expect(
+      homeDestinationsFor(
+        role: 'super_admin',
+        clinicContextId: null,
+      ).map((item) => item.id),
+      contains('administration'),
+    );
   });
 
   test(
@@ -230,6 +250,8 @@ void main() {
         '/administration/inventory',
         '/administration/assets',
         '/administration/settings',
+        '/administration/audit-logs',
+        '/administration/users',
       ]) {
         router.go(path);
         await tester.pumpAndSettle();

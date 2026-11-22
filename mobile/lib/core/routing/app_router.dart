@@ -18,6 +18,8 @@ import 'package:clinic_system_pro/features/administration/presentation/wd05_admi
 import 'package:clinic_system_pro/features/administration/data/wd05_administration_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_generated_reports_screen.dart';
 import 'package:clinic_system_pro/features/administration/data/wd05_report_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/administration/data/wd09_privileged_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/administration/presentation/wd09_privileged_read_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_feature_frame.dart';
 
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
@@ -151,10 +153,14 @@ GoRouter createAppRouter({
   // GET-only readers still recheck role, clinic, patient and session authority.
   final p23hReader = patientPrescriptionDataSource;
   final PatientPortalDataSource? patientPortalSource =
-      dashboardDataSource != null && sessionNavigationGuard != null &&
-              identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
-          ? BackendPatientPortalDataSource(dashboardDataSource)
-          : null;
+      dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(
+            dashboardDataSource.sessionNavigationGuard,
+            sessionNavigationGuard,
+          )
+      ? BackendPatientPortalDataSource(dashboardDataSource)
+      : null;
   final p23hGuard = sessionNavigationGuard;
   final p23hSourceReady =
       p23hReader != null &&
@@ -561,7 +567,9 @@ GoRouter createAppRouter({
               final source = patientPortalSource;
               if (source == null ||
                   sessionNavigationGuard?.canAccessProtectedRoutes != true) {
-                return const Scaffold(body: Center(child: Text('Patient portal unavailable.')));
+                return const Scaffold(
+                  body: Center(child: Text('Patient portal unavailable.')),
+                );
               }
               return PatientPortalScreen(source: source);
             },
@@ -577,8 +585,11 @@ GoRouter createAppRouter({
               final source = patientPortalSource;
               final guard = sessionNavigationGuard;
               final loader = loadHomeSession;
-              if (section == null || source == null || guard == null ||
-                  loader == null || !guard.canAccessProtectedRoutes) {
+              if (section == null ||
+                  source == null ||
+                  guard == null ||
+                  loader == null ||
+                  !guard.canAccessProtectedRoutes) {
                 return const Scaffold(
                   body: Center(child: Text('Patient section unavailable.')),
                 );
@@ -1030,6 +1041,39 @@ GoRouter createAppRouter({
                 return Wd05AdministrationReadScreen(
                   section: section,
                   source: Wd05AdministrationReadRemoteDataSource(
+                    apiClient: dashboard.apiClient,
+                    loadSession: dashboard.loadSession,
+                    sessionNavigationGuard: guard,
+                  ),
+                );
+              },
+            ),
+          // WD09A: privileged server-backed read paths; roles are checked
+          // again before and after every HTTP request. No mutation is exposed.
+          for (final kind in Wd09ReadKind.values)
+            GoRoute(
+              path: kind == Wd09ReadKind.auditLogs
+                  ? '/administration/audit-logs'
+                  : '/administration/users',
+              name: kind == Wd09ReadKind.auditLogs
+                  ? 'wd09-audit-logs'
+                  : 'wd09-access-control-users',
+              builder: (context, state) {
+                final guard = sessionNavigationGuard;
+                final dashboard = dashboardDataSource;
+                if (guard == null ||
+                    dashboard == null ||
+                    !guard.canAccessProtectedRoutes ||
+                    !identical(dashboard.sessionNavigationGuard, guard)) {
+                  return const Scaffold(
+                    body: Center(
+                      child: Text('Privileged administration unavailable.'),
+                    ),
+                  );
+                }
+                return Wd09PrivilegedReadScreen(
+                  kind: kind,
+                  source: Wd09PrivilegedReadRemoteDataSource(
                     apiClient: dashboard.apiClient,
                     loadSession: dashboard.loadSession,
                     sessionNavigationGuard: guard,

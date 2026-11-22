@@ -29,10 +29,44 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
   required String role,
   required int? clinicContextId,
 }) {
+  final normalized = role.trim().toLowerCase();
+  // WD09A: super-admin system authority never requires a selected clinic.
+  // Clinic-scoped links remain restricted to their actual backend allowlists.
+  if (normalized == 'super_admin') {
+    return const <Wd05AdministrationLink>[
+      Wd05AdministrationLink(
+        id: 'dashboard',
+        title: 'System dashboard',
+        path: '/home',
+        description: 'Backend system overview',
+        icon: Icons.dashboard_outlined,
+      ),
+      Wd05AdministrationLink(
+        id: 'account',
+        title: 'My account and clinic context',
+        path: '/account',
+        description: 'Authenticated profile and clinic selection',
+        icon: Icons.manage_accounts_outlined,
+      ),
+      Wd05AdministrationLink(
+        id: 'audit',
+        title: 'System audit logs',
+        path: '/administration/audit-logs',
+        description: 'Flask-authorized system audit trail',
+        icon: Icons.history_outlined,
+      ),
+      Wd05AdministrationLink(
+        id: 'users',
+        title: 'User access directory',
+        path: '/administration/users',
+        description: 'Read server-authorized users; write controls require separate verification',
+        icon: Icons.admin_panel_settings_outlined,
+      ),
+    ];
+  }
   if (clinicContextId == null || clinicContextId <= 0) {
     return const <Wd05AdministrationLink>[];
   }
-  final normalized = role.trim().toLowerCase();
   if (!(const <String>{
     'admin',
     'accountant',
@@ -144,6 +178,17 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
         icon: Icons.settings_outlined,
       ),
     ]);
+  }
+  if (normalized == 'admin') {
+    links.add(
+      const Wd05AdministrationLink(
+        id: 'audit',
+        title: 'Clinic audit logs',
+        path: '/administration/audit-logs',
+        description: 'Read assigned-clinic audit events authorized by Flask',
+        icon: Icons.history_outlined,
+      ),
+    );
   }
   return List<Wd05AdministrationLink>.unmodifiable(links);
 }
