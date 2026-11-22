@@ -819,16 +819,39 @@ def _finalize_payment_failure(
     return payment
 
 
+def _hosted_checkout_url(result):
+    """Return only approved HTTPS hosted pages; never trust a provider redirect blindly."""
+    from urllib.parse import urlsplit
+    if not isinstance(result, dict) or result.get('status') != 'initialized':
+        return None
+    value = result.get('authorization_url') or result.get('payment_link')
+    if not isinstance(value, str) or not (10 <= len(value) <= 2048):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme != 'https' or parsed.hostname not in (
+            'checkout.paystack.com', 'checkout.flutterwave.com', 'flutterwave.com'
+        ) or parsed.username or parsed.password or parsed.port not in (None, 443)):
+            return None
+    except (ValueError, TypeError):
+        return None
+    return value
+
+
 def _outcome(
     payment,
     outcome,
     reason=None,
+    checkout_url=None,
 ):
-    return {
+    result = {
         "payment": payment,
         "outcome": outcome,
         "reason": reason,
     }
+    if checkout_url is not None:
+        result['checkout_url'] = checkout_url
+    return result
 
 
 def _verification_reference(payment):
@@ -1089,6 +1112,7 @@ def orchestrate_payment(
     idempotency_key=None,
     idempotency_user_id=None,
     actor_user_id=None,
+    require_test_credentials=False,
 ):
     if idempotency_key is None:
         raise ValidationError(
@@ -1111,6 +1135,11 @@ def orchestrate_payment(
             gateway,
             clinic_id=clinic_id,
         )
+        if require_test_credentials:
+            if (gateway != PaymentGateway.PAYSTACK or
+                not str(getattr(gateway_client, 'secret_key', '')).startswith('sk_test_')):
+                from app.core.exceptions import ServiceUnavailableError
+                raise ServiceUnavailableError('Sandbox payment credentials required')
         customer_email = _patient_email_for_invoice(
             invoice
         )
@@ -1291,4 +1320,5 @@ def orchestrate_payment(
         payment,
         "pending",
         "Payment initialized; provider confirmation required",
+        checkout_url=_hosted_checkout_url(result),
     )
