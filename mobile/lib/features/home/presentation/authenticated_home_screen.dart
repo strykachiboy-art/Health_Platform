@@ -77,6 +77,14 @@ List<HomeDestination> homeDestinationsFor({
       Icons.monitor_heart_outlined,
     ),
   ];
+  // S12: personal care portal is separate from staff-only patient directory.
+  if (normalizedRole == 'patient' &&
+      clinicContextId != null &&
+      clinicContextId > 0) {
+    destinations.insert(0, const HomeDestination(
+      'patient_portal', 'My care', '/patient-portal', Icons.favorite_outline,
+    ));
+  }
 
   // P24E: account-owned device management works without a push SDK or clinic.
   // This is navigation only; the authenticated backend remains authoritative.

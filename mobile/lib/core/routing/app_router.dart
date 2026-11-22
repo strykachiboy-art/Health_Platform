@@ -49,6 +49,8 @@ import 'package:clinic_system_pro/features/appointments/presentation/appointment
 import 'package:clinic_system_pro/features/appointments/data/appointment_mutation_remote_data_source.dart';
 import 'package:clinic_system_pro/features/appointments/data/models/appointment_record.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patient_portal/data/patient_portal_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patient_portal/presentation/patient_portal_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
@@ -147,6 +149,11 @@ GoRouter createAppRouter({
   // P23H.S06A reuses the already-injected authenticated client/session.
   // GET-only readers still recheck role, clinic, patient and session authority.
   final p23hReader = patientPrescriptionDataSource;
+  final PatientPortalDataSource? patientPortalSource =
+      dashboardDataSource != null && sessionNavigationGuard != null &&
+              identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
+          ? BackendPatientPortalDataSource(dashboardDataSource)
+          : null;
   final p23hGuard = sessionNavigationGuard;
   final p23hSourceReady =
       p23hReader != null &&
@@ -391,6 +398,11 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
+      // S12: direct patient portal links require an active session.
+      if (state.matchedLocation == '/patient-portal' &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       // P23I destinations lie outside the default /patients route guard.
       if ((state.matchedLocation == '/billing' ||
               state.matchedLocation == '/ambulance') &&
@@ -539,6 +551,18 @@ GoRouter createAppRouter({
           );
         },
         routes: [
+          GoRoute(
+            path: '/patient-portal',
+            name: 'wd07b-s12-patient-portal',
+            builder: (context, state) {
+              final source = patientPortalSource;
+              if (source == null ||
+                  sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+                return const Scaffold(body: Center(child: Text('Patient portal unavailable.')));
+              }
+              return PatientPortalScreen(source: source);
+            },
+          ),
           GoRoute(
             path: '/radiology',
             name: 'rad7-radiology-ris',
