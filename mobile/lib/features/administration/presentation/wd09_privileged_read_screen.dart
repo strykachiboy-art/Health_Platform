@@ -11,10 +11,12 @@ class Wd09PrivilegedReadScreen extends StatefulWidget {
     super.key,
     required this.kind,
     required this.source,
+    this.onManageUser,
   });
 
   final Wd09ReadKind kind;
   final Wd09PrivilegedReadRemoteDataSource source;
+  final ValueChanged<int>? onManageUser;
 
   @override
   State<Wd09PrivilegedReadScreen> createState() =>
@@ -215,6 +217,15 @@ class _Wd09PrivilegedReadScreenState extends State<Wd09PrivilegedReadScreen> {
             _detail!.details,
             key: const ValueKey('wd09-verified-details'),
           ),
+          if (!audit && widget.onManageUser != null)
+            FilledButton.icon(
+              key: const ValueKey('wd09b-open-user-management'),
+              onPressed: _busy
+                  ? null
+                  : () => widget.onManageUser?.call(_detail!.id),
+              icon: const Icon(Icons.manage_accounts_outlined),
+              label: const Text('Manage this user'),
+            ),
         ],
       ],
     );

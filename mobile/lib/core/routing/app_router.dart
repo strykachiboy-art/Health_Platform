@@ -20,6 +20,8 @@ import 'package:clinic_system_pro/features/administration/presentation/wd05_gene
 import 'package:clinic_system_pro/features/administration/data/wd05_report_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/administration/data/wd09_privileged_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd09_privileged_read_screen.dart';
+import 'package:clinic_system_pro/features/administration/data/wd09b_access_control_mutation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/administration/presentation/wd09b_access_control_mutation_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/authenticated_feature_frame.dart';
 
 import 'package:clinic_system_pro/features/backend_health/data/backend_health_remote_data_source.dart';
@@ -210,6 +212,8 @@ GoRouter createAppRouter({
   // Retain each P23I one-shot writer across route revisits. Closing a screen
   // cannot manufacture a fresh attempt after an uncertain financial/dispatch POST.
   final p23iActionAdapters = <String, Object>{};
+  // WD09B: one attempt per actor/target/action across route revisits.
+  final wd09bOneShotGate = Wd09bOneShotGate();
   Widget p23iWorkspace(P23IWorkspaceMode mode) {
     final guard = sessionNavigationGuard;
     final billing = p23iBillingReader;
@@ -1073,6 +1077,11 @@ GoRouter createAppRouter({
                 }
                 return Wd09PrivilegedReadScreen(
                   kind: kind,
+                  onManageUser: kind == Wd09ReadKind.users
+                      ? (userId) => context.push<void>(
+                          '/administration/users/$userId/manage',
+                        )
+                      : null,
                   source: Wd09PrivilegedReadRemoteDataSource(
                     apiClient: dashboard.apiClient,
                     loadSession: dashboard.loadSession,
@@ -1081,6 +1090,38 @@ GoRouter createAppRouter({
                 );
               },
             ),
+          // WD09B: privileged mutations use the pinned Flask contract.
+          // Direct links require a real session and Super Admin role, checked
+          // again before every GET and PATCH by the source and backend.
+          GoRoute(
+            path: '/administration/users/:userId/manage',
+            name: 'wd09b-user-management',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final dashboard = dashboardDataSource;
+              final userId = int.tryParse(state.pathParameters['userId'] ?? '');
+              if (guard == null ||
+                  dashboard == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  !identical(dashboard.sessionNavigationGuard, guard) ||
+                  userId == null ||
+                  userId <= 0 ||
+                  userId > 2147483647) {
+                return const Scaffold(
+                  body: Center(child: Text('User management unavailable.')),
+                );
+              }
+              return Wd09bAccessControlMutationScreen(
+                userId: userId,
+                source: Wd09bAccessControlMutationRemoteDataSource(
+                  apiClient: dashboard.apiClient,
+                  loadSession: dashboard.loadSession,
+                  sessionNavigationGuard: guard,
+                  oneShotGate: wd09bOneShotGate,
+                ),
+              );
+            },
+          ),
           GoRoute(
             path: '/reports',
             name: 'wd05-generated-reports-read-only',
