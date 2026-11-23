@@ -15,6 +15,12 @@ def admin_headers(auth_headers_for, user):
     return auth_headers_for(user, role=Role.ADMIN)
 
 
+def super_admin_headers(auth_headers_for, user):
+    # Use a genuine SUPER_ADMIN database identity and matching signed JWT.
+    user.role = Role.SUPER_ADMIN
+    return auth_headers_for(user)
+
+
 def user_headers(auth_headers_for, user):
     return auth_headers_for(user)
 
@@ -143,13 +149,13 @@ class TestClinicRouteAuthentication:
 
 
 class TestClinicRouteAuthorization:
-    def test_admin_can_create_clinic(
+    def test_super_admin_can_create_clinic(
         self,
         client,
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -160,6 +166,21 @@ class TestClinicRouteAuthorization:
         )
 
         assert response.status_code == 201
+
+    def test_admin_cannot_create_clinic(
+        self,
+        client,
+        user,
+        auth_headers_for,
+        assert_forbidden,
+    ):
+        # Hospital ADMIN is intentionally denied new root clinic provisioning.
+        response = client.post(
+            "/api/v1/clinics",
+            json={"name": "Denied Admin Root Clinic"},
+            headers=admin_headers(auth_headers_for, user),
+        )
+        assert_forbidden(response)
 
     def test_non_admin_cannot_create_clinic(
         self,
@@ -367,7 +388,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -399,7 +420,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -437,7 +458,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -459,7 +480,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -483,7 +504,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -508,7 +529,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -528,7 +549,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -552,7 +573,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -1798,7 +1819,7 @@ class TestClinicRouteExceptionMapping:
             fake_create_clinic,
         )
 
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -1830,7 +1851,7 @@ class TestClinicRouteExceptionMapping:
             fake_create_clinic,
         )
 
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -1859,7 +1880,7 @@ class TestClinicRouteExceptionMapping:
             fake_create_clinic,
         )
 
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -2245,7 +2266,7 @@ class TestClinicRouteValidation:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",

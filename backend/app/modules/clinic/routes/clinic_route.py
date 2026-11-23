@@ -314,7 +314,7 @@ def _parse_status(raw_status=None):
 # ============================================================================
 
 @clinic_bp.post("")
-@role_required(*CLINIC_MANAGEMENT_ROLES)
+@role_required(Role.SUPER_ADMIN)
 def create_clinic_route():
     payload, error = _validate_json(
         ClinicCreateSchema
