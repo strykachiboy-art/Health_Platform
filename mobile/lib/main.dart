@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:clinic_system_pro/presentation/sleek_clinical_dashboard_screen.dart';
+
 import 'package:clinic_system_pro/core/config/backend_config.dart';
 import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/networking/device_connectivity_banner.dart';
@@ -468,23 +470,10 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<DeviceConnectivityCubit>(
-      create: (_) => DeviceConnectivityCubit(
-        source:
-            widget.deviceConnectivitySource ??
-            ConnectivityPlusDeviceConnectivitySource(),
-      )..start(),
-      child: MaterialApp.router(
-        title: 'Clinic System Pro',
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
-        ),
-        routerConfig: _router,
-        builder: (context, child) => DeviceConnectivityBanner(
-          apiClient: widget.healthDataSource.apiClient,
-          child: child ?? const SizedBox.shrink(),
-        ),
-      ),
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Clinic System Pro - Clinical Telemetry Dashboard',
+      home: const SleekClinicalDashboardScreen(),
     );
   }
 }

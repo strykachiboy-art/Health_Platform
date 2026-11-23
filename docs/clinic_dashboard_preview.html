@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Clinic Pro — Care, Connected</title>
+  <script>try{if(localStorage.getItem('cp-theme')==='dark')document.documentElement.classList.add('dark')}catch(e){}</script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    *{box-sizing:border-box}
+    :root{--bg:#eef4f1;--sf:#fff;--in:#f5f9f7;--ln:#dfe8e4;--ln2:#c9d8d2;--tx:#0c1f1a;--mu:#5f7770;--br:#0b6b5c;--br2:#0f8a75;--bp:#0b6b5c;--brt:rgba(11,107,92,.08);--sd:#0a2f29;--sdt:#9fbab2;--rd:#d9363e;--rdt:rgba(217,54,62,.07);--am:#b7791f;--bl:#2563eb;--bar:#d9ebe5;--sh:0 1px 2px rgba(10,47,41,.05)}
+    .dark{--bg:#060f0d;--sf:#0c1a16;--in:#10211c;--ln:rgba(255,255,255,.07);--ln2:rgba(255,255,255,.14);--tx:#e8f2ee;--mu:#86a198;--br:#2dd4bf;--br2:#14b8a6;--bp:#0f766e;--brt:rgba(45,212,191,.1);--sd:#071a16;--sdt:#86a198;--rd:#fb7185;--rdt:rgba(251,113,133,.09);--am:#fbbf24;--bl:#60a5fa;--bar:rgba(45,212,191,.16);--sh:inset 0 1px 0 rgba(255,255,255,.03)}
+    html,body{height:100%;height:100dvh;margin:0}
+    body{font:13px/1.5 'Plus Jakarta Sans',system-ui,sans-serif;background:var(--bg);color:var(--tx);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;overflow:hidden}
+    button,input{font:inherit;color:inherit}
+    .mono{font-family:'JetBrains Mono',monospace}.mu{color:var(--mu)}
+    ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-thumb{background:var(--ln2);border-radius:9px}
+    .app{display:flex;height:100%}
+    /* sidebar */
+    .side{width:248px;flex:none;background:var(--sd);color:var(--sdt);display:flex;flex-direction:column;gap:18px;padding:calc(18px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom));overflow-y:auto;z-index:50}
+    .brand{display:flex;align-items:center;gap:10px;color:#fff;padding:0 4px}
+    .logo{width:38px;height:38px;border-radius:10px;background:#12806d;display:grid;place-items:center}
+    .brand b{font-size:16px;display:block;line-height:1.15}.brand small{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--sdt)}
+    .org{border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 14px;color:#fff;font-weight:600}.org small{display:block;color:var(--sdt);font-size:11.5px;font-weight:400}
+    .sl{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;padding:0 6px 6px}
+    .ni{display:flex;align-items:center;gap:11px;width:100%;padding:10px 12px;border:0;border-radius:10px;background:none;color:var(--sdt);font-weight:600;cursor:pointer;text-align:left}
+    .ni i{width:16px;text-align:center}
+    .ni .n{margin-left:auto;font-size:10px;background:rgba(255,255,255,.12);color:#fff;border-radius:99px;padding:1px 7px}
+    .ni.on{background:#12806d;color:#fff}
+    @media(hover:hover){.ni:not(.on):hover{background:rgba(255,255,255,.06);color:#fff}}
+    .duty{margin-top:auto;font-size:12px;display:grid;gap:7px}
+    .em{color:#ff8a8a;background:none;border:0;display:flex;gap:8px;align-items:center;font-weight:700;cursor:pointer;padding:6px 0}
+    .live{width:7px;height:7px;border-radius:9px;background:#34d399;display:inline-block;box-shadow:0 0 0 3px rgba(52,211,153,.2)}
+    .scrim{display:none;position:fixed;inset:0;background:rgba(3,10,8,.5);z-index:45}
+    /* shell */
+    .wrap{flex:1;min-width:0;display:flex;flex-direction:column}
+    .top{display:flex;align-items:center;gap:10px;padding:env(safe-area-inset-top) 24px 0;height:calc(60px + env(safe-area-inset-top));background:var(--sf);border-bottom:1px solid var(--ln);flex:none}
+    .srch{flex:1;max-width:420px;position:relative}.srch i{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--mu)}
+    .in{width:100%;height:38px;border:1px solid var(--ln);border-radius:10px;background:var(--in);padding:0 12px;outline:0}
+    .srch .in{padding-left:36px;border-color:transparent}
+    .in:focus{border-color:var(--br2);box-shadow:0 0 0 3px var(--brt)}
+    .sp{flex:1}
+    .ib{width:36px;height:36px;border-radius:10px;border:0;background:none;display:grid;place-items:center;cursor:pointer;position:relative;color:var(--mu)}
+    .ib .dot{position:absolute;top:8px;right:9px;width:7px;height:7px;border-radius:9px;background:var(--rd)}
+    .mb{display:none}
+    .av{width:34px;height:34px;border-radius:99px;background:var(--brt);color:var(--br);font-weight:800;font-size:11px;display:grid;place-items:center;flex:none}
+    main{flex:1;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    .page{max-width:1400px;margin:0 auto;padding:24px 24px calc(32px + env(safe-area-inset-bottom));display:grid;gap:20px}
+    .hd{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+    .hd small{color:var(--mu);font-size:12px}
+    h1{margin:2px 0 0;font-size:30px;line-height:1.1;letter-spacing:-.025em;font-weight:800}
+    .view{display:none;gap:20px;min-width:0}.view.on{display:grid}
+    /* cards */
+    .card{background:var(--sf);border:1px solid var(--ln);border-radius:12px;box-shadow:var(--sh);min-width:0;overflow:hidden}
+    .ch{position:relative;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--ln);font-weight:700;font-size:14px}
+    .ch::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,transparent)}
+    .ch .mu{font-weight:500;font-size:12px}
+    .cb{padding:16px 18px}
+    .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    .kpi{background:var(--sf);border:1px solid var(--ln);box-shadow:inset 3px 0 0 var(--kc,rgba(15,138,117,.4));border-radius:10px;padding:16px 18px;min-width:0}
+    .kpi .l{color:var(--mu);font-size:12.5px}
+    .kpi b{display:block;font:700 28px/1.2 'JetBrains Mono',monospace;margin:4px 0 6px;letter-spacing:-.03em}
+    .kpi[style*="--kc"] b{color:var(--kc)}
+    .kpi small{color:var(--mu);font-size:11.5px}.up{color:var(--br)}
+    .g2{display:grid;grid-template-columns:1.6fr 1fr;gap:20px}
+    .snap{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    .col{display:grid;gap:20px;align-content:start;min-width:0}
+    /* schedule */
+    .row{display:grid;grid-template-columns:64px 118px minmax(0,1.5fr) 1.1fr 1.2fr 1.2fr;gap:12px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--ln);cursor:pointer}
+    .row:last-child{border:0}
+    .row.h{cursor:default;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mu);background:var(--in);padding:9px 18px}
+    .row.sel{background:var(--brt);box-shadow:inset 3px 0 0 var(--br2)}
+    @media(hover:hover){.row:not(.h):not(.sel):hover{background:var(--in)}}
+    .row small{display:block;color:var(--mu);font:500 11px 'JetBrains Mono',monospace}
+    /* pills, chips, buttons */
+    .pl{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:700;background:var(--pb,var(--in));color:var(--pc,var(--mu));white-space:nowrap}
+    .g{--pc:var(--br);--pb:var(--brt)}.r{--pc:var(--rd);--pb:var(--rdt)}.a{--pc:var(--am);--pb:rgba(201,138,11,.12)}.b{--pc:var(--bl);--pb:rgba(37,99,235,.1)}.v{--pc:#8b5cf6;--pb:rgba(139,92,246,.12)}
+    .chip{font:600 11px 'JetBrains Mono',monospace;padding:2px 8px;border-radius:6px;background:var(--in);border:1px solid var(--ln2);vertical-align:middle}
+    .bt{height:34px;padding:0 14px;border-radius:9px;border:1px solid var(--ln2);background:var(--sf);font-weight:700;font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:transform .12s}
+    .bt.p{background:var(--bp);color:#fff;border-color:transparent}.bt.d{background:#d9363e;color:#fff;border-color:transparent}.bt.vi{background:#7c3aed;color:#fff;border-color:transparent}
+    .bt:active{transform:scale(.97)}.bt:disabled{opacity:.6;cursor:default}
+    @media(hover:hover){.bt:not(:disabled):hover{filter:brightness(1.08)}}
+    .acts{display:flex;gap:8px;margin-left:auto}
+    /* patient */
+    .pb{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 18px}
+    .pa{width:44px;height:44px;border-radius:12px;background:var(--brt);color:var(--br);display:grid;place-items:center;font-weight:800}
+    .pb h2{margin:0 0 2px;font-size:17px;letter-spacing:-.01em}
+    .kv{display:grid;grid-template-columns:100px 1fr;gap:8px 12px;margin:0}.kv dt{color:var(--mu)}.kv dd{margin:0;font-weight:600}
+    .li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--ln)}
+    .li:last-child{border:0;padding-bottom:0}.li:first-child{padding-top:0}
+    .vit{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--ln);border:1px solid var(--ln);border-radius:10px;overflow:hidden;text-align:center;font:500 12px 'JetBrains Mono',monospace}
+    .vit>div{background:var(--sf);padding:9px 4px}.vit span{display:block;color:var(--mu);font-size:10px}.vit b{font-size:15px}
+    .vit .r{color:var(--rd)}.vit .a{color:var(--am)}.vit .g{color:var(--br)}
+    .ward{display:grid;gap:14px;padding:16px 18px}
+    .wc{border:1px solid var(--ln);border-radius:12px;padding:14px;display:grid;gap:12px;background:var(--in)}
+    .wc.crit{background:var(--rdt);border-color:color-mix(in srgb,var(--rd) 35%,transparent)}
+    .wc .vit{border-radius:10px}
+    .wh{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+    .al{padding:12px 14px;border:1px solid var(--ln);border-left:3px solid var(--rd);border-radius:10px;background:var(--rdt);display:grid;gap:6px;margin-bottom:10px}
+    .al:last-child{margin:0}.al.done{opacity:.5;border-left-color:var(--br2);background:none}
+    .ai{background:var(--in);border:1px solid var(--ln);border-radius:10px;padding:12px 14px;line-height:1.6}
+    .seg{display:flex;height:10px;border-radius:99px;overflow:hidden;gap:2px;margin-bottom:14px}.seg i{display:block}
+    .lg{display:flex;justify-content:space-between;padding:7px 0;font-weight:600}
+    .lg span::before{content:'';display:inline-block;width:9px;height:9px;border-radius:9px;background:var(--c);margin-right:10px}
+    .note{background:var(--rdt);color:var(--rd);border-radius:10px;padding:12px 14px;margin-top:10px;font-size:12.5px}
+    .chw{height:300px;position:relative}
+    /* modal + toast */
+    .mod{position:fixed;inset:0;background:rgba(3,10,8,.6);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:16px;z-index:60}.mod.on{display:flex}
+    .mod .card{max-width:480px;width:100%;border-color:#d9363e;overflow:auto;max-height:90dvh}
+    .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translate(-50%,16px);background:var(--sd);color:#fff;padding:10px 16px;border-radius:10px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:80;max-width:90vw}.toast.on{opacity:1;transform:translate(-50%,0)}
+    /* responsive */
+    @media(max-width:1100px){.kpis{grid-template-columns:repeat(2,1fr)}.g2,.snap{grid-template-columns:1fr}}
+    @media(max-width:1023px){
+    .side{position:fixed;inset:0 auto 0 0;width:min(84vw,270px);transform:translateX(-100%);transition:transform .2s;box-shadow:0 0 40px rgba(0,0,0,.4)}
+    .side.open{transform:none}.scrim.on{display:block}.mb{display:grid}
+    .top{padding-left:12px;padding-right:12px}.page{padding:16px 14px calc(28px + env(safe-area-inset-bottom));gap:16px}.view{gap:16px}.g2,.snap,.col{gap:16px}}
+    @media(max-width:720px){
+    h1{font-size:24px}.kpi{padding:14px}.kpi b{font-size:22px}.cb,.ward{padding:14px}.pb{padding:14px}
+    .row{grid-template-columns:52px minmax(0,1fr) auto;gap:10px;padding:12px 14px}.row .hm,.row.h{display:none}.row .st{order:2}
+    .acts{width:100%}.acts .bt{flex:1}.chw{height:240px}
+    .mod{align-items:flex-end;padding:0}.mod .card{border-radius:16px 16px 0 0;max-width:none}}
+    @media(max-width:560px){.srch{display:none}#actl{display:none}}
+    @media(pointer:coarse){.bt{min-height:40px}.ib{width:40px;height:40px}.ni{padding:12px}.in{height:44px;font-size:16px}}
+    @media(prefers-reduced-motion:reduce){*{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <div id="scrim" class="scrim" onclick="drawer(0)"></div>
+
+  <aside id="side" class="side">
+    <div class="brand"><div class="logo"><i class="fa-solid fa-heart-pulse"></i></div><div><b>Clinic Pro</b><small>Care, connected</small></div></div>
+    <div class="org">St. Mary's Hospital<small>Main campus · Accra</small></div>
+    <nav>
+      <div class="sl">Workspace</div>
+      <button class="ni on" data-v="doc" onclick="go('doc')"><i class="fa-solid fa-user-doctor"></i>Doctor</button>
+      <button class="ni" data-v="nur" onclick="go('nur')"><i class="fa-solid fa-pills"></i>Nursing<span class="n" id="due">4</span></button>
+      <button class="ni" data-v="fin" onclick="go('fin')"><i class="fa-solid fa-file-invoice-dollar"></i>Finance</button>
+      <button class="ni" onclick="toast('Clinic chat — coming soon')"><i class="fa-regular fa-comment"></i>Clinic chat<span class="n">3</span></button>
+    </nav>
+    <div class="duty">
+      <div class="sl" style="padding:0">On duty</div>
+      <div><i class="live"></i>&nbsp; 12 clinical staff</div><div id="shift"></div>
+      <button class="em" onclick="bg(1)"><i class="fa-solid fa-triangle-exclamation"></i>Emergency access</button>
+      <small>MAIN-ACCRA-01 · Offline sync 0 pending</small>
+    </div>
+  </aside>
+
+  <div class="wrap">
+    <header class="top">
+      <button class="ib mb" onclick="drawer(1)" aria-label="Menu"><i class="fa-solid fa-bars"></i></button>
+      <div class="srch"><i class="fa-solid fa-magnifying-glass"></i><input class="in" placeholder="Search workspace…" aria-label="Search workspace"></div>
+      <div class="sp"></div>
+      <button class="ib" onclick="toast('No new notifications')" aria-label="Notifications"><i class="fa-regular fa-bell"></i><span class="dot"></span></button>
+      <button class="ib" onclick="theme()" aria-label="Toggle theme"><i id="ti" class="fa-solid fa-moon"></i></button>
+      <button class="bt p" onclick="toast($('actl').textContent+'…')"><i class="fa-solid fa-plus"></i><span id="actl">New encounter</span></button>
+      <div class="av" title="Dr. Alex Morgan, MD">AM</div>
+    </header>
+
+    <main id="main"><div class="page">
+      <div class="hd"><div><small id="dt"></small><h1 id="h1">Schedule</h1></div><span class="pl"><i style="color:#e0a030;font-style:normal">●</i> Sample data</span></div>
+
+      <!-- DOCTOR -->
+      <section id="v-doc" class="view on">
+        <div class="card"><div class="ch" style="--c:var(--br2)">Today's schedule<span class="mu">Tap a patient to open their snapshot</span></div>
+          <div class="row h"><span>Time</span><span>Status</span><span>Patient</span><span>Visit type</span><span>Location</span><span>Provider</span></div>
+          <div id="sched"></div></div>
+        <div class="card"><div class="pb" id="pbar"></div></div>
+        <div class="snap">
+          <div class="col">
+            <div class="card"><div class="ch" style="--c:var(--bl)">Demographics</div><div class="cb"><dl class="kv" id="dem"></dl></div></div>
+            <div class="card"><div class="ch" style="--c:#e0a030">Since your last visit</div><div class="cb" id="hist"></div></div>
+            <div class="card"><div class="ch" style="--c:#8b5cf6">Chief complaint</div><div class="cb" id="cc"></div></div>
+          </div>
+          <div class="col">
+            <div class="card"><div class="ch" style="--c:var(--rd)">Allergies</div><div class="cb" id="alg"></div></div>
+            <div class="card"><div class="ch" style="--c:var(--br2)">Medications</div><div class="cb" id="meds"></div></div>
+            <div class="card"><div class="ch" style="--c:#8b5cf6"><span><i class="fa-solid fa-brain" style="color:#8b5cf6"></i>&nbsp; Clinical AI co-pilot</span><span class="pl v">Demo</span></div>
+              <div class="cb" style="display:grid;gap:10px">
+                <input id="q" class="in" aria-label="Medication contraindication check" placeholder="Medications + labs to check…">
+                <button class="bt vi" onclick="ai()"><i class="fa-solid fa-wand-magic-sparkles"></i>Analyze risk</button>
+                <div class="ai" id="aib"></div></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- NURSING -->
+      <section id="v-nur" class="view">
+        <div class="kpis" id="k-nur"></div>
+        <div class="g2">
+          <div class="col">
+            <div class="card"><div class="ch" style="--c:var(--br2)"><span><i class="live"></i>&nbsp; Active inpatient &amp; ICU monitor</span></div><div class="ward" id="ward"></div></div>
+            <div class="card"><div class="ch" style="--c:#e0a030"><span><i class="fa-solid fa-truck-medical" style="color:#e0a030"></i>&nbsp; Ambulance fleet</span><span class="pl a">2 en route</span></div>
+              <div class="cb"><div class="li"><div><b>AMB-01 · MVA trauma, code red</b><div class="mu">En route to ER Trauma Bay 1 · ETA 4 min</div></div><button class="bt p" onclick="toast('Trauma team alerted')">Prep Bay 1</button></div></div></div>
+          </div>
+          <div class="col">
+            <div class="card"><div class="ch" style="--c:#8b5cf6">eMAR · doses due<span class="pl a" id="dueP">4 due</span></div><div class="cb" id="doses"></div></div>
+            <div class="card"><div class="ch" style="--c:var(--rd)">Safety alert inbox<span class="pl r" id="alN">3 unacknowledged</span></div><div class="cb" id="alerts"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FINANCE -->
+      <section id="v-fin" class="view">
+        <div class="kpis" id="k-fin"></div>
+        <div class="g2">
+          <div class="card"><div class="ch">Revenue · last 7 days<span class="up"><i class="fa-solid fa-arrow-trend-up"></i> ₵96.8k</span></div><div class="cb"><div class="chw"><canvas id="revc"></canvas></div></div></div>
+          <div class="card"><div class="ch">Insurance claims<span class="mu">This month</span></div><div class="cb">
+            <div class="seg"><i style="flex:128;background:#3f9d5a"></i><i style="flex:46;background:#e0a030"></i><i style="flex:9;background:#e5484d"></i></div>
+            <div class="lg" style="--c:#3f9d5a"><span>Approved</span><b class="mono">128</b></div>
+            <div class="lg" style="--c:#e0a030"><span>Pending</span><b class="mono">46</b></div>
+            <div class="lg" style="--c:#e5484d"><span>Rejected</span><b class="mono">9</b></div>
+            <div class="note"><b>9 rejected</b> · most for missing diagnosis codes. Fix and resubmit.</div></div></div>
+        </div>
+      </section>
+    </div></main>
+  </div>
+</div>
+
+<div id="bgm" class="mod"><div class="card">
+  <div class="ch" style="--c:#d9363e;color:var(--rd)"><span><i class="fa-solid fa-triangle-exclamation"></i>&nbsp; Break-glass emergency access</span></div>
+  <div class="cb" style="display:grid;gap:12px">
+    <p class="mu" style="margin:0">You are overriding restricted access to patient records under the Emergency Access Policy. An immutable audit log goes to the CMO and Compliance.</p>
+    <label for="why" class="sl" style="padding:0">Emergency justification</label>
+    <input id="why" class="in" placeholder="e.g. Unconscious patient in ER Trauma Bay 1…">
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="bt" onclick="bg(0)">Cancel</button><button class="bt d" onclick="bgGo()">Confirm override</button></div>
+  </div></div></div>
+<div id="toast" class="toast"></div>
+
+<script>
+  const $=id=>document.getElementById(id),D=document.documentElement;
+  const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const PT=[
+  {t:'09:00',st:'Arrived',sc:'b',name:'Eleanor Vance',mrn:'MRN-849201',age:'68y F',dob:'04/12/1958',loc:'Ward 3B · Bed 04',type:'Inpatient round',prov:'Morgan, Alex MD',ins:'NHIS',al:['Penicillin (anaphylaxis)'],vit:[['BP','138/88','g'],['HR','82',''],['SpO₂','97%','g']],meds:[['Amlodipine 5 mg tablet','Take 1 tablet daily'],['Metformin 500 mg tablet','Twice daily with meals'],['Atorvastatin 20 mg tablet','Take 1 tablet at night']],cc:'Routine inpatient review. Mild fatigue, no new complaints.',hx:[['Today','Inpatient round with me','Arrived'],['Jun 07','Office visit with me','Hypertension · Type 2 diabetes']],q:'Amlodipine 5mg + Metformin 500mg + Atorvastatin 20mg',ai:['No high-severity interactions flagged for this combination.','Metformin: keep an eye on renal function (eGFR).']},
+  {t:'10:00',st:'In progress',sc:'a',name:'Marcus Sterling',mrn:'MRN-902184',age:'45y M',dob:'',loc:'ICU · Bed 02',type:'ICU review',prov:'Morgan, Alex MD',ins:'Private',al:[],vit:[['BP','162/104','r'],['HR','110','a'],['K⁺','6.2','r']],meds:[['Warfarin 5 mg tablet','Take 1 tablet daily'],['Lisinopril 10 mg tablet','Take 1 tablet daily']],cc:'High serum potassium (6.2 mEq/L). Continuous ECG monitoring.',hx:[['Today','ICU review with me','In progress']],q:'Warfarin 5mg + Lisinopril 10mg + Serum K+ 6.2',ai:['Lisinopril (ACE inhibitor) lowers aldosterone, so potassium is retained. Hyperkalemia risk, serious at 6.2 mEq/L.','Get an ECG now; IV calcium gluconate if ECG changes are present.','Warfarin: bleeding risk. Monitor INR daily.']},
+  {t:'11:30',st:'Scheduled',sc:'',name:'Amara Okafor',mrn:'MRN-771305',age:'34y F',dob:'',loc:'Clinic Rm 2',type:'Office visit',prov:'Morgan, Alex MD',ins:'NHIS',al:[],vit:0,meds:[],cc:'Annual exam.',hx:[['Today','Office visit with me','Scheduled']],q:'',ai:['No active medications on file. Nothing to check.']}
+  ];
+  let cur=0,due=4,al=3;
+  const sched=()=>$('sched').innerHTML=PT.map((p,i)=>`<div class="row${i==cur?' sel':''}" role="button" tabindex="0" onclick="pick(${i})" onkeydown="if(event.key==='Enter')pick(${i})"><span class="mono">${p.t}</span><span class="st"><span class="pl ${p.sc}">${p.st}</span></span><span><b>${p.name}</b><small>${p.mrn} · ${p.age}</small></span><span class="hm">${p.type}</span><span class="hm">${p.loc}</span><span class="hm">${p.prov}</span></div>`).join('');
+  const aiHtml=p=>'<b>AI risk assessment</b>'+p.ai.map(x=>`<div>• ${x}</div>`).join('');
+  function pick(i){cur=i;const p=PT[i];sched();
+  $('pbar').innerHTML=`<div class="pa">${p.name.split(' ').map(w=>w[0]).join('')}</div><div style="flex:1;min-width:190px"><h2>${p.name} <span class="chip">${p.mrn}</span></h2><span class="mu">${p.age}${p.dob?' · DOB '+p.dob:''} · ${p.loc}</span></div><div>${p.al.length?`<span class="pl r"><i class="fa-solid fa-circle-exclamation"></i> ${p.al[0]}</span>`:'<span class="pl g">NKDA</span>'}</div><div class="acts"><button class="bt" onclick="toast('Opening chart…')">Open chart</button><button class="bt p" onclick="toast('Encounter signed')">Sign encounter</button></div>`;
+  $('dem').innerHTML=[['Age / sex',p.age],['DOB',p.dob||'—'],['Location',p.loc],['Provider',p.prov],['Insurance',p.ins]].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+  $('hist').innerHTML=p.hx.map(([d,t,s])=>`<div class="li"><div><b>${t}</b><div class="mu">${s}</div></div><span class="mono mu">${d}</span></div>`).join('');
+  $('cc').textContent=p.cc;
+  $('alg').innerHTML=p.al.length?p.al.map(a=>`<span class="pl r"><i class="fa-solid fa-circle-exclamation"></i> ${a}</span>`).join(' '):'<span class="mu">No known drug allergies.</span>';
+  $('meds').innerHTML=(p.meds.length?p.meds.map(([n,s])=>`<div class="li"><div><b>${n}</b><div class="mu">${s}</div></div></div>`).join('')+'<div style="margin-top:14px"><button class="bt" onclick="this.innerHTML=\'<i class=&quot;fa-solid fa-check&quot;></i> Reviewed by you at \'+new Date().toTimeString().slice(0,5);this.disabled=true"><i class="fa-solid fa-check"></i> Mark as reviewed</button></div>':'<span class="mu">No active medications on file.</span>');
+  $('q').value=p.q;$('aib').innerHTML=aiHtml(p)}
+  function ai(){const p=PT[cur],b=$('aib');b.innerHTML='<span class="mono mu">Running on-device inference…</span>';setTimeout(()=>b.innerHTML=aiHtml(p)+($('q').value?`<div class="mu" style="margin-top:6px">For: ${esc($('q').value)}</div>`:'')+'<div class="mu">Advisory only · demo output</div>',400)}
+
+  const K=a=>a.map(([l,v,s,c])=>`<div class="kpi"${c?` style="--kc:${c}"`:''}><div class="l">${l}</div><b>${v}</b><small>${s}</small></div>`).join('');
+  $('k-nur').innerHTML=K([['Bed capacity','248 / 260','<span class="up">95.3% occupied</span>'],['Consultations today','142','18 in waiting queue'],['Doses given today','412','4 overdue barcode scans'],['Safety alerts','3','High serum K⁺ (6.2 mEq/L)','var(--rd)']]);
+  $('k-fin').innerHTML=K([['Collected today','₵18.4k','<span class="up">↗ +12%</span> vs last Mon'],['This month','₵312k','<span class="up">↗</span> 78% of target'],['Outstanding','₵47.2k','<span class="up">↗</span> 62 invoices'],['Claims pending','46','<span class="up">↗</span> ₵89k value']]);
+  $('ward').innerHTML=PT.map((p,i)=>p.vit?`<div class="wc${p.vit.some(v=>v[2]=='r')?' crit':''}"><div class="wh"><div><b>${p.name}</b><div class="mono mu" style="font-size:11px">${p.mrn} · ${p.age}</div></div><span class="pl ${p.sc=='a'?'r':'v'}">${p.loc}</span></div><div class="vit">${p.vit.map(([k,v,c])=>`<div><span>${k}</span><b class="${c}">${v}</b></div>`).join('')}</div><div class="acts"><button class="bt" onclick="pick(${i});go('doc')">View chart</button><button class="bt p" onclick="toast('Barcode scanner active')">Scan eMAR</button></div></div>`:'').join('');
+  const DOSES=[['14:00','Marcus Sterling','Calcium gluconate · IV',1],['14:00','Eleanor Vance','Amlodipine 5 mg · PO',0],['14:30','Eleanor Vance','Metformin 500 mg · PO',0],['15:00','Marcus Sterling','Insulin regular · IV',0]];
+  $('doses').innerHTML=DOSES.map(([t,n,d,o])=>`<div class="li"><div><b>${d}</b><div class="mu">${n} · <span class="mono">${t}</span> ${o?'<span class="pl r">Overdue</span>':''}</div></div><button class="bt" onclick="scan(this)">Scan</button></div>`).join('');
+  function scan(b){b.closest('.li').style.opacity=.45;b.textContent='Given ✓';b.disabled=true;due--;$('due').textContent=due;$('dueP').textContent=due+' due';toast('Dose logged')}
+  const ALERTS=[['High serum potassium','Marcus Sterling (ICU-02): K⁺ 6.2 mEq/L. High arrhythmia risk.','10m ago'],['Overdue barcode scan','Calcium gluconate IV for Marcus Sterling was due at 14:00.','25m ago'],['Allergy flag','Eleanor Vance: penicillin anaphylaxis. Verify before any antibiotic order.','1h ago']];
+  $('alerts').innerHTML=ALERTS.map(([t,d,a])=>`<div class="al"><div style="display:flex;justify-content:space-between;gap:8px"><b style="color:var(--rd)">${t}</b><span class="mono mu" style="font-size:10px">${a}</span></div><div>${d}</div><div><button class="bt d" style="height:28px" onclick="ack(this)">Acknowledge</button></div></div>`).join('');
+  function ack(b){b.closest('.al').classList.add('done');b.textContent='Acknowledged ✓';b.disabled=true;al--;$('alN').textContent=al+' unacknowledged'}
+
+  /* nav + shell */
+  const V={doc:['Schedule','New encounter'],nur:['Ward overview','New admission'],fin:['Finance overview','New invoice']};
+  function go(id){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id=='v-'+id));document.querySelectorAll('.ni[data-v]').forEach(b=>b.classList.toggle('on',b.dataset.v==id));$('h1').textContent=V[id][0];$('actl').textContent=V[id][1];$('main').scrollTop=0;drawer(0);if(id=='fin')initChart()}
+  function drawer(o){$('side').classList.toggle('open',!!o);$('scrim').classList.toggle('on',!!o)}
+  function bg(o){$('bgm').classList.toggle('on',!!o);if(o)$('why').focus()}
+  function bgGo(){const r=$('why').value.trim();if(!r){$('why').focus();return toast('Justification required')}bg(0);$('why').value='';toast('Break-glass active · AUDIT-BG-'+(Math.random()*90000+10000|0))}
+  let tt;function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');clearTimeout(tt);tt=setTimeout(()=>t.classList.remove('on'),2200)}
+  function ico(){$('ti').className='fa-solid fa-'+(D.classList.contains('dark')?'sun':'moon')}
+  function theme(){const d=D.classList.toggle('dark');ico();try{localStorage.setItem('cp-theme',d?'dark':'light')}catch(e){}recolor()}
+  document.addEventListener('keydown',e=>{if(e.key=='Escape'){bg(0);drawer(0)}});
+  addEventListener('resize',()=>{if(innerWidth>=1024)drawer(0)});
+  const n=new Date(),h=n.getHours();
+  $('dt').textContent=n.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})+' / '+(h<14?'Morning':h<22?'Afternoon':'Night')+' shift';
+  $('shift').textContent=h<14?'Morning shift · 06:00–14:00':h<22?'Afternoon shift · 14:00–22:00':'Night shift · 22:00–06:00';
+
+  /* chart: soft bars, latest day solid, value labels (like the green mock) */
+  const cv=k=>getComputedStyle(D).getPropertyValue(k).trim();
+  const bc=()=>{const t=cv('--bar');return[t,t,t,t,t,t,cv('--br')]};
+  const lab={id:'lab',afterDatasetsDraw(c){const x=c.ctx;x.save();x.fillStyle=cv('--tx');x.font='500 11px JetBrains Mono';x.textAlign='center';c.getDatasetMeta(0).data.forEach((b,i)=>x.fillText((c.data.datasets[0].data[i]/1000).toFixed(1)+'k',b.x,b.y-8));x.restore()}};
+  let ch;function initChart(){if(ch)return ch.resize();ch=new Chart($('revc'),{type:'bar',plugins:[lab],data:{labels:['Tue','Wed','Thu','Fri','Sat','Sun','Mon'],datasets:[{data:[14200,16800,12400,19100,9600,6300,18400],backgroundColor:bc(),borderRadius:6,borderSkipped:false,maxBarThickness:72}]},options:{responsive:true,maintainAspectRatio:false,animation:false,layout:{padding:{top:22}},plugins:{legend:{display:false}},scales:{x:{grid:{display:false},border:{display:false},ticks:{color:cv('--mu')}},y:{display:false,beginAtZero:true}}}})}
+  function recolor(){if(!ch)return;ch.data.datasets[0].backgroundColor=bc();ch.options.scales.x.ticks.color=cv('--mu');ch.update('none')}
+
+  ico();pick(0);
+</script>
+</body>
+</html>
