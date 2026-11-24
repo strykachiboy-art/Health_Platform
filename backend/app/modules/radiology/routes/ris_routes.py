@@ -186,3 +186,42 @@ def clinical_worklist_publish(exam_id):
     dto = _body(_Publish)
     return _ok(clinical.publish(exam_id=exam_id, clinic_id=clinic_id,
         actor_staff_id=staff_id, expected_version=dto.expected_version))
+
+@radiology_bp.post('/exams/<int:exam_id>/staged-study')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_study_validate(exam_id):
+    from app.modules.radiology.services import radc_acquisition_service as acquisition
+    from app.modules.radiology.schemas.ris_schema import _Strict, Positive
+    from app.modules.radiology.services.radc_orthanc_transport import ArchiveUnconfirmed
+    class _Acquire(_Strict):
+        publication_id: Positive
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    clinic_id, staff_id = _actor()
+    dto = _body(_Acquire)
+    try:
+        return _ok(acquisition.validate(exam_id=exam_id, clinic_id=clinic_id,
+            actor_staff_id=staff_id, publication_id=dto.publication_id), 201)
+    except ArchiveUnconfirmed:
+        return jsonify({'success': False, 'error': 'Staged archive outcome unconfirmed'}), 503
+
+
+@radiology_bp.get('/exams/<int:exam_id>/staged-study/<int:publication_id>/instance')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_study_instance(exam_id, publication_id):
+    from flask import Response
+    from app.modules.radiology.services import radc_acquisition_service as acquisition
+    from app.modules.radiology.services.radc_orthanc_transport import ArchiveUnconfirmed
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    clinic_id, staff_id = _actor()
+    try:
+        data = acquisition.retrieve(exam_id=exam_id, clinic_id=clinic_id,
+            actor_staff_id=staff_id, publication_id=publication_id)
+    except ArchiveUnconfirmed:
+        return jsonify({'success': False, 'error': 'Staged archive unavailable'}), 503
+    return Response(data, mimetype='application/dicom', headers={
+        'X-Content-Type-Options':'nosniff','Content-Disposition':'attachment; filename="staged-nondiagnostic.dcm"',
+        'X-Radiology-Scope':'synthetic-nondiagnostic-only'})

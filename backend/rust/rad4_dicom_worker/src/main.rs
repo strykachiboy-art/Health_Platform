@@ -93,8 +93,18 @@ struct Evidence {
     pixels: Vec<u8>,
 }
 
-fn inspect(src: &Path, expected: &[String]) -> Result<Evidence, String> {
-    if expected.len() != 7 || !expected_subject(&expected[0]) || !accession(&expected[1])
+fn inspect(src: &Path, expected: &[String], staged: bool) -> Result<Evidence, String> {
+    let count = if staged { 8 } else { 7 };
+    if expected.len() != count { return Err(reject("BAD_EXPECTED_COUNT")); }
+    let subject_ok = if staged {
+        !expected[0].is_empty() && expected[0].len() <= 10
+            && expected[0].bytes().all(|b| b.is_ascii_digit())
+            && !expected[0].starts_with('0')
+            && expected[7].starts_with("CSP-CLINIC-")
+            && expected[7][11..].len() > 0
+            && expected[7][11..].bytes().all(|b| b.is_ascii_digit())
+    } else { expected_subject(&expected[0]) };
+    if !subject_ok || !accession(&expected[1])
         || !uid(&expected[2]) || !uid(&expected[3]) || !uid(&expected[4])
         || expected[5].len() != 64 || expected[6].len() != 64
         || ![&expected[5], &expected[6]].iter().all(|s| s.bytes().all(|c| c.is_ascii_hexdigit())) {
@@ -122,6 +132,10 @@ fn inspect(src: &Path, expected: &[String]) -> Result<Evidence, String> {
     ];
     for (key, trusted) in pairs {
         if get_text(&obj, key)? != *trusted { return Err(reject("IDENTITY_MISMATCH")); }
+    }
+    if staged && (get_text(&obj, "PatientName")? != "RAD2^SYNTHETIC"
+        || get_text(&obj, "IssuerOfPatientID")? != expected[7]) {
+        return Err(reject("STAGED_SUBJECT_OR_ISSUER_MISMATCH"));
     }
     if get_text(&obj, "SOPClassUID")? != SOP_CLASS || get_text(&obj, "Modality")? != "OT" {
         return Err(reject("UNSUPPORTED_SOP_CLASS_OR_MODALITY"));
@@ -153,14 +167,16 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     // One file, seven independently supplied expected identity/digest values,
     // and one output path: no globbing, network, queue, or override of files.
-    if !(args.len() == 10 || args.len() == 11) || args[1] != "inspect" {
-        return Err(reject("BAD_INVOCATION"));
-    }
-    let observed = inspect(Path::new(&args[2]), &args[3..10])?;
+    let staged = args.get(1).map(String::as_str) == Some("inspect-staged");
+    if !(if staged { args.len() == 11 } else {
+        (args.len() == 10 || args.len() == 11) && args.get(1).map(String::as_str) == Some("inspect")
+    }) { return Err(reject("BAD_INVOCATION")); }
+    let end = if staged { 11 } else { 10 };
+    let observed = inspect(Path::new(&args[2]), &args[3..end], staged)?;
     // Optional bounded 8-bit PGM derivative; never an interpretable diagnostic
     // rendering or an image-archive record. Exclusive create prevents overwrite.
     let mut preview_generated = false;
-    if args.len() == 11 {
+    if !staged && args.len() == 11 {
         let destination = Path::new(&args[10]);
         let filename = destination.file_name().and_then(|v| v.to_str()).unwrap_or("");
         if destination.parent() != Some(Path::new("/output"))
@@ -179,7 +195,7 @@ fn run() -> Result<(), String> {
         preview_generated = true;
     }
     let result = serde_json::json!({
-        "status": "validated_synthetic_metadata_only",
+        "status": if staged { "validated_staged_sc_only" } else { "validated_synthetic_metadata_only" },
         "file_sha256": observed.file_sha256,
         "pixel_sha256": observed.pixel_sha256,
         "width": observed.width,

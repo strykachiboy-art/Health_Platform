@@ -55,7 +55,9 @@ def test_app_registers_only_inert_rad1_routes(app):
     assert ('/api/v1/radiology/exams/<int:exam_id>/reports', 'POST') in api
     assert ('/api/v1/radiology/exams/<int:exam_id>/clinical-worklist', 'GET') in api
     assert ('/api/v1/radiology/exams/<int:exam_id>/clinical-worklist', 'POST') in api
-    assert len(api) == 11, api
+    assert ('/api/v1/radiology/exams/<int:exam_id>/staged-study', 'POST') in api
+    assert ('/api/v1/radiology/exams/<int:exam_id>/staged-study/<int:publication_id>/instance', 'GET') in api
+    assert len(api) == 13, api
     assert not any(any(x in route.lower() for x in (
         'final', 'sign', 'archive', 'dicom', 'ingest', 'critical', 'execute', 'release'
     )) for route, _ in api)

@@ -179,3 +179,26 @@ class RadiologyWorklistDelivery(db.Model):
     attempted_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
     acknowledged_at = db.Column(db.DateTime, nullable=True)
     withdrawn_at = db.Column(db.DateTime, nullable=True)
+
+class RadiologyStagedAcquisition(db.Model):
+    """Immutable synthetic validation evidence. Never diagnostic verification."""
+    __tablename__ = 'radiology_staged_acquisitions'
+    __table_args__ = (
+        db.UniqueConstraint('association_id', name='uq_radc_acq_association'),
+        db.UniqueConstraint('archive_key', 'instance_id', name='uq_radc_acq_instance'),
+        db.CheckConstraint("state IN ('staged_validated','quarantined')", name='ck_radc_acq_state'),
+        db.CheckConstraint("state != 'staged_validated' OR (instance_id IS NOT NULL AND series_uid IS NOT NULL AND sop_uid IS NOT NULL AND file_sha256 IS NOT NULL AND pixel_sha256 IS NOT NULL)", name='ck_radc_acq_evidence'),
+        db.CheckConstraint('file_sha256 IS NULL OR length(file_sha256) = 64', name='ck_radc_acq_digest'),
+        db.CheckConstraint('pixel_sha256 IS NULL OR length(pixel_sha256) = 64', name='ck_radc_acq_pixels'),
+    )
+    publication_id = db.Column(db.Integer, db.ForeignKey('radiology_worklist_deliveries.publication_id'), primary_key=True)
+    association_id = db.Column(db.Integer, db.ForeignKey('radiology_study_associations.id'), nullable=False)
+    archive_key = db.Column(db.String(64), nullable=False)
+    instance_id = db.Column(db.String(44), nullable=True)
+    series_uid = db.Column(db.String(64), nullable=True)
+    sop_uid = db.Column(db.String(64), nullable=True)
+    file_sha256 = db.Column(db.String(64), nullable=True)
+    pixel_sha256 = db.Column(db.String(64), nullable=True)
+    state = db.Column(db.String(24), nullable=False)
+    actor_staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
