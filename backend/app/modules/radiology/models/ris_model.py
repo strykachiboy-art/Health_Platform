@@ -202,3 +202,22 @@ class RadiologyStagedAcquisition(db.Model):
     state = db.Column(db.String(24), nullable=False)
     actor_staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+class RadiologyStagedCTStudy(db.Model):
+    """Bounded synthetic CT inventory; not a diagnostic signature or clinical release."""
+    __tablename__ = 'radiology_staged_ct_studies'
+    __table_args__ = (
+        db.UniqueConstraint('association_id', name='uq_radc_ct_association'),
+        db.CheckConstraint("state IN ('staged_validated','quarantined')", name='ck_radc_ct_state'),
+        db.CheckConstraint("(state = 'staged_validated' AND manifest_sha256 IS NOT NULL AND instance_count BETWEEN 1 AND 16) OR (state = 'quarantined' AND manifest_sha256 IS NULL AND instance_count = 0)", name='ck_radc_ct_evidence'),
+        db.CheckConstraint('manifest_sha256 IS NULL OR length(manifest_sha256) = 64', name='ck_radc_ct_digest'),
+    )
+    publication_id = db.Column(db.Integer, db.ForeignKey('radiology_worklist_deliveries.publication_id'), primary_key=True)
+    association_id = db.Column(db.Integer, db.ForeignKey('radiology_study_associations.id'), nullable=False)
+    archive_key = db.Column(db.String(64), nullable=False)
+    state = db.Column(db.String(24), nullable=False)
+    manifest = db.Column(db.JSON, nullable=False)
+    manifest_sha256 = db.Column(db.String(64), nullable=True)
+    instance_count = db.Column(db.Integer, nullable=False)
+    actor_staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)

@@ -78,7 +78,7 @@ def _text(tags, key, vr):
         raise InvalidStudy('Required identity absent') from exc
 
 
-def _manifest(raw, p, series, sop):
+def _manifest(raw, p, series, sop, *, pixel_vr=b'OB'):
     if not isinstance(raw, bytes) or not 160 <= len(raw) <= CAP or raw[128:132] != b'DICM':
         raise InvalidStudy('Unsupported file')
     t = _elements(raw, 132)
@@ -103,11 +103,11 @@ def _manifest(raw, p, series, sop):
     if any(v[0]==b'SQ' and k!=(0x0008,0x0051) for k,v in t.items()):
         raise InvalidStudy('Unsupported nested sequence')
     pixel = t.get((0x7fe0,0x0010))
-    if pixel is None or pixel[0]!=b'OB': raise InvalidStudy('Unsupported pixels')
+    if pixel is None or pixel[0]!=pixel_vr: raise InvalidStudy('Unsupported pixels')
     return sha(raw), sha(pixel[1])
 
 
-def _worker(raw, p, series, sop, hashes):
+def _worker(raw, p, series, sop, hashes, *, ct=False):
     cfg = current_app.config.get('RAD_C_STAGED_WORKER')
     if not isinstance(cfg,dict) or set(cfg)!={'path','sha256'}:
         raise ArchiveUnconfirmed('Pinned worker unavailable')
@@ -117,7 +117,7 @@ def _worker(raw, p, series, sop, hashes):
     with tempfile.TemporaryDirectory(prefix='radc-staged-') as folder:
         f=Path(folder)/'instance.dcm'; f.write_bytes(raw)
         try:
-            cp=subprocess.run([str(path),'inspect-staged',str(f),p['patient_identifier'],p['accession'],p['study_instance_uid'],series,sop,*hashes,p['patient_issuer']],capture_output=True,timeout=30,check=False)
+            cp=subprocess.run([str(path),'inspect-staged-ct' if ct else 'inspect-staged',str(f),p['patient_identifier'],p['accession'],p['study_instance_uid'],series,sop,*hashes,p['patient_issuer']],capture_output=True,timeout=30,check=False)
         except (OSError,subprocess.TimeoutExpired) as exc:
             raise ArchiveUnconfirmed('Worker unavailable') from exc
         if cp.returncode==4: raise InvalidStudy('Worker rejected instance')
@@ -125,7 +125,7 @@ def _worker(raw, p, series, sop, hashes):
         try: result=json.loads(cp.stdout)
         except ValueError as exc: raise ArchiveUnconfirmed('Worker receipt invalid') from exc
     if not isinstance(result,dict) or any(result.get(k)!=v for k,v in {
-        'status':'validated_staged_sc_only','file_sha256':hashes[0],'pixel_sha256':hashes[1],
+        'status':'validated_staged_ct_only' if ct else 'validated_staged_sc_only','file_sha256':hashes[0],'pixel_sha256':hashes[1],
         'dicom_rs_parser_used':True,'archive_verified':False,'clinical_association':False,
         'diagnostic_report_signed':False,'chart_released':False,'preview_generated':False,
     }.items()): raise ArchiveUnconfirmed('Worker receipt mismatch')

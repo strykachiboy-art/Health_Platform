@@ -225,3 +225,41 @@ def staged_study_instance(exam_id, publication_id):
     return Response(data, mimetype='application/dicom', headers={
         'X-Content-Type-Options':'nosniff','Content-Disposition':'attachment; filename="staged-nondiagnostic.dcm"',
         'X-Radiology-Scope':'synthetic-nondiagnostic-only'})
+
+@radiology_bp.post('/exams/<int:exam_id>/staged-ct')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_ct_validate(exam_id):
+    from app.modules.radiology.services import radc_ct_service as ct
+    from app.modules.radiology.schemas.ris_schema import _Strict, Positive
+    from app.modules.radiology.services.radc_orthanc_transport import ArchiveUnconfirmed
+    class _AcquireCT(_Strict):
+        publication_id: Positive
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    clinic_id, staff_id = _actor()
+    dto = _body(_AcquireCT)
+    try:
+        return _ok(ct.validate(exam_id=exam_id, clinic_id=clinic_id,
+            actor_staff_id=staff_id, publication_id=dto.publication_id), 201)
+    except ArchiveUnconfirmed:
+        return jsonify({'success': False, 'error': 'Staged CT archive unavailable'}), 503
+
+
+@radiology_bp.get('/exams/<int:exam_id>/staged-ct/<int:publication_id>/viewer/<path:target>')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_ct_viewer(exam_id, publication_id, target):
+    from flask import Response
+    from app.modules.radiology.services import radc_ct_service as ct
+    from app.modules.radiology.services.radc_orthanc_transport import ArchiveUnconfirmed
+    clinic_id, staff_id = _actor()
+    try:
+        body, content_type = ct.view(exam_id=exam_id, clinic_id=clinic_id,
+            actor_staff_id=staff_id, publication_id=publication_id, target=target,
+            query=list(request.args.items(multi=True)))
+    except ArchiveUnconfirmed:
+        return jsonify({'success': False, 'error': 'Staged CT archive unavailable'}), 503
+    return Response(body, content_type=content_type, headers={
+        'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
+        'X-Radiology-Scope': 'synthetic-nondiagnostic-only'})

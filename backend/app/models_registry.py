@@ -119,7 +119,7 @@ from app.modules.radiology.models.ris_model import (
     RadiologyExam, RadiologyScheduledStep, RadiologyReport,
     RadiologyReportVersion, RadiologyStudyAssociation,
     RadiologyDicomIdentity, RadiologyWorklistPublication, RadiologyInterpretationGrant,
-    RadiologyWorklistDelivery, RadiologyStagedAcquisition,
+    RadiologyWorklistDelivery, RadiologyStagedAcquisition, RadiologyStagedCTStudy,
 )
 
 # Surgery

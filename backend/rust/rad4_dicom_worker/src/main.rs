@@ -93,7 +93,7 @@ struct Evidence {
     pixels: Vec<u8>,
 }
 
-fn inspect(src: &Path, expected: &[String], staged: bool) -> Result<Evidence, String> {
+fn inspect(src: &Path, expected: &[String], staged: bool, ct: bool) -> Result<Evidence, String> {
     let count = if staged { 8 } else { 7 };
     if expected.len() != count { return Err(reject("BAD_EXPECTED_COUNT")); }
     let subject_ok = if staged {
@@ -120,8 +120,9 @@ fn inspect(src: &Path, expected: &[String], staged: bool) -> Result<Evidence, St
     if file_sha != expected[5] { return Err(reject("FILE_DIGEST_MISMATCH")); }
     // dicom-rs provides a second, independent structured parse of the bounded file.
     let obj = open_file(src).map_err(|_| reject("DICOM_RS_PARSE_FAILED"))?;
+    let sop_class = if ct { "1.2.840.10008.5.1.4.1.1.2" } else { SOP_CLASS };
     if obj.meta().transfer_syntax() != TRANSFER_SYNTAX
-        || obj.meta().media_storage_sop_class_uid() != SOP_CLASS
+        || obj.meta().media_storage_sop_class_uid() != sop_class
         || obj.meta().media_storage_sop_instance_uid() != expected[4] {
         return Err(reject("DICOM_FILE_META_MISMATCH"));
     }
@@ -137,24 +138,25 @@ fn inspect(src: &Path, expected: &[String], staged: bool) -> Result<Evidence, St
         || get_text(&obj, "IssuerOfPatientID")? != expected[7]) {
         return Err(reject("STAGED_SUBJECT_OR_ISSUER_MISMATCH"));
     }
-    if get_text(&obj, "SOPClassUID")? != SOP_CLASS || get_text(&obj, "Modality")? != "OT" {
+    if get_text(&obj, "SOPClassUID")? != sop_class || get_text(&obj, "Modality")? != (if ct { "CT" } else { "OT" }) {
         return Err(reject("UNSUPPORTED_SOP_CLASS_OR_MODALITY"));
     }
     let width = get_u16(&obj, "Columns")?;
     let height = get_u16(&obj, "Rows")?;
+    let bits = if ct { 16 } else { 8 };
     if !(1..=512).contains(&width) || !(1..=512).contains(&height)
-        || get_u16(&obj, "BitsAllocated")? != 8
-        || get_u16(&obj, "BitsStored")? != 8
-        || get_u16(&obj, "HighBit")? != 7
+        || get_u16(&obj, "BitsAllocated")? != bits
+        || get_u16(&obj, "BitsStored")? != bits
+        || get_u16(&obj, "HighBit")? != bits - 1
         || get_u16(&obj, "SamplesPerPixel")? != 1
-        || get_u16(&obj, "PixelRepresentation")? != 0
+        || get_u16(&obj, "PixelRepresentation")? != (if ct { 1 } else { 0 })
         || get_text(&obj, "PhotometricInterpretation")? != "MONOCHROME2" {
         return Err(reject("UNSUPPORTED_PREVIEW_FORMAT"));
     }
     let pixels = obj.element_by_name("PixelData")
         .map_err(|_| reject("PIXEL_DATA_MISSING"))?
         .to_bytes().map_err(|_| reject("ENCAPSULATED_PIXEL_DATA_DENIED"))?;
-    if pixels.len() != usize::from(width) * usize::from(height) {
+    if pixels.len() != usize::from(width) * usize::from(height) * (if ct { 2 } else { 1 }) {
         return Err(reject("PIXEL_LENGTH_INVALID"));
     }
     let pixel_sha = digest(pixels.as_ref());
@@ -167,12 +169,13 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     // One file, seven independently supplied expected identity/digest values,
     // and one output path: no globbing, network, queue, or override of files.
-    let staged = args.get(1).map(String::as_str) == Some("inspect-staged");
+    let ct = args.get(1).map(String::as_str) == Some("inspect-staged-ct");
+    let staged = ct || args.get(1).map(String::as_str) == Some("inspect-staged");
     if !(if staged { args.len() == 11 } else {
         (args.len() == 10 || args.len() == 11) && args.get(1).map(String::as_str) == Some("inspect")
     }) { return Err(reject("BAD_INVOCATION")); }
     let end = if staged { 11 } else { 10 };
-    let observed = inspect(Path::new(&args[2]), &args[3..end], staged)?;
+    let observed = inspect(Path::new(&args[2]), &args[3..end], staged, ct)?;
     // Optional bounded 8-bit PGM derivative; never an interpretable diagnostic
     // rendering or an image-archive record. Exclusive create prevents overwrite.
     let mut preview_generated = false;
@@ -195,7 +198,7 @@ fn run() -> Result<(), String> {
         preview_generated = true;
     }
     let result = serde_json::json!({
-        "status": if staged { "validated_staged_sc_only" } else { "validated_synthetic_metadata_only" },
+        "status": if ct { "validated_staged_ct_only" } else if staged { "validated_staged_sc_only" } else { "validated_synthetic_metadata_only" },
         "file_sha256": observed.file_sha256,
         "pixel_sha256": observed.pixel_sha256,
         "width": observed.width,
