@@ -37,6 +37,11 @@ class Config:
         os.environ.get("CLINIC_EXTENDED_OPERATING_HOURS_ENABLED", "false").lower() == "true"
     )
 
+    # Patient result release is a separate, disabled-by-default feature.
+    PATIENT_LAB_RELEASE_ENABLED = (
+        os.environ.get("PATIENT_LAB_RELEASE_ENABLED", "false").lower() == "true"
+    )
+
     # Separate staged booking enforcement; never enabled by the display flag alone.
     CLINIC_BOOKING_HOURS_ENFORCEMENT_ENABLED = (
         os.environ.get("CLINIC_BOOKING_HOURS_ENFORCEMENT_ENABLED", "false").lower() == "true"

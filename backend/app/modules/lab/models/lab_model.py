@@ -147,6 +147,9 @@ class LabOrder(db.Model):
     __tablename__ = "lab_orders"
 
     __table_args__ = (
+        db.CheckConstraint('(patient_released_at IS NULL AND patient_released_by_id IS NULL AND patient_release_user_id IS NULL AND patient_release_snapshot IS NULL) OR (patient_released_at IS NOT NULL AND patient_released_by_id IS NOT NULL AND patient_release_user_id IS NOT NULL AND patient_release_snapshot IS NOT NULL AND completed_at IS NOT NULL AND verified_at IS NOT NULL AND patient_released_at >= completed_at)', name="ck_lab_patient_release_pair"),
+        db.CheckConstraint('(patient_release_withdrawn_at IS NULL AND patient_release_withdrawn_by_id IS NULL) OR (patient_release_withdrawn_at IS NOT NULL AND patient_release_withdrawn_by_id IS NOT NULL AND patient_released_at IS NOT NULL AND patient_release_withdrawn_at >= patient_released_at)', name="ck_lab_patient_release_withdrawal"),
+        db.Index("ix_lab_patient_release_lookup", "clinic_id", "patient_id", "patient_release_user_id", "patient_released_at"),
         # ---------------------------------------------------------
         # Collection timestamp integrity
         # ---------------------------------------------------------
@@ -420,6 +423,14 @@ class LabOrder(db.Model):
         index=True,
     )
 
+    # Explicit patient publication is not equivalent to lab completion.
+    patient_released_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    patient_released_by_id = db.Column(db.Integer, db.ForeignKey("staff.id", name="fk_lab_release_doctor"), nullable=True)
+    patient_release_user_id = db.Column(db.Integer, db.ForeignKey("users.id", name="fk_lab_release_recipient"), nullable=True)
+    patient_release_snapshot = db.Column(db.JSON(none_as_null=True), nullable=True)
+    patient_release_withdrawn_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    patient_release_withdrawn_by_id = db.Column(db.Integer, db.ForeignKey("staff.id", name="fk_lab_release_withdrawal_doctor"), nullable=True)
+
     # -------------------------------------------------------------
     # Relationships
     # -------------------------------------------------------------
@@ -522,6 +533,9 @@ class LabOrderItem(db.Model):
         db.String(150),
         nullable=True,
     )
+
+    # Capture display context at result entry; never guess legacy units/ranges.
+    result_display_metadata = db.Column(db.JSON(none_as_null=True), nullable=True)
 
     flag = db.Column(
         db.Enum(LabResultFlag),

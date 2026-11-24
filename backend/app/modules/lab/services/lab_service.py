@@ -1990,6 +1990,12 @@ def enter_result(
 
     item.result_value = result_value
     item.flag = resolved_flag
+    item.result_display_metadata = {
+        "test_name": item.test.name,
+        "loinc_code": getattr(item.test, "loinc_code", None),
+        "unit": getattr(item.test, "unit", None),
+        "reference_range": getattr(item.test, "reference_range", None),
+    }
     item.result_notes = result_notes
     item.result_file_url = result_file_url
     item.resulted_at = now

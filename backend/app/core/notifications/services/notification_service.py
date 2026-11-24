@@ -524,6 +524,25 @@ def create_notification(
     reference_id=None,
     actor_user_id=None,
 ):
+    """Create a notification and commit through the existing transaction wrapper."""
+    return create_notification_in_transaction(
+        clinic_id, user_id, title, message, notification_type,
+        priority, channel, reference_type, reference_id, actor_user_id,
+    )
+
+
+def create_notification_in_transaction(
+    clinic_id,
+    user_id,
+    title,
+    message,
+    notification_type,
+    priority=NotificationPriority.NORMAL,
+    channel=NotificationChannel.IN_APP,
+    reference_type=None,
+    reference_id=None,
+    actor_user_id=None,
+):
     """
     Create a notification for a clinic-owned user.
 

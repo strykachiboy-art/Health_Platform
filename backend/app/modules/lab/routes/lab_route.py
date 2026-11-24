@@ -915,3 +915,76 @@ def cancel_order_route(order_id: int):
 
     except Exception as exc:
         return _handle_route_error(exc)
+
+
+# Patient release is independent from the existing staff lab-order API.
+def _release_response(data):
+    response = jsonify({'success': True, 'data': data})
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 200
+
+
+def _release_body(key):
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) != {key} or not isinstance(body[key], str):
+        raise ValidationError('Invalid laboratory release request')
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    return body[key]
+
+
+@lab_bp.get('/orders/<int:order_id>/patient-release-preview')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def patient_release_preview_route(order_id):
+    from app.modules.lab.services.lab_release_service import preview_release
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    return _release_response(preview_release(order_id=order_id, clinic_id=_get_current_clinic_id(), doctor_user_id=_get_current_user().id))
+
+
+@lab_bp.get('/orders/<int:order_id>/patient-release')
+@role_required(Role.DOCTOR, Role.LAB_TECHNICIAN)
+@active_staff_required
+def patient_release_status_route(order_id):
+    from app.modules.lab.services.lab_release_service import release_status
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    return _release_response(release_status(order_id=order_id, clinic_id=_get_current_clinic_id(), doctor_user_id=_get_current_user().id))
+
+
+@lab_bp.post('/orders/<int:order_id>/patient-release')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def patient_release_route(order_id):
+    from app.modules.lab.services.lab_release_service import release_report
+    return _release_response(release_report(order_id=order_id, clinic_id=_get_current_clinic_id(), doctor_user_id=_get_current_user().id, preview_sha256=_release_body('preview_sha256')))
+
+
+@lab_bp.post('/orders/<int:order_id>/patient-release-withdrawal')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def patient_release_withdrawal_route(order_id):
+    from app.modules.lab.services.lab_release_service import withdraw_report
+    return _release_response(withdraw_report(order_id=order_id, clinic_id=_get_current_clinic_id(), doctor_user_id=_get_current_user().id, reason_code=_release_body('reason_code')))
+
+
+@lab_bp.get('/me/released-results')
+@role_required(Role.PATIENT)
+def my_released_lab_results_route():
+    from app.modules.lab.services.lab_release_service import list_released
+    if set(request.args) - {'page'} or len(request.args.getlist('page')) > 1:
+        raise ValidationError('Unsupported query parameters')
+    page = request.args.get('page', '1')
+    if not page.isascii() or not page.isdecimal() or len(page) > 5:
+        raise ValidationError('Invalid page')
+    return _release_response(list_released(user_id=_get_current_user().id, clinic_id=_get_current_clinic_id(), page=int(page)))
+
+
+@lab_bp.get('/me/released-results/<int:order_id>')
+@role_required(Role.PATIENT)
+def my_released_lab_result_route(order_id):
+    from app.modules.lab.services.lab_release_service import get_released
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    return _release_response(get_released(user_id=_get_current_user().id, clinic_id=_get_current_clinic_id(), order_id=order_id))
