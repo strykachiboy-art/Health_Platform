@@ -509,6 +509,9 @@ def create_clinic(
             "is_headquarters": (
                 clinic.is_headquarters
             ),
+            "opening_time": _audit_value(clinic.opening_time),
+            "closing_time": _audit_value(clinic.closing_time),
+            "timezone": clinic.timezone,
         },
     )
 
@@ -606,6 +609,9 @@ def create_branch(
                 branch.parent_clinic_id
             ),
             "is_headquarters": False,
+            "opening_time": _audit_value(branch.opening_time),
+            "closing_time": _audit_value(branch.closing_time),
+            "timezone": branch.timezone,
         },
     )
 
@@ -706,7 +712,9 @@ def update_clinic(
         clinic.closing_time,
     )
 
-    if operating_mode is None:
+    if operating_mode is None and (
+        "opening_time" in fields or "closing_time" in fields
+    ):
         _validate_operating_hours(opening_time, closing_time)
 
     if (

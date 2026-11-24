@@ -37,6 +37,11 @@ class Config:
         os.environ.get("CLINIC_EXTENDED_OPERATING_HOURS_ENABLED", "false").lower() == "true"
     )
 
+    # Separate staged booking enforcement; never enabled by the display flag alone.
+    CLINIC_BOOKING_HOURS_ENFORCEMENT_ENABLED = (
+        os.environ.get("CLINIC_BOOKING_HOURS_ENFORCEMENT_ENABLED", "false").lower() == "true"
+    )
+
     JWT_SECRET_KEY = os.environ.get(
         "JWT_SECRET_KEY",
         "dev-jwt-secret-change-me",

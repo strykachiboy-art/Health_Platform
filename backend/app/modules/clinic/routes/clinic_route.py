@@ -22,7 +22,7 @@ from app.modules.clinic.schemas.clinic_schema import (
     ClinicUpdateSchema,
 )
 
-from app.modules.clinic.services.clinic_operating_modes import describe_operating_mode
+from app.modules.clinic.services.clinic_operating_modes import operating_status
 from app.modules.clinic.services.clinic_service import (
     add_ai_credits,
     change_status,
@@ -124,9 +124,9 @@ def _serialize_clinic(clinic):
         ),
     }
     if current_app.config.get("CLINIC_EXTENDED_OPERATING_HOURS_ENABLED", False) is True:
-        record["operating_mode"] = describe_operating_mode(
-            clinic.opening_time, clinic.closing_time,
-        )
+        record.update(operating_status(
+            clinic.opening_time, clinic.closing_time, clinic.timezone,
+        ))
     return record
 
 
