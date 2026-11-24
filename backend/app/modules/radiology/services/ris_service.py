@@ -301,6 +301,9 @@ def revise_draft(*, report_id, clinic_id, actor_staff_id,
         raise ConflictError('Canonical imaging order is not open for private RIS notes')
     if report.author_staff_id != actor.id:
         raise NotFoundError('Private RIS note unavailable in author scope')
+    from app.modules.radiology.models.ris_model import RadiologyStagedReport
+    if db.session.get(RadiologyStagedReport,report.id) is not None:
+        raise ConflictError('Frozen staged working note cannot be revised')
     if report.status != 'private_draft' or report.version != _positive(expected_version, 'expected_version'):
         raise ConflictError('Stale or non-draft RIS note')
     fingerprint = _digest(content)
@@ -326,6 +329,9 @@ def get_draft_history(*, exam_id, clinic_id, actor_staff_id):
         raise NotFoundError('Private RIS note unavailable')
     if report.author_staff_id != actor.id:
         raise NotFoundError('Private RIS note unavailable in author scope')
+    from app.modules.radiology.models.ris_model import RadiologyStagedReport
+    if db.session.get(RadiologyStagedReport,report.id) is not None:
+        raise ConflictError('Frozen staged note requires staged report view')
     versions = db.session.execute(select(RadiologyReportVersion).where(
         RadiologyReportVersion.report_id == report.id,
     ).order_by(RadiologyReportVersion.revision.desc()).limit(50)).scalars().all()

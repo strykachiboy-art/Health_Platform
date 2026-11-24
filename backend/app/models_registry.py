@@ -120,6 +120,7 @@ from app.modules.radiology.models.ris_model import (
     RadiologyReportVersion, RadiologyStudyAssociation,
     RadiologyDicomIdentity, RadiologyWorklistPublication, RadiologyInterpretationGrant,
     RadiologyWorklistDelivery, RadiologyStagedAcquisition, RadiologyStagedCTStudy,
+    RadiologyStagedReport, RadiologyStagedReportRelease,
 )
 
 # Surgery

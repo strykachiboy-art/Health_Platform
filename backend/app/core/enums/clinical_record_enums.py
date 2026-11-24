@@ -16,3 +16,4 @@ class ClinicalRecordType(str, Enum):
     MEDICATION_RECONCILIATION = "medication_reconciliation"
     DISCHARGE_SUMMARY = "discharge_summary"
     LAB_REPORT = "lab_report"
+    STAGED_RADIOLOGY_REPORT = "staged_radiology_report"

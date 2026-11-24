@@ -59,7 +59,17 @@ def test_app_registers_only_inert_rad1_routes(app):
     assert ('/api/v1/radiology/exams/<int:exam_id>/staged-study/<int:publication_id>/instance', 'GET') in api
     assert ('/api/v1/radiology/exams/<int:exam_id>/staged-ct', 'POST') in api
     assert ('/api/v1/radiology/exams/<int:exam_id>/staged-ct/<int:publication_id>/viewer/<path:target>', 'GET') in api
-    assert len(api) == 15, api
+    assert ('/api/v1/radiology/exams/<int:exam_id>/staged-report/<int:publication_id>/preview', 'GET') in api
+    assert ('/api/v1/radiology/exams/<int:exam_id>/staged-report/<int:publication_id>/freeze', 'POST') in api
+    assert ('/api/v1/radiology/exams/<int:exam_id>/staged-report/<int:publication_id>', 'GET') in api
+    assert ('/api/v1/radiology/exams/<int:exam_id>/staged-report/<int:publication_id>/amend', 'POST') in api
+    assert ('/api/v1/radiology/exams/<int:exam_id>/staged-report/<int:publication_id>/copy-preview', 'GET') in api
+    assert ('/api/v1/radiology/exams/<int:exam_id>/staged-report/<int:publication_id>/copy', 'POST') in api
+    assert ('/api/v1/radiology/exams/<int:exam_id>/staged-report/<int:publication_id>/withdraw', 'POST') in api
+    assert ('/api/v1/radiology/me/staged-reports', 'GET') in api
+    assert ('/api/v1/radiology/me/staged-reports/<int:exam_id>', 'GET') in api
+    assert ('/api/v1/radiology/me/staged-reports/<int:exam_id>/pdf', 'GET') in api
+    assert len(api) == 25, api
     assert not any(any(x in route.lower() for x in (
         'final', 'sign', 'archive', 'dicom', 'ingest', 'critical', 'execute', 'release'
     )) for route, _ in api)

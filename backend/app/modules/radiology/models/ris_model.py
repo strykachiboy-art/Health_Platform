@@ -221,3 +221,41 @@ class RadiologyStagedCTStudy(db.Model):
     instance_count = db.Column(db.Integer, nullable=False)
     actor_staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+class RadiologyStagedReport(db.Model):
+    """Frozen synthetic reporting exercise; never a clinical signature."""
+    __tablename__ = 'radiology_staged_reports'
+    __table_args__ = (
+        db.UniqueConstraint('publication_id', name='uq_radc_report_publication'),
+        db.CheckConstraint('draft_revision >= 1', name='ck_radc_report_revision'),
+        db.CheckConstraint('length(snapshot_sha256) = 64', name='ck_radc_report_digest'),
+    )
+    report_id = db.Column(db.Integer, db.ForeignKey('radiology_reports.id'), primary_key=True)
+    publication_id = db.Column(db.Integer, db.ForeignKey('radiology_staged_ct_studies.publication_id'), nullable=False)
+    draft_revision = db.Column(db.Integer, nullable=False)
+    snapshot = db.Column(db.JSON, nullable=False)
+    snapshot_sha256 = db.Column(db.String(64), nullable=False)
+    finalized_by_staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), nullable=False)
+    finalized_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+
+class RadiologyStagedReportRelease(db.Model):
+    """Version-bound synthetic patient copy decision, not a clinical release."""
+    __tablename__ = 'radiology_staged_report_releases'
+    __table_args__ = (
+        db.UniqueConstraint('report_id', 'version', name='uq_radc_report_release_version'),
+        db.CheckConstraint('version >= 1', name='ck_radc_release_version'),
+        db.CheckConstraint('length(content_sha256) = 64', name='ck_radc_release_digest'),
+        db.CheckConstraint("(withdrawn_at IS NULL AND withdrawn_by_staff_id IS NULL) OR (withdrawn_at IS NOT NULL AND withdrawn_by_staff_id IS NOT NULL)", name='ck_radc_release_withdrawal'),
+        db.Index('uq_radc_report_active_release', 'report_id', unique=True,
+                 postgresql_where=db.text('withdrawn_at IS NULL'), sqlite_where=db.text('withdrawn_at IS NULL')),
+    )
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey('radiology_staged_reports.report_id'), nullable=False)
+    version = db.Column(db.Integer, nullable=False)
+    recipient_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    content_sha256 = db.Column(db.String(64), nullable=False)
+    released_by_staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), nullable=False)
+    released_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+    withdrawn_at = db.Column(db.DateTime, nullable=True)
+    withdrawn_by_staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), nullable=True)

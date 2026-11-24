@@ -72,6 +72,9 @@ def snapshot(*, kind: str, record_id: int, clinic_id: int,
                   owner_staff_id=order.ordered_by_staff_id)
         report=db.session.execute(select(RadiologyReport).where(
             RadiologyReport.exam_id==exam.id)).scalar_one_or_none()
+        from app.modules.radiology.models.ris_model import RadiologyStagedReport
+        if report is not None and db.session.get(RadiologyStagedReport,report.id) is not None:
+            raise PrintDenied('Frozen staged note is not a private draft')
         if report is None or report.status!='private_draft' or report.version<1:
             raise PrintDenied('No authorized private draft')
         version=db.session.execute(select(RadiologyReportVersion).where(

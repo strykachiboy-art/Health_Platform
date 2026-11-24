@@ -263,3 +263,130 @@ def staged_ct_viewer(exam_id, publication_id, target):
     return Response(body, content_type=content_type, headers={
         'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
         'X-Radiology-Scope': 'synthetic-nondiagnostic-only'})
+
+# Test-profile-only reporting routes. The old RAD1 envelope continues to deny
+# clinical signing and chart release; staged reporting uses a distinct receipt.
+def _staged_report_args(exam_id, publication_id):
+    if request.args or request.headers.get('Idempotency-Key') is not None:
+        raise ValidationError('Unsupported staged report parameters')
+    clinic_id,staff_id=_actor()
+    return dict(exam_id=exam_id,clinic_id=clinic_id,actor_staff_id=staff_id,publication_id=publication_id)
+
+
+def _staged_report_response(fn, **kwargs):
+    from app.modules.radiology.services.radc_orthanc_transport import ArchiveUnconfirmed
+    try:
+        return jsonify({'success':True,'data':fn(**kwargs),'synthetic_only':True,'diagnostic_report_signed':False,'released_to_chart':False})
+    except ArchiveUnconfirmed:
+        return jsonify({'success':False,'error':'Staged archive unavailable'}),503
+
+
+@radiology_bp.get('/exams/<int:exam_id>/staged-report/<int:publication_id>/preview')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_report_preview(exam_id,publication_id):
+    from app.modules.radiology.services import radc_report_service as report
+    return _staged_report_response(report.preview,**_staged_report_args(exam_id,publication_id))
+
+
+@radiology_bp.post('/exams/<int:exam_id>/staged-report/<int:publication_id>/freeze')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_report_freeze(exam_id,publication_id):
+    from app.modules.radiology.services import radc_report_service as report
+    from app.modules.radiology.schemas.ris_schema import _Strict,Positive
+    from pydantic import Field
+    class Body(_Strict):
+        expected_version: Positive
+        preview_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    return _staged_report_response(report.finalize,**_staged_report_args(exam_id,publication_id),**_body(Body).model_dump())
+
+
+@radiology_bp.get('/exams/<int:exam_id>/staged-report/<int:publication_id>')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_report_status(exam_id,publication_id):
+    from app.modules.radiology.services import radc_report_service as report
+    return _staged_report_response(report.status,**_staged_report_args(exam_id,publication_id))
+
+
+@radiology_bp.post('/exams/<int:exam_id>/staged-report/<int:publication_id>/amend')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_report_amend(exam_id,publication_id):
+    from app.modules.radiology.services import radc_report_service as report
+    from app.modules.radiology.schemas.ris_schema import _Strict,Positive
+    from pydantic import Field
+    class Body(_Strict):
+        expected_version: Positive
+        report_text: str = Field(min_length=1,max_length=12000)
+        reason: str = Field(min_length=5,max_length=1000)
+    return _staged_report_response(report.amend,**_staged_report_args(exam_id,publication_id),**_body(Body).model_dump())
+
+
+@radiology_bp.get('/exams/<int:exam_id>/staged-report/<int:publication_id>/copy-preview')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_report_copy_preview(exam_id,publication_id):
+    from app.modules.radiology.services import radc_report_service as report
+    return _staged_report_response(report.release_preview,**_staged_report_args(exam_id,publication_id))
+
+
+@radiology_bp.post('/exams/<int:exam_id>/staged-report/<int:publication_id>/copy')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_report_copy(exam_id,publication_id):
+    from app.modules.radiology.services import radc_report_service as report
+    from app.modules.radiology.schemas.ris_schema import _Strict
+    from pydantic import Field
+    class Body(_Strict):
+        preview_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
+    return _staged_report_response(report.publish,**_staged_report_args(exam_id,publication_id),**_body(Body).model_dump())
+
+
+@radiology_bp.post('/exams/<int:exam_id>/staged-report/<int:publication_id>/withdraw')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def staged_report_withdraw(exam_id,publication_id):
+    from app.modules.radiology.services import radc_report_service as report
+    from app.modules.radiology.schemas.ris_schema import _Strict,Positive
+    class Body(_Strict):
+        expected_version: Positive
+    return _staged_report_response(report.withdraw,**_staged_report_args(exam_id,publication_id),**_body(Body).model_dump())
+
+
+def _staged_patient_args():
+    if request.args or request.headers.get('Idempotency-Key') is not None:
+        raise ValidationError('Unsupported staged report parameters')
+    clinic_id=get_current_clinic_id(required=True)
+    context=get_jwt().get('clinic_context_id')
+    if context is not None and (type(context) is not int or context!=clinic_id):
+        raise NotFoundError('Staged copy unavailable')
+    return dict(user_id=g.current_user_id,clinic_id=clinic_id)
+
+
+@radiology_bp.get('/me/staged-reports')
+@role_required(Role.PATIENT)
+def staged_patient_reports():
+    from app.modules.radiology.services import radc_report_service as report
+    return _staged_report_response(report.patient_list,**_staged_patient_args())
+
+
+@radiology_bp.get('/me/staged-reports/<int:exam_id>')
+@role_required(Role.PATIENT)
+def staged_patient_report(exam_id):
+    from app.modules.radiology.services import radc_report_service as report
+    return _staged_report_response(report.patient_detail,exam_id=exam_id,**_staged_patient_args())
+
+
+@radiology_bp.get('/me/staged-reports/<int:exam_id>/pdf')
+@role_required(Role.PATIENT)
+def staged_patient_report_pdf(exam_id):
+    from flask import Response,abort
+    from app.modules.radiology.services import radc_report_service as report
+    from app.modules.printing.services.print_policy import PrintDenied
+    try:
+        data,doc=report.patient_pdf(exam_id=exam_id,**_staged_patient_args())
+    except PrintDenied:
+        abort(404)
+    return Response(data,mimetype='application/pdf',headers={'X-Content-Type-Options':'nosniff','X-Source-SHA256':doc.source_digest,'X-Radiology-Scope':'synthetic-nondiagnostic-only','Content-Disposition':'attachment; filename="staged-radiology-copy.pdf"'})

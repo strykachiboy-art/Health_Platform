@@ -15,6 +15,7 @@ _ALLOWED = {
     'appointment': frozenset(('ADMIN', 'RECEPTIONIST', 'DOCTOR')),
     'lab_order': frozenset(('ADMIN', 'LAB_TECHNICIAN')),
     'released_lab_result': frozenset(('PATIENT',)),
+    'staged_radiology_copy': frozenset(('PATIENT',)),
     'radiology_draft': frozenset(('DOCTOR',)),
 }
 _WATERMARK = {
@@ -23,15 +24,17 @@ _WATERMARK = {
     'lab_order': 'SPECIMEN / LAB ORDER ONLY - NO VERIFIED RESULT',
     'released_lab_result': 'PATIENT COPY OF RELEASED LAB REPORT - NOT A SIGNED ORIGINAL',
     'radiology_draft': 'UNSIGNED WORKING NOTE - NOT FOR DIAGNOSIS OR CHART RELEASE',
+    'staged_radiology_copy': 'SYNTHETIC TEST COPY - NOT FOR DIAGNOSIS OR CHART RELEASE',
 }
 _FIELDS = {
     'invoice': ('invoice_number', 'patient_id', 'status', 'currency', 'total_amount', 'amount_paid'),
     'appointment': ('patient_id', 'assigned_staff_id', 'status', 'scheduled_start', 'scheduled_end'),
     'lab_order': ('patient_id', 'status', 'created_at', 'sample_collected_at'),
     'released_lab_result': ('patient_id','verified_at','completed_at','released_at','report_text'),
+    'staged_radiology_copy': ('patient_id','released_at','report_text'),
     'radiology_draft': ('imaging_order_id', 'accession_number', 'report_revision', 'report_text'),
 }
-_MAX_TEXT = {'invoice': 300, 'appointment': 300, 'lab_order': 300, 'radiology_draft': 12000, 'released_lab_result': 12000}
+_MAX_TEXT = {'invoice': 300, 'appointment': 300, 'lab_order': 300, 'radiology_draft': 12000, 'released_lab_result': 12000, 'staged_radiology_copy': 12000}
 
 class PrintDenied(ValueError):
     """Deliberately generic authorization/validation denial, safe for 404 response."""
@@ -91,7 +94,7 @@ def build_document(*, kind: str, clinic_id: int, record_id: int,
     if kind not in _ALLOWED or not isinstance(source, Mapping):
         raise PrintDenied('Unsupported print source')
     _positive(clinic_id); _positive(record_id)
-    if type(source_version) is not int or source_version < 0 or (kind in ('radiology_draft','released_lab_result') and source_version==0):
+    if type(source_version) is not int or source_version < 0 or (kind in ('radiology_draft','released_lab_result','staged_radiology_copy') and source_version==0):
         raise PrintDenied('Unknown source version')
     if set(source) != set(_FIELDS[kind]):
         raise PrintDenied('Unexpected or missing source fields')
@@ -106,4 +109,4 @@ def build_document(*, kind: str, clinic_id: int, record_id: int,
 
 def supported_kinds() -> tuple[str, ...]:
     # Patient-only print contract is not exposed via the generic staff endpoint.
-    return tuple(sorted(k for k in _ALLOWED if k != 'released_lab_result'))
+    return tuple(sorted(k for k in _ALLOWED if k not in ('released_lab_result','staged_radiology_copy')))
