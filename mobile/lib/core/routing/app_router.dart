@@ -128,6 +128,8 @@ import 'package:clinic_system_pro/features/clinical_ai/data/clinical_ai_remote_d
 import 'package:clinic_system_pro/features/clinical_ai/presentation/clinical_ai_workspace_screen.dart';
 import 'package:clinic_system_pro/features/hie/data/hie_remote_data_source.dart';
 import 'package:clinic_system_pro/features/hie/presentation/hie_workspace_screen.dart';
+import 'package:clinic_system_pro/features/lab/data/lab_release_remote_data_source.dart';
+import 'package:clinic_system_pro/features/lab/presentation/lab_release_workspace_screen.dart';
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
@@ -163,6 +165,13 @@ GoRouter createAppRouter({
           sessionNavigationGuard != null &&
           identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
       ? HieRemoteDataSource(apiClient: dashboardDataSource.apiClient,
+          loadSession: dashboardDataSource.loadSession, guard: sessionNavigationGuard)
+      : null;
+  // One release writer for the router lifetime; never recreate on route visits.
+  final LabReleaseRemoteDataSource? labReleaseSource = dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
+      ? LabReleaseRemoteDataSource(apiClient: dashboardDataSource.apiClient,
           loadSession: dashboardDataSource.loadSession, guard: sessionNavigationGuard)
       : null;
   // P23H.S06A reuses the already-injected authenticated client/session.
@@ -474,6 +483,11 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
+      if ((state.uri.path == '/lab-release' || state.uri.path.startsWith('/lab-release/') ||
+           state.uri.path == '/patient-lab-results' || state.uri.path.startsWith('/patient-lab-results/')) &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       // WD06 coordination deep links require an available signed-in session.
       // This does not grant clinic permissions or a backend-authenticated role.
       if (state.matchedLocation == '/coordination' &&
@@ -595,7 +609,21 @@ GoRouter createAppRouter({
                   body: Center(child: Text('Patient portal unavailable.')),
                 );
               }
-              return PatientPortalScreen(source: source);
+              return PatientPortalScreen(source: source,
+                onOpenLabResults: labReleaseSource == null ? null : () async {
+                  final revision = labReleaseSource.guard.revision;
+                  try {
+                    final actor = await labReleaseSource.connect();
+                    await actor.check();
+                    if (actor.role == 'patient' && context.mounted &&
+                        labReleaseSource.guard.revision == revision) {
+                      await context.push<void>('/patient-lab-results');
+                    }
+                  } on Object {
+                    // No clinical data or navigation on an unavailable session.
+                  }
+                },
+              );
             },
           ),
           // S15: standalone read-only Patient sections, without new endpoints.
@@ -964,9 +992,35 @@ GoRouter createAppRouter({
               // Detail always re-fetches and verifies role, user and clinic.
               // Its reference fields never authorize a clinical route.
               return NotificationDetailScreen(
+                key: ValueKey('notification-${link.notificationId}'),
                 id: link.notificationId,
                 source: source,
                 actions: actions,
+                onOpenReleasedLab: labReleaseSource == null ||
+                    !identical(source.sessionNavigationGuard, labReleaseSource.guard)
+                    ? null : (id) async {
+                  final revision = labReleaseSource.guard.revision;
+                  final identity = await source.requireSession();
+                  final target = await source.releasedLabTarget(id, expected: identity);
+                  if (target == null) return false;
+                  final actor = await labReleaseSource.connect();
+                  await actor.check();
+                  final current = await labReleaseSource.loadSession();
+                  final user = current.session;
+                  final expected = identity.session;
+                  if (actor.role != 'patient' || !context.mounted ||
+                      labReleaseSource.guard.revision != revision ||
+                      identity.guardRevision != revision ||
+                      current.disposition != AuthSessionDisposition.ready ||
+                      user == null || user.userId != expected.userId ||
+                      user.role != expected.role || user.clinicContextId != expected.clinicContextId ||
+                      user.tenantId != expected.tenantId || user.accessToken != expected.accessToken ||
+                      user.refreshToken != expected.refreshToken) {
+                    return false;
+                  }
+                  await context.push<void>('/patient-lab-results/$target');
+                  return true;
+                },
               );
             },
           ),
@@ -1060,6 +1114,26 @@ GoRouter createAppRouter({
               return HieWorkspaceScreen(source: source);
             },
           ),
+          for (final path in ['/lab-release', '/lab-release/:orderId',
+            '/patient-lab-results', '/patient-lab-results/:orderId'])
+            GoRoute(
+              path: path,
+              builder: (context, state) {
+                final source = labReleaseSource;
+                final patientOnly = path.startsWith('/patient-lab-results');
+                final raw = state.pathParameters['orderId'];
+                final id = raw == null ? null : int.tryParse(raw);
+                if (source == null || !source.guard.canAccessProtectedRoutes ||
+                    state.uri.hasQuery || state.uri.hasFragment ||
+                    (raw != null && (id == null || id <= 0 || id > 2147483647 || '$id' != raw))) {
+                  return const Scaffold(body: Center(child: Text('Laboratory release navigation unavailable.')));
+                }
+                return LabReleaseWorkspaceScreen(
+                  key: ValueKey('lab-release-$patientOnly-$id'),
+                  source: source, initialOrderId: id, patientOnly: patientOnly,
+                );
+              },
+            ),
           // WD13 system-level clinic registry: Flask remains authoritative.
           // Root POST is compile-time locked until entitlement enforcement.
           GoRoute(
@@ -1943,6 +2017,19 @@ GoRouter createAppRouter({
                 key: ValueKey('p23h-route-lab-orders-$patientId'),
                 patientId: patientId,
                 dataSource: labReadSource,
+                onOpenRelease: labReleaseSource == null ? null : (id) async {
+                  final revision = labReleaseSource.guard.revision;
+                  try {
+                    final actor = await labReleaseSource.connect();
+                    await actor.check();
+                    if (const {'doctor', 'lab_technician'}.contains(actor.role) &&
+                        context.mounted && labReleaseSource.guard.revision == revision) {
+                      await context.push<void>('/lab-release/$id');
+                    }
+                  } on Object {
+                    // Backend remains authoritative; no stale navigation.
+                  }
+                },
               );
             },
           ),

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
+import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/lab/data/lab_order_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/lab/data/models/lab_order_read.dart';
 
@@ -12,12 +13,14 @@ class LabPatientOrdersScreen extends StatefulWidget {
     required this.patientId,
     required this.dataSource,
     this.pageSize = 20,
+    this.onOpenRelease,
   }) : assert(patientId > 0),
        assert(pageSize > 0 && pageSize <= 100);
 
   final int patientId;
   final LabOrderReadRemoteDataSource dataSource;
   final int pageSize;
+  final Future<void> Function(int)? onOpenRelease;
 
   @override
   State<LabPatientOrdersScreen> createState() => _LabPatientOrdersScreenState();
@@ -33,6 +36,7 @@ class _LabPatientOrdersScreenState extends State<LabPatientOrdersScreen> {
   String? _error;
   String? _detailError;
   LabPatientOrder? _detail;
+  bool _canRelease = false;
 
   @override
   void initState() {
@@ -80,6 +84,7 @@ class _LabPatientOrdersScreenState extends State<LabPatientOrdersScreen> {
     _detail = null;
     _detailLoading = false;
     _detailError = null;
+    _canRelease = false;
   }
 
   void _sessionChanged() {
@@ -184,6 +189,7 @@ class _LabPatientOrdersScreenState extends State<LabPatientOrdersScreen> {
       _detail = null;
       _detailError = null;
       _detailLoading = true;
+      _canRelease = false;
     });
     try {
       final value = await source.fetchOrder(
@@ -196,9 +202,19 @@ class _LabPatientOrdersScreenState extends State<LabPatientOrdersScreen> {
       if (!_orders.any((order) => order.id == value.id)) {
         throw const FormatException('Lab detail is not on the loaded page.');
       }
+      var canRelease = false;
+      if (widget.onOpenRelease != null && value.status == LabOrderStatus.completed) {
+        final state = await source.loadSession();
+        final actor = state.session;
+        canRelease = state.disposition == AuthSessionDisposition.ready &&
+            actor != null && actor.clinicContextId == value.clinicId &&
+            const {'doctor', 'lab_technician'}.contains(actor.role);
+      }
+      if (!_current(generation, revision, patientId, source)) return;
       setState(() {
         _detailLoading = false;
         _detail = value;
+        _canRelease = canRelease;
       });
     } catch (error) {
       if (!_current(generation, revision, patientId, source)) {
@@ -306,6 +322,12 @@ class _LabPatientOrdersScreenState extends State<LabPatientOrdersScreen> {
               if (_detail != null) ...[
                 const Text('Refreshed server order detail'),
                 _order(_detail!, detail: true),
+                if (_canRelease && widget.onOpenRelease != null)
+                  OutlinedButton(
+                    key: const ValueKey('lab-open-patient-release'),
+                    onPressed: () => unawaited(widget.onOpenRelease!(_detail!.id)),
+                    child: const Text('Review patient release'),
+                  ),
               ],
               if (available &&
                   !_loading &&

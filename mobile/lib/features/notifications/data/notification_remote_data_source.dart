@@ -95,6 +95,7 @@ class NotificationRemoteDataSource {
         x.userId == y.userId &&
         x.clinicContextId == y.clinicContextId &&
         x.role.trim().toLowerCase() == y.role.trim().toLowerCase() &&
+        x.tenantId == y.tenantId &&
         x.accessToken == y.accessToken &&
         x.refreshToken == y.refreshToken;
   }
@@ -155,6 +156,25 @@ class NotificationRemoteDataSource {
         expectedId: id,
       );
     });
+  }
+
+  /// A fresh owned notification is only a navigation hint, never an access grant.
+  Future<int?> releasedLabTarget(int notificationId, {NotificationSessionIdentity? expected}) async {
+    final before = await requireSession(expectedRevision: expected?.guardRevision);
+    if (expected != null && !_same(expected, before)) {
+      throw const NotificationSessionUnavailable();
+    }
+    if (before.session.role != 'patient') return null;
+    final row = await detail(notificationId);
+    final after = await requireSession(expectedRevision: before.guardRevision);
+    if (!_same(before, after) || row.userId != after.session.userId ||
+        row.clinicId != after.session.clinicContextId) {
+      throw const NotificationSessionUnavailable();
+    }
+    final id = row.referenceId;
+    return row.type == 'lab' && row.channel == 'in_app' &&
+        row.referenceType == 'released_lab_result' && id != null &&
+        id > 0 && id <= 2147483647 ? id : null;
   }
 
   /// The caller permanently locks an attempted action after an uncertain POST.

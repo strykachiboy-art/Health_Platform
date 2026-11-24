@@ -501,6 +501,16 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  // Append to preserve all existing card positions.
+  if ((clinicContextId ?? 0) > 0) {
+    if (normalizedRole == 'patient') {
+      destinations.add(const HomeDestination('lab_release', 'My Lab Results',
+        '/patient-lab-results', Icons.science_outlined));
+    } else if (const {'doctor', 'lab_technician'}.contains(normalizedRole)) {
+      destinations.add(const HomeDestination('lab_release', 'Laboratory release',
+        '/lab-release', Icons.science_outlined));
+    }
+  }
   return List<HomeDestination>.unmodifiable(destinations);
 }
 

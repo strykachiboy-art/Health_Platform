@@ -12,9 +12,10 @@ import 'patient_portal_service_screens.dart';
 /// Patient-specific, owned-data portal. Server authorization is authoritative.
 /// Neither queued mutations nor arbitrary patient IDs are supported here.
 class PatientPortalScreen extends StatefulWidget {
-  const PatientPortalScreen({super.key, required this.source});
+  const PatientPortalScreen({super.key, required this.source, this.onOpenLabResults});
 
   final PatientPortalDataSource source;
+  final Future<void> Function()? onOpenLabResults;
 
   @override
   State<PatientPortalScreen> createState() => _PatientPortalScreenState();
@@ -312,6 +313,13 @@ class _PatientPortalScreenState extends State<PatientPortalScreen> {
                     child: Text(_message!),
                   ),
                 const SizedBox(height: 12),
+                if (widget.onOpenLabResults != null)
+                  OutlinedButton.icon(
+                    key: const ValueKey('patient-portal-lab-results'),
+                    onPressed: _saving ? null : () => unawaited(widget.onOpenLabResults!()),
+                    icon: const Icon(Icons.science_outlined),
+                    label: const Text('My Lab Results'),
+                  ),
                 _group(
                   'My appointments',
                   view.appointments,

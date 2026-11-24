@@ -10,9 +10,12 @@ class LabReleaseWorkspaceScreen extends StatefulWidget {
     super.key,
     required this.source,
     this.initialOrderId,
+    this.patientOnly,
   });
   final LabReleaseRemoteDataSource source;
   final int? initialOrderId;
+  // Null preserves the standalone Run A seam; routes bind the role family.
+  final bool? patientOnly;
   @override
   State<LabReleaseWorkspaceScreen> createState() =>
       _LabReleaseWorkspaceScreenState();
@@ -48,7 +51,8 @@ class _LabReleaseWorkspaceScreenState extends State<LabReleaseWorkspaceScreen> {
   void didUpdateWidget(covariant LabReleaseWorkspaceScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.source, widget.source) ||
-        oldWidget.initialOrderId != widget.initialOrderId) {
+        oldWidget.initialOrderId != widget.initialOrderId ||
+        oldWidget.patientOnly != widget.patientOnly) {
       oldWidget.source.guard.removeListener(_reset);
       widget.source.guard.addListener(_reset);
       _initialUsed = false;
@@ -106,6 +110,10 @@ class _LabReleaseWorkspaceScreenState extends State<LabReleaseWorkspaceScreen> {
       final s = await widget.source.connect();
       if (!_current(g)) {
         return;
+      }
+      if (widget.patientOnly != null &&
+          (s.role == 'patient') != widget.patientOnly) {
+        throw const LabReleaseUnavailable();
       }
       setState(() => _session = s);
       final initialId = _initialUsed ? null : widget.initialOrderId;
