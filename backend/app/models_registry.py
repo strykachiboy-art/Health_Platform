@@ -213,6 +213,12 @@ from app.modules.settings.models.integration_config import IntegrationConfig
 # Google Auth
 from app.core.auth.user.models.user_auth_identity_model import UserAuthIdentity
 
+# SA-SEC-01: inert MFA schema; no provider registration or migration
+from app.core.auth.user.models.super_admin_mfa_model import (
+    SuperAdminMfaEnrollment,
+    SuperAdminMfaRecoveryCode,
+)
+
 # User Device
 from app.core.auth.user.models.user_device_model import UserDevice
 
@@ -403,6 +409,8 @@ __all__ = [
 
     # Authentication
     "UserAuthIdentity",
+    "SuperAdminMfaEnrollment",
+    "SuperAdminMfaRecoveryCode",
 
     # User Devices
     "UserDevice",
