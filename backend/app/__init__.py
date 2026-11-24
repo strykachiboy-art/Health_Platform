@@ -192,6 +192,10 @@ def create_app(config_name=None):
 
     init_extensions(app)
 
+    # Provider registration is app-local and inert while reset MFA is disabled.
+    # Activation requires a deployed schema, enrolled factors and security sign-off.
+    register_super_admin_recovery_provider(app)
+
     register_security_headers(app)
 
     init_celery_metrics(celery)
@@ -212,6 +216,39 @@ def create_app(config_name=None):
     configure_trusted_proxy(app)
 
     return app
+
+
+def register_super_admin_recovery_provider(app: Flask) -> None:
+    """Bind the existing reset-factor contract to the real TOTP provider.
+
+    Disabled in every default environment, including tests. Enabling is a
+    backend deployment decision; this does not run any migration or DB read.
+    """
+    configured = app.config.get(
+        "AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_POLICY", "disabled"
+    )
+    if not isinstance(configured, str):
+        raise RuntimeError("Privileged recovery policy is invalid")
+    policy = configured.strip().lower()
+    if policy not in {"disabled", "if_enrolled", "required"}:
+        raise RuntimeError("Privileged recovery policy is invalid")
+    if policy == "disabled":
+        return
+
+    pepper = app.config.get("SUPER_ADMIN_MFA_RECOVERY_PEPPER")
+    if not isinstance(pepper, str) or len(pepper) < 32:
+        raise RuntimeError("Privileged recovery pepper is not configured")
+
+    from app.core.auth.user.services.recovery_factor_service import (
+        register_super_admin_recovery_factor_provider,
+    )
+    from app.core.auth.user.services.super_admin_mfa_provider import (
+        DatabaseSuperAdminRecoveryFactorProvider,
+    )
+
+    register_super_admin_recovery_factor_provider(
+        app, DatabaseSuperAdminRecoveryFactorProvider()
+    )
 
 
 def register_api_version_boundary(

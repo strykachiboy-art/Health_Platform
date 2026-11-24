@@ -305,6 +305,12 @@ class Config:
         "disabled",
     )
 
+    # Deliberately no default, derivation, or fallback to the JWT/Flask key.
+    # Required by the actual provider only when operator-enabled.
+    SUPER_ADMIN_MFA_RECOVERY_PEPPER = os.environ.get(
+        "SUPER_ADMIN_MFA_RECOVERY_PEPPER"
+    )
+
     AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_MAX_FAILURES = int(
         os.environ.get(
             "AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_MAX_FAILURES",
