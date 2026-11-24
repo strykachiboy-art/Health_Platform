@@ -1,3 +1,5 @@
+import 'auth_mfa_challenge.dart';
+
 /// Validated token payload returned by the backend authentication API.
 ///
 /// This model represents a response only. It does not persist tokens,
@@ -37,6 +39,26 @@ class AuthTokenResponse {
       );
     }
 
+    if (payload['mfa_required'] == true) {
+      final token = payload['challenge_token'];
+      final ttl = payload['challenge_expires_in'];
+      if (payload.containsKey('access_token') ||
+          payload.containsKey('refresh_token') ||
+          token is! String ||
+          token.length < 40 ||
+          token.length > 256 ||
+          !RegExp(r'^[A-Za-z0-9_-]{40,256}$').hasMatch(token) ||
+          ttl is! int ||
+          ttl < 60 ||
+          ttl > 600 ||
+          payload['method'] != 'authenticator_or_recovery_code') {
+        throw const FormatException('Invalid privileged MFA challenge.');
+      }
+      throw AuthMfaChallenge(
+        challengeToken: token,
+        expiresInSeconds: ttl,
+      );
+    }
     return AuthTokenResponse.fromJson(payload);
   }
 

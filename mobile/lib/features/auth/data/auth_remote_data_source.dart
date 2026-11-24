@@ -82,6 +82,12 @@ class TenantContextDetails {
   }
 }
 
+class MfaEnrollmentStatus {
+  const MfaEnrollmentStatus({required this.enrollmentEnabled, required this.enrolled});
+  final bool enrollmentEnabled;
+  final bool enrolled;
+}
+
 class AuthRemoteDataSource {
   const AuthRemoteDataSource({required ApiClient apiClient})
     : this._(apiClient);
@@ -230,6 +236,98 @@ class AuthRemoteDataSource {
     );
 
     return AuthTokenResponse.fromEnvelope(response);
+  }
+
+  /// A pending challenge is not an authenticated session. This call returns
+  /// actual JWTs only after the backend consumes one valid MFA factor.
+  Future<AuthTokenResponse> completeMfa({
+    required String challengeToken,
+    required String factor,
+  }) async {
+    if (challengeToken.length < 40 || challengeToken.length > 256 ||
+        !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(challengeToken) ||
+        !RegExp(r'^(?:[0-9]{6}|[A-Z2-7]{32})$').hasMatch(factor)) {
+      throw ArgumentError('Invalid MFA verification input.');
+    }
+    final result = await _apiClient.postJson(
+      'api/v1/auth/mfa/complete',
+      body: {'challenge_token': challengeToken, 'factor': factor},
+    );
+    return AuthTokenResponse.fromEnvelope(result);
+  }
+
+  Future<MfaEnrollmentStatus> getMfaEnrollmentStatus({
+    required String accessToken,
+  }) async {
+    _requireToken(accessToken, 'accessToken');
+    final result = await _apiClient.getJson(
+      'api/v1/auth/mfa/enrollment/status',
+      bearerToken: accessToken,
+    );
+    final data = result['data'];
+    if (result['success'] != true || data is! Map<String, dynamic> ||
+        data['enrollment_enabled'] is! bool ||
+        (data['enrolled'] != null && data['enrolled'] is! bool) ||
+        (data['enrollment_enabled'] == true && data['enrolled'] == null)) {
+      throw const FormatException('Invalid MFA enrollment status.');
+    }
+    return MfaEnrollmentStatus(
+      enrollmentEnabled: data['enrollment_enabled'] as bool,
+      enrolled: data['enrolled'] == true,
+    );
+  }
+
+  Future<String> beginMfaEnrollment({
+    required String accessToken,
+    required String currentPassword,
+  }) async {
+    _requireToken(accessToken, 'accessToken');
+    if (currentPassword.isEmpty || currentPassword.length > 128) {
+      throw ArgumentError('Current password is required.');
+    }
+    final response = await _apiClient.postJson(
+      'api/v1/auth/mfa/enrollment/begin',
+      bearerToken: accessToken,
+      body: {'current_password': currentPassword},
+    );
+    final data = response['data'];
+    if (response['success'] != true || data is! Map<String, dynamic>) {
+      throw const FormatException('Invalid MFA setup response.');
+    }
+    final secret = data['setup_secret'];
+    if (secret is! String ||
+        !RegExp(r'^[A-Z2-7]{52}$').hasMatch(secret) ||
+        data['expires_in'] != 600) {
+      throw const FormatException('Invalid MFA setup response.');
+    }
+    return secret;
+  }
+
+  /// One-time recovery codes remain in the caller's memory only.
+  Future<List<String>> confirmMfaEnrollment({
+    required String accessToken,
+    required String code,
+  }) async {
+    _requireToken(accessToken, 'accessToken');
+    if (!RegExp(r'^[0-9]{6}$').hasMatch(code)) {
+      throw ArgumentError('Invalid authenticator confirmation.');
+    }
+    final response = await _apiClient.postJson(
+      'api/v1/auth/mfa/enrollment/confirm',
+      bearerToken: accessToken,
+      body: {'code': code},
+    );
+    final data = response['data'];
+    final codes = data is Map<String, dynamic> ? data['recovery_codes'] : null;
+    if (response['success'] != true || data is! Map<String, dynamic> ||
+        data['reauthentication_required'] != true ||
+        codes is! List || codes.length != 10 ||
+        !codes.every((value) => value is String &&
+            RegExp(r'^[A-Z2-7]{32}$').hasMatch(value)) ||
+        codes.toSet().length != codes.length) {
+      throw const FormatException('Invalid MFA recovery code response.');
+    }
+    return List<String>.unmodifiable(codes.cast<String>());
   }
 
   static const String _tenantContextPath = 'api/v1/auth/tenant-context';

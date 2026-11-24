@@ -17,12 +17,14 @@ class SessionSecurityScreen extends StatefulWidget {
     required this.sessionNavigationGuard,
     required this.performSignOut,
     this.deviceManagementConfigured = false,
+    this.mfaEnrollmentConfigured = false,
   });
 
   final Future<AuthSessionState> Function() loadSession;
   final SessionNavigationGuard sessionNavigationGuard;
   final Future<AuthLogoutResult> Function() performSignOut;
   final bool deviceManagementConfigured;
+  final bool mfaEnrollmentConfigured;
 
   @override
   State<SessionSecurityScreen> createState() => _SessionSecurityScreenState();
@@ -272,6 +274,15 @@ class _SessionSecurityScreenState extends State<SessionSecurityScreen> {
                 'it, move it to another account, or authorize its replay.',
                 key: ValueKey('p24f-queue-ownership'),
               ),
+              if (_role == 'super_admin' && widget.mfaEnrollmentConfigured) ...[
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  key: const ValueKey('g05-open-super-admin-mfa'),
+                  onPressed: _busy ? null : () => context.push<void>('/account/security/mfa'),
+                  icon: const Icon(Icons.security),
+                  label: const Text('Manage Super Admin authenticator'),
+                ),
+              ],
               const SizedBox(height: 20),
               FilledButton.icon(
                 key: const ValueKey('p24f-sign-out'),

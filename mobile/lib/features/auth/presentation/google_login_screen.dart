@@ -8,6 +8,7 @@ import 'package:clinic_system_pro/features/auth/data/auth_remote_data_source.dar
 import 'package:clinic_system_pro/features/auth/data/google_desktop_identity.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
+import 'package:clinic_system_pro/features/auth/data/models/auth_mfa_challenge.dart';
 
 /// Mobile Google login and local session-status screen.
 ///
@@ -55,6 +56,9 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _showEmailPassword = false;
+  AuthMfaChallenge? _pendingMfa;
+  int? _pendingMfaRevision;
+  final _mfaFactorController = TextEditingController();
 
   @override
   void initState() {
@@ -70,6 +74,8 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
     );
     _emailController.dispose();
     _passwordController.dispose();
+    _mfaFactorController.dispose();
+    _pendingMfa = null;
     super.dispose();
   }
 
@@ -78,6 +84,8 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
     final status = widget.sessionNavigationGuard?.status;
     if (status == SessionNavigationStatus.invalidated) {
       setState(() {
+        _pendingMfa = null;
+        _mfaFactorController.clear();
         _sessionState = const AuthSessionState.recoveryRequired();
         _restoring = false;
         _errorMessage = 'Your session is no longer valid. Clear local session data before signing in.';
@@ -85,6 +93,8 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       });
     } else if (status == SessionNavigationStatus.signedOut) {
       setState(() {
+        _pendingMfa = null;
+        _mfaFactorController.clear();
         _sessionState = const AuthSessionState.signedOut();
         _restoring = false;
         _errorMessage = null;
@@ -258,6 +268,15 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         _busy = false;
         _statusMessage = 'Signed in securely.';
       });
+    } on AuthMfaChallenge catch (challenge) {
+      if (!mounted) return;
+      setState(() {
+        _pendingMfa = challenge;
+        _pendingMfaRevision = navigationRevision;
+        _busy = false;
+        _errorMessage = null;
+        _statusMessage = 'Verify your authenticator to continue.';
+      });
     } catch (error) {
       // Only static, allowlisted diagnostics. Never render raw exceptions,
       // browser callback URLs, Google tokens, or backend response bodies.
@@ -365,6 +384,15 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
         _busy = false;
         _statusMessage = 'Signed in securely.';
       });
+    } on AuthMfaChallenge catch (challenge) {
+      if (!mounted) return;
+      setState(() {
+        _pendingMfa = challenge;
+        _pendingMfaRevision = revision;
+        _busy = false;
+        _errorMessage = null;
+        _statusMessage = 'Verify your authenticator to continue.';
+      });
     } catch (_) {
       final restored = await _restoreOrRequireRecovery();
       _applyNavigationState(restored);
@@ -378,6 +406,97 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
       if (mounted) _passwordController.clear();
     }
   }
+
+  Future<void> _completeMfa() async {
+    final pending = _pendingMfa;
+    if (pending == null || _busy || _restoring) return;
+    final factor = _mfaFactorController.text.trim().toUpperCase();
+    if (!RegExp(r'^(?:[0-9]{6}|[A-Z2-7]{32})$').hasMatch(factor)) {
+      setState(() => _errorMessage = 'Enter a valid authenticator or recovery code.');
+      return;
+    }
+    final guard = widget.sessionNavigationGuard;
+    final revision = _pendingMfaRevision;
+    setState(() {
+      _busy = true;
+      _errorMessage = null;
+    });
+    try {
+      if (guard != null && guard.revision != revision) {
+        throw StateError('Session changed during MFA.');
+      }
+      final tokens = await widget.authRemoteDataSource.completeMfa(
+        challengeToken: pending.challengeToken,
+        factor: factor,
+      );
+      if (guard != null && guard.revision != revision) {
+        throw StateError('Session changed during MFA.');
+      }
+      final authenticated = await widget.sessionCoordinator
+          .persistAuthenticatedSession(tokens);
+      if (guard != null && guard.revision != revision) {
+        _applyNavigationState(const AuthSessionState.recoveryRequired());
+        return;
+      }
+      guard?.markSessionAvailable();
+      widget.onSessionChanged?.call();
+      if (!mounted) return;
+      setState(() {
+        _pendingMfa = null;
+        _pendingMfaRevision = null;
+        _sessionState = authenticated;
+        _statusMessage = 'Signed in securely.';
+        _busy = false;
+      });
+    } catch (_) {
+      // Backend consumes the challenge even for invalid factors; no automatic
+      // retry or secret-bearing diagnostics are allowed.
+      if (!mounted) return;
+      setState(() {
+        _pendingMfa = null;
+        _pendingMfaRevision = null;
+        _errorMessage = 'MFA verification was not confirmed. Sign in again.';
+        _busy = false;
+      });
+    } finally {
+      _mfaFactorController.clear();
+    }
+  }
+
+  Widget _buildMfaChallenge() => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const Text('Additional authentication required',
+          key: ValueKey('g05-mfa-challenge-title')),
+      const SizedBox(height: 16),
+      TextField(
+        key: const ValueKey('g05-mfa-factor'),
+        controller: _mfaFactorController,
+        enabled: !_busy,
+        obscureText: true,
+        autocorrect: false,
+        enableSuggestions: false,
+        decoration: const InputDecoration(
+            labelText: 'Authenticator or recovery code'),
+      ),
+      const SizedBox(height: 12),
+      FilledButton(
+        key: const ValueKey('g05-mfa-submit'),
+        onPressed: _busy ? null : _completeMfa,
+        child: Text(_busy ? 'Verifying...' : 'Verify'),
+      ),
+      TextButton(
+        key: const ValueKey('g05-mfa-cancel'),
+        onPressed: _busy ? null : () => setState(() {
+          _pendingMfa = null;
+          _pendingMfaRevision = null;
+          _mfaFactorController.clear();
+          _statusMessage = 'MFA challenge cancelled. Sign in again.';
+        }),
+        child: const Text('Cancel and sign in again'),
+      ),
+    ],
+  );
 
   Future<void> _signOut() async {
     if (_busy || _restoring) return;
@@ -510,6 +629,7 @@ class _GoogleLoginScreenState extends State<GoogleLoginScreen> {
   }
 
   Widget _buildSignedOut() {
+    if (_pendingMfa != null) return _buildMfaChallenge();
     final showEmail = !widget.enableNativeGoogleSignIn || _showEmailPassword;
     return Column(
       mainAxisSize: MainAxisSize.min,

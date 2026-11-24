@@ -83,6 +83,7 @@ import 'package:clinic_system_pro/features/devices/presentation/device_registrat
 import 'package:clinic_system_pro/features/devices/data/device_management_remote_data_source.dart';
 import 'package:clinic_system_pro/features/devices/presentation/device_management_screen.dart';
 import 'package:clinic_system_pro/features/auth/presentation/session_security_screen.dart';
+import 'package:clinic_system_pro/features/auth/presentation/super_admin_mfa_enrollment_screen.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/nursing/presentation/ward_dashboard_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
@@ -835,6 +836,31 @@ GoRouter createAppRouter({
                 sessionNavigationGuard: guard,
                 performSignOut: signOut.signOut,
                 deviceManagementConfigured: managementSource != null,
+                mfaEnrollmentConfigured: authRemoteDataSource != null,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/account/security/mfa',
+            name: 'g05-super-admin-mfa-enrollment',
+            builder: (context, state) {
+              final loader = loadHomeSession;
+              final guard = sessionNavigationGuard;
+              final signOut = signOutCoordinator;
+              final remote = authRemoteDataSource;
+              if (loader == null || guard == null || signOut == null ||
+                  remote == null || !guard.canAccessProtectedRoutes) {
+                return const Scaffold(
+                  body: Center(child: Text('Authenticator enrollment unavailable.')),
+                );
+              }
+              return SuperAdminMfaEnrollmentScreen(
+                remote: remote,
+                loadSession: loader,
+                guard: guard,
+                onEnrollmentConfirmed: () async {
+                  await signOut.signOut();
+                },
               );
             },
           ),
