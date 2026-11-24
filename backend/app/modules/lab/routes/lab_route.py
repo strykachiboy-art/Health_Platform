@@ -988,3 +988,31 @@ def my_released_lab_result_route(order_id):
     if request.args:
         raise ValidationError('Unsupported query parameters')
     return _release_response(get_released(user_id=_get_current_user().id, clinic_id=_get_current_clinic_id(), order_id=order_id))
+
+@lab_bp.post('/orders/<int:order_id>/patient-release-correction')
+@role_required(Role.LAB_TECHNICIAN)
+@active_staff_required
+def verify_lab_release_correction_route(order_id):
+    from app.modules.lab.services.lab_replacement_service import verify_correction
+    payload = request.get_json(silent=True)
+    if request.args or not isinstance(payload, dict) or set(payload) != {'expected_version','changes','reason'}:
+        raise ValidationError('Invalid laboratory correction request')
+    return _release_response(verify_correction(order_id=order_id,clinic_id=_get_current_clinic_id(),tech_user_id=_get_current_user().id,expected_version=payload['expected_version'],changes=payload['changes'],reason=payload['reason']))
+
+
+@lab_bp.get('/orders/<int:order_id>/patient-replacement-preview')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def lab_replacement_preview_route(order_id):
+    from app.modules.lab.services.lab_replacement_service import preview_replacement
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    return _release_response(preview_replacement(order_id=order_id,clinic_id=_get_current_clinic_id(),doctor_user_id=_get_current_user().id))
+
+
+@lab_bp.post('/orders/<int:order_id>/patient-replacement')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def lab_replacement_publish_route(order_id):
+    from app.modules.lab.services.lab_replacement_service import publish_replacement
+    return _release_response(publish_replacement(order_id=order_id,clinic_id=_get_current_clinic_id(),doctor_user_id=_get_current_user().id,preview_sha256=_release_body('preview_sha256')))

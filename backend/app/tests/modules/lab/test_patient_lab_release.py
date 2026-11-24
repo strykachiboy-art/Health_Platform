@@ -220,3 +220,161 @@ def test_lab_technician_status_only(scenario, auth_headers_for):
     res = s['client'].get(base, headers=tech_headers)
     assert res.status_code == 200 and res.get_json()['data']['release_status'] == 'released'
     assert 'results' not in res.get_json()['data']
+
+# B02 tests append to the original B01 suite; all old assertions are preserved.
+def correction_setup(s):
+    finalize(s); release_valid(s)
+    response = s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-withdrawal",json={'reason_code':'clinical_correction'},headers=s['doctor_headers'])
+    assert response.status_code == 200, response.get_json()
+    assert own_detail(s).status_code == 404
+
+
+def correction_payload(s, value='6', version=1, flag='normal'):
+    return {'expected_version':version,'changes':[{'item_id':s['item'].id,'result_value':value,'flag':flag}],'reason':'Synthetic verified correction'}
+
+
+def correct(s, auth_headers_for, **kwargs):
+    return s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-correction",json=correction_payload(s,**kwargs),headers=auth_headers_for(s['tech'].user))
+
+
+def replacement_preview(s):
+    return s['client'].get(f"/api/v1/lab/orders/{s['order'].id}/patient-replacement-preview",headers=s['doctor_headers'])
+
+
+def replacement_publish(s,digest):
+    return s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-replacement",json={'preview_sha256':digest},headers=s['doctor_headers'])
+
+
+def test_b02_corrected_report_reuses_amendment_chain(scenario, db, auth_headers_for):
+    from app.modules.clinical_records.models.clinical_record_amendment_model import ClinicalRecordAmendment
+    from app.modules.lab.models.lab_model import LabReportPublication
+    s=scenario; correction_setup(s)
+    for version,value in [(2,'6'),(3,'7')]:
+        res=correct(s,auth_headers_for,value=value,version=version-1)
+        assert res.status_code==200,res.get_json()
+        assert res.get_json()['data']['record_version']==version
+        assert own_detail(s).status_code==404
+        assert own_list(s).get_json()['data']['items']==[]
+        assert correct(s,auth_headers_for,value='8',version=version-1).status_code==409
+        res=replacement_preview(s); assert res.status_code==200,res.get_json()
+        report=res.get_json()['data']; assert report['report']['record_version']==version
+        assert report['report']['results'][0]['result_value']==value
+        assert replacement_publish(s,'0'*64).status_code==409
+        assert replacement_publish(s,report['preview_sha256']).status_code==200
+        assert replacement_publish(s,report['preview_sha256']).status_code==409
+        detail=own_detail(s); assert detail.status_code==200,detail.get_json()
+        assert detail.get_json()['data']['record_version']==version
+        assert detail.get_json()['data']['results'][0]['result_value']==value
+        assert own_list(s).get_json()['data']['items'][0]['record_version']==version
+        assert s['item'].result_value=='5' and s['order'].patient_release_snapshot['results'][0]['result_value']=='5'
+        if version==2:
+            response=s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-withdrawal",json={'reason_code':'clinical_correction'},headers=s['doctor_headers'])
+            assert response.status_code==200,response.get_json()
+            assert own_detail(s).status_code==404
+    rows=db.session.execute(select(ClinicalRecordAmendment).where(ClinicalRecordAmendment.source_record_type=='lab_report').order_by(ClinicalRecordAmendment.new_version)).scalars().all()
+    assert [r.new_version for r in rows]==[2,3] and rows[1].previous_amendment_id==rows[0].id
+    pubs=db.session.execute(select(LabReportPublication).order_by(LabReportPublication.version)).scalars().all()
+    assert len(pubs)==2 and pubs[0].withdrawn_at is not None and pubs[1].withdrawn_at is None
+    assert pubs[0].amendment_id==rows[0].id and pubs[1].amendment_id==rows[1].id
+    notes=db.session.execute(select(Notification).where(Notification.user_id==s['patient_user'].id)).scalars().all()
+    assert len(notes)==3 and sum(n.title=='An updated record is available' for n in notes)==2
+    assert all(n.reference_type=='released_lab_result' and n.reference_id==s['order'].id for n in notes)
+
+
+def test_b02_wrong_roles_and_stale_versions(scenario, db, auth_headers_for, clinic, make_authenticated_staff):
+    s=scenario; correction_setup(s)
+    _, outsider=make_authenticated_staff(clinic,Role.DOCTOR); db.session.commit()
+    route=f"/api/v1/lab/orders/{s['order'].id}"
+    assert s['client'].post(route+'/patient-release-correction',json=correction_payload(s),headers=s['doctor_headers']).status_code==403
+    assert correct(s,auth_headers_for,version=2).status_code==409
+    assert correct(s,auth_headers_for).status_code==200
+    assert s['client'].get(route+'/patient-replacement-preview',headers=outsider).status_code==404
+    assert s['client'].get(route+'/patient-replacement-preview',headers=auth_headers_for(s['tech'].user)).status_code==403
+    assert s['client'].post(route+'/patient-replacement',json={'preview_sha256':'0'*64},headers=s['patient_headers']).status_code==403
+    assert own_detail(s).status_code==404
+
+
+@pytest.mark.parametrize('value,flag,status',[('5','normal',422),('100','normal',409),('6','critical',422),('6','abnormal',409)])
+def test_b02_no_change_or_unsafe_flag_held(scenario, auth_headers_for, value, flag, status):
+    s=scenario; correction_setup(s)
+    res=correct(s,auth_headers_for,value=value,flag=flag)
+    assert res.status_code == status,res.get_json()
+    assert own_detail(s).status_code==404
+
+
+def test_b02_changed_catalogue_and_relinked_patient_held(scenario,db,auth_headers_for,clinic,make_user):
+    s=scenario; correction_setup(s)
+    s['test'].unit='changed'; db.session.commit()
+    assert correct(s,auth_headers_for).status_code==409
+    s['test'].unit='mg/dL'; db.session.commit()
+    assert correct(s,auth_headers_for).status_code==200
+    digest=replacement_preview(s).get_json()['data']['preview_sha256']
+    new_user=make_user(clinic,role=Role.PATIENT); s['patient'].user_id=new_user.id; db.session.commit()
+    assert replacement_publish(s,digest).status_code==409
+    assert own_detail(s,auth_headers_for(new_user)).status_code==404
+
+
+def test_b02_notification_rollback_and_hash_tamper(scenario, db, auth_headers_for, app, monkeypatch):
+    from app.modules.lab.services import lab_replacement_service as replacements
+    from app.modules.clinical_records.models.clinical_record_amendment_model import ClinicalRecordAmendment
+    from app.modules.lab.models.lab_model import LabReportPublication
+    s=scenario; correction_setup(s); assert correct(s,auth_headers_for).status_code==200
+    digest=replacement_preview(s).get_json()['data']['preview_sha256']
+    def broken(**kwargs): raise RuntimeError('Synthetic notification failure')
+    with monkeypatch.context() as m:
+        m.setattr(replacements,'create_notification_in_transaction',broken)
+        app.config['PROPAGATE_EXCEPTIONS']=False
+        assert replacement_publish(s,digest).status_code==500
+    assert db.session.execute(select(LabReportPublication)).scalars().all()==[]
+    assert own_detail(s).status_code==404
+    assert replacement_publish(s,digest).status_code==200
+    amendment=db.session.execute(select(ClinicalRecordAmendment).where(ClinicalRecordAmendment.source_record_type=='lab_report')).scalar_one()
+    amendment.new_content_sha256='0'*64; db.session.commit()
+    assert own_detail(s).status_code==404
+
+
+def test_b02_concurrent_replacement_exactly_once_on_postgres(scenario,db,app,auth_headers_for):
+    if db.engine.dialect.name!='postgresql': pytest.skip('PostgreSQL row locking required')
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from app.core.exceptions import ConflictError
+    from app.modules.lab.services import lab_replacement_service as replacements
+    from app.modules.lab.models.lab_model import LabReportPublication
+    s=scenario; correction_setup(s); assert correct(s,auth_headers_for).status_code==200
+    digest=replacement_preview(s).get_json()['data']['preview_sha256']
+    ids=(s['order'].id,s['order'].clinic_id,s['doctor'].user_id,s['patient_user'].id)
+    db.session.remove(); barrier=Barrier(2,timeout=15)
+    def attempt():
+        with app.app_context():
+            barrier.wait()
+            try:
+                replacements.publish_replacement(order_id=ids[0],clinic_id=ids[1],doctor_user_id=ids[2],preview_sha256=digest)
+                return 'published'
+            except ConflictError: return 'conflict'
+            finally: db.session.remove()
+    with ThreadPoolExecutor(max_workers=2) as pool: results=list(pool.map(lambda _:attempt(),range(2)))
+    assert sorted(results)==['conflict','published']
+    assert len(db.session.execute(select(LabReportPublication)).scalars().all())==1
+    assert len(db.session.execute(select(Notification).where(Notification.user_id==ids[3])).scalars().all())==2
+
+
+def test_b02_cross_clinic_and_critical_threshold_held(scenario, db, auth_headers_for, make_clinic, make_authenticated_staff):
+    s=scenario; correction_setup(s)
+    outside=make_clinic(); _, outsider=make_authenticated_staff(outside,Role.LAB_TECHNICIAN); db.session.commit()
+    path=f"/api/v1/lab/orders/{s['order'].id}/patient-release-correction"
+    assert s['client'].post(path,json=correction_payload(s),headers=outsider).status_code==404
+    s['test'].critical_high=20; db.session.commit()
+    assert correct(s,auth_headers_for,value='30',flag='abnormal').status_code==409
+    assert own_detail(s).status_code==404
+    s['test'].critical_high=None; db.session.commit()
+    assert correct(s,auth_headers_for,value='30',flag='abnormal').status_code==200
+    assert own_detail(s).status_code==404
+
+
+@pytest.mark.parametrize('reason',['identity_review','other_safety_review'])
+def test_b02_noncorrection_withdrawal_stays_held(scenario, auth_headers_for, reason):
+    s=scenario; finalize(s); release_valid(s)
+    response=s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-withdrawal",json={'reason_code':reason},headers=s['doctor_headers'])
+    assert response.status_code==200
+    assert correct(s,auth_headers_for).status_code==409
+    assert own_detail(s).status_code==404

@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from flask import current_app
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 
 from app.core.audit.services.audit_service import create_audit_log
 from app.core.auth.user.models.user_model import User
@@ -20,7 +20,7 @@ from app.core.utils.decorators import transactional
 from app.extensions import db
 from app.modules.clinic.services.clinic_service import ensure_clinic_active
 from app.modules.consultation.models.consultation_model import Consultation
-from app.modules.lab.models.lab_model import LabOrder, LabOrderItem
+from app.modules.lab.models.lab_model import LabOrder, LabOrderItem, LabReportPublication
 from app.modules.lab.services.lab_service import (
     _get_lab_order, _validate_actor_for_order, validate_lab_order_integrity,
 )
@@ -142,7 +142,8 @@ def release_status(*, order_id, clinic_id, doctor_user_id):
         _validate_actor_for_order(staff.id, order, allowed_roles=(Role.LAB_TECHNICIAN,))
     else:
         order, _ = _doctor_order(order_id, clinic_id, doctor_user_id)
-    return {'order_id': order.id, 'release_status': 'withdrawn' if order.patient_release_withdrawn_at is not None else 'released' if order.patient_released_at is not None else 'unreleased', 'released_at': _time(order.patient_released_at) if order.patient_released_at is not None else None, 'withdrawn_at': _time(order.patient_release_withdrawn_at) if order.patient_release_withdrawn_at is not None else None}
+    from app.modules.lab.services.lab_replacement_service import status_fields
+    return {'order_id': order.id, 'release_status': 'withdrawn' if order.patient_release_withdrawn_at is not None else 'released' if order.patient_released_at is not None else 'unreleased', 'released_at': _time(order.patient_released_at) if order.patient_released_at is not None else None, 'withdrawn_at': _time(order.patient_release_withdrawn_at) if order.patient_release_withdrawn_at is not None else None, **status_fields(order)}
 
 
 @transactional
@@ -172,6 +173,10 @@ def withdraw_report(*, order_id, clinic_id, doctor_user_id, reason_code):
     order, doctor = _doctor_order(order_id, clinic_id, doctor_user_id, lock=True)
     if reason_code not in ('clinical_correction','identity_review','other_safety_review'):
         raise ValidationError('Invalid withdrawal reason')
+    from app.modules.lab.services.lab_replacement_service import withdraw_current
+    replacement = withdraw_current(order, doctor, reason_code)
+    if replacement is not None:
+        return replacement
     if order.patient_released_at is None or order.patient_release_withdrawn_at is not None:
         raise ConflictError('No current released laboratory report')
     now = datetime.now(timezone.utc)
@@ -179,6 +184,7 @@ def withdraw_report(*, order_id, clinic_id, doctor_user_id, reason_code):
         raise ConflictError('Laboratory release timestamp requires review')
     order.patient_release_withdrawn_at = now
     order.patient_release_withdrawn_by_id = doctor.id
+    order.patient_release_withdrawal_reason = reason_code
     create_audit_log(action=AuditAction.STATUS_CHANGE, entity_type='LabOrder', entity_id=order.id, clinic_id=clinic_id, patient_id=order.patient_id, user_id=doctor_user_id, description='Patient laboratory report withdrawn', old_value={'patient_release': 'released'}, new_value={'patient_release': 'withdrawn', 'reason_code': reason_code})
     return {'order_id': order.id, 'release_status': 'withdrawn'}
 
@@ -196,10 +202,13 @@ def _own_patient(user_id, clinic_id):
 
 
 def _visible(patient, user_id):
-    return select(LabOrder).where(LabOrder.patient_id == patient.id, LabOrder.clinic_id == patient.clinic_id, LabOrder.status == LabOrderStatus.COMPLETED, LabOrder.verified_at.is_not(None), LabOrder.verified_by_id.is_not(None), LabOrder.completed_at.is_not(None), LabOrder.patient_released_at.is_not(None), LabOrder.patient_released_by_id.is_not(None), LabOrder.patient_release_user_id == user_id, LabOrder.patient_release_withdrawn_at.is_(None), LabOrder.patient_release_withdrawn_by_id.is_(None))
+    return select(LabOrder).where(LabOrder.patient_id == patient.id, LabOrder.clinic_id == patient.clinic_id, LabOrder.status == LabOrderStatus.COMPLETED, LabOrder.verified_at.is_not(None), LabOrder.verified_by_id.is_not(None), LabOrder.completed_at.is_not(None), LabOrder.patient_released_at.is_not(None), LabOrder.patient_released_by_id.is_not(None), LabOrder.patient_release_user_id == user_id, or_(
+        (LabOrder.patient_release_withdrawn_at.is_(None) & LabOrder.patient_release_withdrawn_by_id.is_(None)),
+        (LabOrder.patient_release_withdrawn_at.is_not(None) & LabOrder.patient_release_withdrawn_by_id.is_not(None) & select(LabReportPublication.id).where(LabReportPublication.order_id == LabOrder.id, LabReportPublication.recipient_user_id == user_id, LabReportPublication.withdrawn_at.is_(None)).exists())
+    ))
 
 
-def _released(order):
+def _original_released(order):
     snapshot = order.patient_release_snapshot
     expected = {'order_id','clinic_id','patient_id','verified_at','completed_at','results'}
     if (not isinstance(snapshot, dict) or set(snapshot) != expected or snapshot['order_id'] != order.id or snapshot['clinic_id'] != order.clinic_id or snapshot['patient_id'] != order.patient_id or snapshot['verified_at'] != _time(order.verified_at) or snapshot['completed_at'] != _time(order.completed_at) or not isinstance(snapshot['results'], list) or not snapshot['results']):
@@ -211,15 +220,21 @@ def _released(order):
     return {**snapshot, 'released_at': _time(order.patient_released_at), 'release_status': 'released'}
 
 
+def _released(order):
+    from app.modules.lab.services.lab_replacement_service import current_report
+    return current_report(order)
+
+
 def list_released(*, user_id, clinic_id, page=1):
     patient = _own_patient(user_id, clinic_id)
     if type(page) is not int or not 1 <= page <= 10000:
         raise ValidationError('Invalid page')
-    result = db.paginate(_visible(patient, user_id).order_by(LabOrder.patient_released_at.desc(), LabOrder.id.desc()), page=page, per_page=20, error_out=False)
+    current_release_time = select(LabReportPublication.released_at).where(LabReportPublication.order_id == LabOrder.id, LabReportPublication.withdrawn_at.is_(None)).scalar_subquery()
+    result = db.paginate(_visible(patient, user_id).order_by(func.coalesce(current_release_time, LabOrder.patient_released_at).desc(), LabOrder.id.desc()), page=page, per_page=20, error_out=False)
     items = []
     for order in result.items:
         report = _released(order)
-        items.append({'order_id': order.id, 'released_at': report['released_at'], 'completed_at': report['completed_at'], 'test_count': len(report['results']), 'release_status': 'released'})
+        items.append({'order_id': order.id, 'released_at': report['released_at'], 'completed_at': report['completed_at'], 'test_count': len(report['results']), 'release_status': 'released', 'record_version': report.get('record_version', 1)})
     return {'items': items, 'page': result.page, 'per_page': result.per_page, 'total': result.total, 'pages': result.pages, 'has_next': result.has_next}
 
 
