@@ -320,12 +320,14 @@ class NotificationDetailScreen extends StatefulWidget {
     required this.source,
     required this.actions,
     this.onOpenReleasedLab,
+    this.onOpenStagedRadiology,
   });
 
   final int id;
   final NotificationRemoteDataSource source;
   final NotificationReadActions actions;
   final Future<bool> Function(int)? onOpenReleasedLab;
+  final Future<bool> Function(int)? onOpenStagedRadiology;
 
   @override
   State<NotificationDetailScreen> createState() =>
@@ -338,6 +340,7 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
   bool _loading = false;
   bool _writing = false;
   bool _labLink = false;
+  bool _radcLink = false;
   int _generation = 0;
 
   @override
@@ -360,6 +363,7 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
     setState(() {
       _detail = null;
       _labLink = false;
+      _radcLink = false;
       _loading = false;
       _writing = false;
       _error = 'Session changed. Notification detail is no longer available.';
@@ -371,16 +375,19 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
     setState(() {
       _detail = null;
       _labLink = false;
+      _radcLink = false;
       _error = null;
       _loading = true;
     });
     try {
       final result = await widget.source.detail(widget.id);
       final canOpen = await _canOpenLab(result);
+      final canOpenRadc = await _canOpenRadc(result);
       if (!mounted || generation != _generation) return;
       setState(() {
         _detail = result;
         _labLink = canOpen;
+        _radcLink = canOpenRadc;
         _loading = false;
       });
     } on Object catch (error) {
@@ -402,10 +409,12 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
     try {
       final result = await widget.actions.markOne(widget.id);
       final canOpen = await _canOpenLab(result);
+      final canOpenRadc = await _canOpenRadc(result);
       if (!mounted || generation != _generation) return;
       setState(() {
         _detail = result;
         _labLink = canOpen;
+        _radcLink = canOpenRadc;
         _writing = false;
       });
     } on Object catch (error) {
@@ -428,6 +437,31 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
         row.clinicId == identity.session.clinicContextId;
   }
 
+  Future<bool> _canOpenRadc(ClinicNotification row) async {
+    if (widget.onOpenStagedRadiology == null || row.type != 'general' ||
+        row.channel != 'in_app' || row.referenceType != 'staged_radiology_report' ||
+        row.referenceId == null || row.referenceId! <= 0 || row.referenceId! > 2147483647) { return false; }
+    final identity = await widget.source.requireSession();
+    return identity.session.role == 'patient' && row.userId == identity.session.userId &&
+        row.clinicId == identity.session.clinicContextId;
+  }
+
+  Future<void> _openRadc() async {
+    if (!_radcLink || _writing || _loading || _detail == null) { return; }
+    final generation = ++_generation;
+    setState(() => _writing = true);
+    var opened = false;
+    try { opened = await widget.onOpenStagedRadiology!(widget.id); } on Object { /* Generic denial. */ }
+    if (!mounted || generation != _generation) return;
+    setState(() {
+      _writing = false;
+      if (!opened) {
+        _detail = null; _labLink = false; _radcLink = false;
+        _error = 'Staged radiology copy unavailable. Refresh detail online.';
+      }
+    });
+  }
+
   Future<void> _openLab() async {
     if (!_labLink || _writing || _loading || _detail == null) return;
     final generation = ++_generation;
@@ -444,6 +478,7 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
       if (!opened) {
         _detail = null;
         _labLink = false;
+      _radcLink = false;
         _error = 'Released laboratory report unavailable. Refresh detail online.';
       }
     });
@@ -501,6 +536,12 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
                   Text('Status: ${detail.status}'),
                   Text('Created: ${detail.createdAt ?? 'Unknown'}'),
                   const SizedBox(height: 20),
+                  if (_radcLink)
+                    OutlinedButton(
+                      key: const ValueKey('notification-open-staged-radiology'),
+                      onPressed: () => unawaited(_openRadc()),
+                      child: const Text('Open staged radiology copy'),
+                    ),
                   if (_labLink)
                     OutlinedButton(
                       key: const ValueKey('notification-open-released-lab'),

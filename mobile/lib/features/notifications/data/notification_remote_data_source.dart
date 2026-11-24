@@ -177,6 +177,24 @@ class NotificationRemoteDataSource {
         id > 0 && id <= 2147483647 ? id : null;
   }
 
+  Future<int?> stagedRadiologyTarget(int notificationId, {NotificationSessionIdentity? expected}) async {
+    final before = await requireSession(expectedRevision: expected?.guardRevision);
+    if (expected != null && !_same(expected, before)) {
+      throw const NotificationSessionUnavailable();
+    }
+    if (before.session.role != 'patient') return null;
+    final row = await detail(notificationId);
+    final after = await requireSession(expectedRevision: before.guardRevision);
+    if (!_same(before, after) || row.userId != after.session.userId ||
+        row.clinicId != after.session.clinicContextId) {
+      throw const NotificationSessionUnavailable();
+    }
+    final id = row.referenceId;
+    return row.type == 'general' && row.channel == 'in_app' &&
+        row.referenceType == 'staged_radiology_report' && id != null &&
+        id > 0 && id <= 2147483647 ? id : null;
+  }
+
   /// The caller permanently locks an attempted action after an uncertain POST.
   /// Any request failure after dispatch is an unknown outcome, not "not sent".
   Future<T> _mutate<T>(

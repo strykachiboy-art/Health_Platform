@@ -501,6 +501,16 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  // Staged RAD-C suggestions; backend remains authoritative. Keep LAB release last.
+  if ((clinicContextId ?? 0) > 0) {
+    if (normalizedRole == 'doctor') {
+      destinations.add(const HomeDestination('radc_staged', 'Staged radiology',
+        '/radiology-staged', Icons.medical_services_outlined));
+    } else if (normalizedRole == 'patient') {
+      destinations.add(const HomeDestination('radc_staged', 'My staged radiology copies',
+        '/patient-radiology-copies', Icons.description_outlined));
+    }
+  }
   // Append to preserve all existing card positions.
   if ((clinicContextId ?? 0) > 0) {
     if (normalizedRole == 'patient') {

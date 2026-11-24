@@ -12,9 +12,11 @@ class Rad7RadiologyScreen extends StatefulWidget {
     super.key,
     required this.source,
     required this.guard,
+    this.onOpenStaged,
   });
   final Rad7RisRemoteDataSource source;
   final SessionNavigationGuard guard;
+  final Future<void> Function(int)? onOpenStaged;
 
   @override
   State<Rad7RadiologyScreen> createState() => _Rad7RadiologyScreenState();
@@ -405,6 +407,14 @@ class _Rad7RadiologyScreenState extends State<Rad7RadiologyScreen> {
                 onPressed: unlocked ? _saveDraft : null,
                 child: const Text('Save one private revision'),
               ),
+              if (widget.onOpenStaged != null)
+                OutlinedButton(
+                  key: const ValueKey('radc-open-from-ris'),
+                  onPressed: unlocked ? () => unawaited(_perform((current) async {
+                    if (current()) { await widget.onOpenStaged!(exam.examId); }
+                  }, success: 'Returned to RIS planning.')) : null,
+                  child: const Text('Open staged acquisition and reporting'),
+                ),
               const Text(
                 'OHIF image viewer unavailable until clinical study-level grants are approved.',
               ),

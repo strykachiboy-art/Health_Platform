@@ -122,6 +122,8 @@ import 'package:clinic_system_pro/features/surgery/data/surgery_mutation_remote_
 import 'package:clinic_system_pro/features/surgery/presentation/surgery_action_screen.dart';
 import 'package:clinic_system_pro/features/radiology/data/rad7_ris_remote_data_source.dart';
 import 'package:clinic_system_pro/features/radiology/presentation/rad7_radiology_screen.dart';
+import 'package:clinic_system_pro/features/radiology/data/radc_staged_remote_data_source.dart';
+import 'package:clinic_system_pro/features/radiology/presentation/radc_workspace_screen.dart';
 import 'package:clinic_system_pro/features/printing/presentation/rad7_printing_screen.dart';
 import 'package:clinic_system_pro/features/auth/presentation/tenant_context_screen.dart';
 import 'package:clinic_system_pro/features/clinical_ai/data/clinical_ai_remote_data_source.dart';
@@ -174,6 +176,13 @@ GoRouter createAppRouter({
       ? LabReleaseRemoteDataSource(apiClient: dashboardDataSource.apiClient,
           loadSession: dashboardDataSource.loadSession, guard: sessionNavigationGuard)
       : null;
+  // One staged writer for the router lifetime; no replay on route revisits.
+  final RadcSource? radcSource = dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
+      ? RadcSource(apiClient: dashboardDataSource.apiClient,
+          loadSession: dashboardDataSource.loadSession, guard: sessionNavigationGuard,
+          connectivity: ConnectivityPlusDeviceConnectivitySource()) : null;
   // P23H.S06A reuses the already-injected authenticated client/session.
   // GET-only readers still recheck role, clinic, patient and session authority.
   final p23hReader = patientPrescriptionDataSource;
@@ -483,6 +492,11 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
+      if ((state.uri.path == '/radiology-staged' || state.uri.path.startsWith('/radiology-staged/') ||
+           state.uri.path == '/patient-radiology-copies' || state.uri.path.startsWith('/patient-radiology-copies/')) &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       if ((state.uri.path == '/lab-release' || state.uri.path.startsWith('/lab-release/') ||
            state.uri.path == '/patient-lab-results' || state.uri.path.startsWith('/patient-lab-results/')) &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
@@ -610,6 +624,15 @@ GoRouter createAppRouter({
                 );
               }
               return PatientPortalScreen(source: source,
+                onOpenRadiologyCopies: radcSource == null ? null : () async {
+                  try {
+                    final actor = await radcSource.connect();
+                    await actor.check();
+                    if (actor.role == 'patient' && context.mounted && radcSource.guard.revision == actor.revision) {
+                      await context.push<void>('/patient-radiology-copies');
+                    }
+                  } on Object { /* Fail closed without navigation. */ }
+                },
                 onOpenLabResults: labReleaseSource == null ? null : () async {
                   final revision = labReleaseSource.guard.revision;
                   try {
@@ -667,7 +690,15 @@ GoRouter createAppRouter({
                   body: Center(child: Text('Radiology unavailable.')),
                 );
               }
-              return Rad7RadiologyScreen(source: source, guard: guard);
+              return Rad7RadiologyScreen(source: source, guard: guard,
+                onOpenStaged: radcSource == null ? null : (examId) async {
+                  final actor = await radcSource.connect();
+                  await actor.check();
+                  if (actor.role == 'doctor' && context.mounted && radcSource.guard.revision == actor.revision) {
+                    await context.push<void>('/radiology-staged/$examId');
+                  }
+                },
+              );
             },
           ),
           GoRoute(
@@ -996,6 +1027,21 @@ GoRouter createAppRouter({
                 id: link.notificationId,
                 source: source,
                 actions: actions,
+                onOpenStagedRadiology: radcSource == null ||
+                    !identical(source.sessionNavigationGuard, radcSource.guard)
+                    ? null : (id) async {
+                  final identity = await source.requireSession();
+                  final target = await source.stagedRadiologyTarget(id, expected: identity);
+                  if (target == null) { return false; }
+                  final actor = await radcSource.connect();
+                  if (actor.role != 'patient' || actor.revision != identity.guardRevision || !actor.matches(identity.session)) { return false; }
+                  // Recheck actual ownership/release before opening a detail route.
+                  await actor.patientDetail(target);
+                  await actor.check();
+                  if (!context.mounted || radcSource.guard.revision != actor.revision) { return false; }
+                  await context.push<void>('/patient-radiology-copies/$target');
+                  return true;
+                },
                 onOpenReleasedLab: labReleaseSource == null ||
                     !identical(source.sessionNavigationGuard, labReleaseSource.guard)
                     ? null : (id) async {
@@ -1114,6 +1160,20 @@ GoRouter createAppRouter({
               return HieWorkspaceScreen(source: source);
             },
           ),
+          for (final path in ['/radiology-staged', '/radiology-staged/:examId',
+            '/patient-radiology-copies', '/patient-radiology-copies/:examId'])
+            GoRoute(path: path, builder: (context, state) {
+              final source = radcSource;
+              final raw = state.pathParameters['examId'];
+              final id = raw == null ? null : int.tryParse(raw);
+              final patientOnly = path.startsWith('/patient-radiology-copies');
+              if (source == null || !source.guard.canAccessProtectedRoutes || state.uri.hasQuery || state.uri.hasFragment ||
+                  (raw != null && (id == null || id <= 0 || id > 2147483647 || '$id' != raw))) {
+                return const Scaffold(body: Center(child: Text('Staged radiology navigation unavailable.')));
+              }
+              return RadcWorkspaceScreen(key: ValueKey('radc-$patientOnly-$id'), source: source,
+                patientOnly: patientOnly, initialExamId: id);
+            }),
           for (final path in ['/lab-release', '/lab-release/:orderId',
             '/patient-lab-results', '/patient-lab-results/:orderId'])
             GoRoute(
