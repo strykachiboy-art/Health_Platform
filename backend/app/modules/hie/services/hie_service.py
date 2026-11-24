@@ -51,6 +51,30 @@ HIE_QUERY_ROLES = (
 )
 
 
+def hie_partner_release_held() -> bool:
+    """No live partner approval in this source checkpoint.
+
+    Only the isolated Flask testing profile can exercise legacy synthetic
+    providers. A non-testing runtime cannot lift this hold by configuration.
+    """
+    return not (
+        has_app_context()
+        and current_app.testing
+        and current_app.config.get("HIE_PARTNER_RELEASE_HOLD") is False
+    )
+
+
+def _require_partner_release() -> None:
+    # The public HIE workflows require the Flask/SQLAlchemy application
+    # context before reaching this boundary. Context-free pure helper unit
+    # tests do not exercise a real service runtime or external provider.
+    if has_app_context() and hie_partner_release_held():
+        raise ValidationError(
+            "External HIE access requires an approved partner contract",
+            code="HIE_PARTNER_APPROVAL_REQUIRED",
+        )
+
+
 def _validate_configured_hie_endpoint_url(
     endpoint_url: Optional[str],
 ) -> Optional[str]:
@@ -351,6 +375,9 @@ def _validate_integration(
     _validate_configured_hie_endpoint_url(
         getattr(integration, "endpoint_url", None)
     )
+    # Every query and submission reaches this before provider invocation or
+    # submission creation, including stale ACTIVE records.
+    _require_partner_release()
 
 
 def _get_provider(
@@ -1252,6 +1279,9 @@ def update_hie_integration(
             "HIE provider implementation is not registered; "
             "integration cannot be activated or switched while active"
         )
+
+    if effective_status == HIEIntegrationStatus.ACTIVE:
+        _require_partner_release()
 
     validated_endpoint_url: Optional[str] = None
     if endpoint_url is not None:

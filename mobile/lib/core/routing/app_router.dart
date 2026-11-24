@@ -126,6 +126,8 @@ import 'package:clinic_system_pro/features/printing/presentation/rad7_printing_s
 import 'package:clinic_system_pro/features/auth/presentation/tenant_context_screen.dart';
 import 'package:clinic_system_pro/features/clinical_ai/data/clinical_ai_remote_data_source.dart';
 import 'package:clinic_system_pro/features/clinical_ai/presentation/clinical_ai_workspace_screen.dart';
+import 'package:clinic_system_pro/features/hie/data/hie_remote_data_source.dart';
+import 'package:clinic_system_pro/features/hie/presentation/hie_workspace_screen.dart';
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
@@ -156,6 +158,13 @@ GoRouter createAppRouter({
   DeviceTokenProvider? deviceTokenProvider,
   DeviceConnectivitySource? deviceRegistrationConnectivitySource,
 }) {
+  // Keep one source per router lifetime, preserving uncertain-write protection.
+  final HieRemoteDataSource? hieSource = dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
+      ? HieRemoteDataSource(apiClient: dashboardDataSource.apiClient,
+          loadSession: dashboardDataSource.loadSession, guard: sessionNavigationGuard)
+      : null;
   // P23H.S06A reuses the already-injected authenticated client/session.
   // GET-only readers still recheck role, clinic, patient and session authority.
   final p23hReader = patientPrescriptionDataSource;
@@ -458,6 +467,10 @@ GoRouter createAppRouter({
       // RAD7 direct links are protected under the default /patients-only
       // navigation guard. The backend still rechecks role and clinic.
       if ((state.uri.path == '/radiology' || state.uri.path == '/printing') &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
+      if (state.uri.path == '/hie' &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
@@ -1034,6 +1047,17 @@ GoRouter createAppRouter({
                     ConnectivityPlusDeviceConnectivitySource(),
                 onOpen: (path) => context.push<void>(path),
               );
+            },
+          ),
+          GoRoute(
+            path: '/hie',
+            name: 'hie-staged-workspace',
+            builder: (context, state) {
+              final source = hieSource;
+              if (source == null || !source.guard.canAccessProtectedRoutes) {
+                return const Scaffold(body: Center(child: Text('HIE workspace unavailable.')));
+              }
+              return HieWorkspaceScreen(source: source);
             },
           ),
           // WD13 system-level clinic registry: Flask remains authoritative.

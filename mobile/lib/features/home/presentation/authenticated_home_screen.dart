@@ -11,6 +11,7 @@ import 'package:clinic_system_pro/features/home/presentation/windows_workstation
 import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workflow_hub.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_hub.dart';
 import 'package:clinic_system_pro/features/coordination/presentation/wd06_coordination_hub.dart';
+import 'package:clinic_system_pro/features/hie/data/hie_remote_data_source.dart';
 
 /// Navigation suggestions, never authorization grants. The backend enforces
 /// identity, clinic and role for every requested resource.
@@ -485,6 +486,20 @@ List<HomeDestination> homeDestinationsFor({
             '/patient-care/messages', Icons.chat_bubble_outline),
       ]);
     }
+  }
+  // Append HIE without displacing established navigation destinations.
+  // The shared HIE source and backend still recheck session and authority.
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      hieViewRoles.contains(normalizedRole)) {
+    destinations.add(
+      const HomeDestination(
+        'hie',
+        'Health information exchange',
+        '/hie',
+        Icons.hub_outlined,
+      ),
+    );
   }
   return List<HomeDestination>.unmodifiable(destinations);
 }
