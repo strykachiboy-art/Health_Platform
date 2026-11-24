@@ -180,6 +180,77 @@ def login():
     ), 200
 
 
+# G05 enrollment requires a normal authenticated Super Admin session.
+# It cannot mint tokens or weaken the G03 shared issuer gate.
+def _mfa_enrollment_actor():
+    try:
+        identity = int(get_jwt_identity())
+    except (ValueError, TypeError):
+        return None
+    actor = db.session.get(User, identity)
+    if actor is None or not actor.is_active or actor.role is not Role.SUPER_ADMIN:
+        return None
+    return actor
+
+
+@auth_bp.get("/mfa/enrollment/status")
+@jwt_required()
+def super_admin_mfa_enrollment_status():
+    actor = _mfa_enrollment_actor()
+    if actor is None:
+        return jsonify({"success": False, "error": "Super Admin access required"}), 403
+    from app.core.auth.user.services.super_admin_mfa_enrollment_service import (
+        get_enrollment_status,
+    )
+    try:
+        result = get_enrollment_status(actor)
+    except DomainError as exc:
+        return jsonify({"success": False, "error": str(exc)}), exc.status_code
+    return jsonify({"success": True, "data": result}), 200
+
+
+@auth_bp.post("/mfa/enrollment/begin")
+@jwt_required()
+@limiter.limit("3 per minute")
+def super_admin_mfa_enrollment_begin():
+    actor = _mfa_enrollment_actor()
+    if actor is None:
+        return jsonify({"success": False, "error": "Super Admin access required"}), 403
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "Validation failed"}), 400
+    from app.core.auth.user.services.super_admin_mfa_enrollment_service import (
+        begin_enrollment,
+    )
+    try:
+        result = begin_enrollment(actor, payload.get("current_password"))
+    except DomainError as exc:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(exc)}), exc.status_code
+    return jsonify({"success": True, "data": result}), 200
+
+
+@auth_bp.post("/mfa/enrollment/confirm")
+@jwt_required()
+@limiter.limit("5 per minute")
+def super_admin_mfa_enrollment_confirm():
+    actor = _mfa_enrollment_actor()
+    if actor is None:
+        return jsonify({"success": False, "error": "Super Admin access required"}), 403
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "Validation failed"}), 400
+    from app.core.auth.user.services.super_admin_mfa_enrollment_service import (
+        confirm_enrollment,
+    )
+    try:
+        result = confirm_enrollment(actor, payload.get("code"))
+    except DomainError as exc:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(exc)}), exc.status_code
+    return jsonify({"success": True, "data": result}), 200
+
+
 @auth_bp.post("/mfa/complete")
 @limiter.limit(
     lambda: current_app.config.get(

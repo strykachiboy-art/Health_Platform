@@ -222,6 +222,11 @@ class Config:
         "AUTH_SUPER_ADMIN_LOGIN_MFA_POLICY", "disabled"
     )
     AUTH_SUPER_ADMIN_LOGIN_MFA_CHALLENGE_TTL_SECONDS = 300
+    # Staged enrollment needs explicit deployment approval and schema readiness.
+    AUTH_SUPER_ADMIN_MFA_ENROLLMENT_ENABLED = (
+        os.environ.get("AUTH_SUPER_ADMIN_MFA_ENROLLMENT_ENABLED", "false").lower()
+        == "true"
+    )
     AUTH_SUPER_ADMIN_LOGIN_MFA_COMPLETE_RATE_LIMIT = "5 per minute"
 
     AUTH_GOOGLE_RATE_LIMIT = (
