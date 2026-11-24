@@ -1,0 +1,30 @@
+{
+  "auth": {
+    "failed": 0,
+    "passed": 26,
+    "sha256": "4C7AE19F42E7727AC04205CA154413EB52146284E43433C4DB19B3925A189616",
+    "skipped": 0
+  },
+  "canonical_github_remote": "https://github.com/strykachiboy-art/Health_Platform.git",
+  "commit_or_push": false,
+  "full_regression": false,
+  "git_source_changes": false,
+  "mfa_activation": false,
+  "owned_containers_removed": true,
+  "postgres": {
+    "failed": 0,
+    "passed": 3,
+    "sha256": "11E738421F84E0C017B5310FE2069EF2A8AD5D434AFBA6AF2F5A2837C2D0AB7B",
+    "skipped": 0
+  },
+  "postgres_scope": "OWN_EMPTY_DISPOSABLE_PG_ONLY",
+  "production_migration": false,
+  "production_release": "HOLD",
+  "real_flutter_flask_e2e": "NOT_RUN",
+  "schema": "sa-sec-01-g06-readonly-v1",
+  "source_branch": "feat/sa-sec-01-g05-enrollment-backend",
+  "source_sha": "91ec4150be55631b4694b0e8a0eb06c8d3994b4a",
+  "status": "FOCUSED_GREEN",
+  "target": "Backend",
+  "timestamp_utc": "2026-11-24T05:50:53.200353+00:00"
+}

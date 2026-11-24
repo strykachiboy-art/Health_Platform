@@ -1,0 +1,51 @@
+{
+  "backend_auth": {
+    "failed": 0,
+    "passed": 26,
+    "sha256": "4C7AE19F42E7727AC04205CA154413EB52146284E43433C4DB19B3925A189616",
+    "skipped": 0
+  },
+  "backend_postgres": {
+    "failed": 0,
+    "passed": 3,
+    "sha256": "11E738421F84E0C017B5310FE2069EF2A8AD5D434AFBA6AF2F5A2837C2D0AB7B",
+    "skipped": 0
+  },
+  "blockers": [
+    "G05 branches divergent and not reviewed/merged for release",
+    "Production G02B migration not deployed or approved",
+    "Google-only Super Admin fresh interactive reauthentication not implemented",
+    "True live Flutter-to-Flask device E2E not executed",
+    "Emergency account recovery and operational rollout not approved",
+    "Deployment flags and production secret readiness not certified"
+  ],
+  "canonical_github_remote": "https://github.com/strykachiboy-art/Health_Platform.git",
+  "commit_or_push": false,
+  "flutter": {
+    "failed": 0,
+    "log_sha256": "A6CC9CAE23C7D13C9B20070677269177E21B7BBAADB3144EAEFACCEF4A86C4E5",
+    "passed": 42,
+    "skipped": 0,
+    "test_files": [
+      "test/features/auth/data/sa_sec_01_g05_mfa_contract_test.dart",
+      "test/features/auth/presentation/sa_sec_01_g05_mfa_ui_test.dart",
+      "test/features/auth/data/models/auth_token_response_test.dart",
+      "test/features/auth/presentation/google_login_screen_test.dart",
+      "test/features/auth/session_security_screen_test.dart",
+      "test/features/auth/presentation/password_recovery_screens_test.dart",
+      "test/features/auth/data/password_recovery_remote_data_source_test.dart"
+    ]
+  },
+  "full_regression": false,
+  "git_source_changes": false,
+  "mfa_activation": false,
+  "old_pc_backend_sha": "91ec4150be55631b4694b0e8a0eb06c8d3994b4a",
+  "production_migration": false,
+  "production_release": "HOLD",
+  "schema": "sa-sec-01-g06-readonly-v1",
+  "source_branch": "feat/sa-sec-01-g05-flutter-mfa",
+  "source_sha": "544707a212da2bee0aab40ab242ad61a5b7fe0fd",
+  "status": "FOCUSED_GREEN_RELEASE_HOLD",
+  "target": "Flutter",
+  "timestamp_utc": "2026-11-24T06:56:16.288076+00:00"
+}
