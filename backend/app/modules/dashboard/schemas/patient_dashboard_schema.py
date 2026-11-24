@@ -11,6 +11,8 @@ from app.modules.dashboard.schemas.dashboard_schema import (
 )
 
 
+from app.modules.dashboard.schemas.surgery_dashboard_schema import SurgeryDashboardWidgetSchema
+
 class PatientDashboardOverviewSchema(BaseModel):
     upcoming_appointments: int = Field(
         ...,
@@ -54,6 +56,8 @@ class PatientDashboardSchema(BaseModel):
     ] = Field(
         default_factory=list,
     )
+
+    surgery: SurgeryDashboardWidgetSchema | None = None
 
     model_config = ConfigDict(
         extra="forbid",

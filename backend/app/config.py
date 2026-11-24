@@ -215,6 +215,20 @@ class Config:
         "5 per minute"
     )
 
+    # Privileged login MFA is deliberately disabled until the schema is
+    # deployed, real enrollments exist, and operational recovery is approved.
+    # Only backend deployment configuration can enable this policy.
+    AUTH_SUPER_ADMIN_LOGIN_MFA_POLICY = os.environ.get(
+        "AUTH_SUPER_ADMIN_LOGIN_MFA_POLICY", "disabled"
+    )
+    AUTH_SUPER_ADMIN_LOGIN_MFA_CHALLENGE_TTL_SECONDS = 300
+    # Staged enrollment needs explicit deployment approval and schema readiness.
+    AUTH_SUPER_ADMIN_MFA_ENROLLMENT_ENABLED = (
+        os.environ.get("AUTH_SUPER_ADMIN_MFA_ENROLLMENT_ENABLED", "false").lower()
+        == "true"
+    )
+    AUTH_SUPER_ADMIN_LOGIN_MFA_COMPLETE_RATE_LIMIT = "5 per minute"
+
     AUTH_GOOGLE_RATE_LIMIT = (
         "10 per minute"
     )
@@ -294,6 +308,12 @@ class Config:
     AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_POLICY = os.environ.get(
         "AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_POLICY",
         "disabled",
+    )
+
+    # Deliberately no default, derivation, or fallback to the JWT/Flask key.
+    # Required by the actual provider only when operator-enabled.
+    SUPER_ADMIN_MFA_RECOVERY_PEPPER = os.environ.get(
+        "SUPER_ADMIN_MFA_RECOVERY_PEPPER"
     )
 
     AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_MAX_FAILURES = int(
@@ -500,6 +520,7 @@ class TestingConfig(Config):
     AUTH_SUPER_ADMIN_PASSWORD_RESET_MFA_POLICY = (
         "disabled"
     )
+    AUTH_SUPER_ADMIN_LOGIN_MFA_POLICY = "disabled"
 
     PASSWORD_RESET_PUBLIC_URL = (
         "https://app.example.com/reset-password"

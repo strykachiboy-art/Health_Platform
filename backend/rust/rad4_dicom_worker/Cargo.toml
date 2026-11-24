@@ -1,0 +1,18 @@
+[package]
+name = "rad4_dicom_worker"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+dicom-object = "=0.10.0"
+sha2 = "=0.10.9"
+serde_json = "=1.0.145"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.release]
+strip = true
+panic = "abort"

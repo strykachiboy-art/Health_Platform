@@ -4,7 +4,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 
 from app.extensions import db
 from app.core.audit.services.audit_service import create_audit_log
@@ -12,6 +12,8 @@ from app.core.enums.audit_enums import AuditAction
 from app.core.enums.chat_enums import (
     ConversationStatus,
     ConversationType,
+    MessageStatus,
+    MessageType,
     ParticipantRole,
     ParticipantStatus,
 )
@@ -1720,10 +1722,12 @@ def update_participant_read_state(
         conversation.id,
     )
 
-    _validate_read_message(
+    candidate = _validate_read_message(
         conversation,
         last_read_message_id,
     )
+    if candidate.status not in (MessageStatus.SENT, MessageStatus.EDITED):
+        raise ConflictError("Cannot acknowledge an undelivered message")
 
     participant = db.session.execute(
         db.select(
@@ -1747,10 +1751,83 @@ def update_participant_read_state(
             "Accepted conversation participant not found"
         )
 
-    participant.last_read_message_id = (
-        last_read_message_id
-    )
+    # The accepted participant row is locked until this transaction ends.
+    # PostgreSQL serializes concurrent acknowledgements for this user and
+    # conversation. Compare (created_at, id), not bare global message IDs:
+    # backfilled messages can have newer IDs but older timestamps.
+    if participant.last_read_message_id is not None:
+        previous = _validate_read_message(
+            conversation, participant.last_read_message_id,
+        )
+        candidate_order = (candidate.created_at, candidate.id)
+        previous_order = (previous.created_at, previous.id)
+        if candidate_order < previous_order:
+            raise ConflictError("Read acknowledgement cannot move backward")
+        if candidate_order == previous_order:
+            return participant
 
+    participant.last_read_message_id = last_read_message_id
     participant.updated_at = _utcnow()
-
     return participant
+
+
+def get_conversation_unread_state(
+    conversation_id: int,
+    clinic_id: int,
+    user_id: int,
+) -> dict[str, int | None]:
+    """Authenticated, clinic-scoped, server-authoritative unread summary.
+
+    Count only delivered non-system messages from other users. Deleted,
+    pending and failed messages do not count. The read watermark uses the
+    immutable (created_at, id) ordering and reflects visible message history;
+    no offset pagination or client-side count is trusted.
+    """
+    _validate_positive_id(conversation_id, "Conversation ID")
+    _validate_positive_id(clinic_id, "Clinic ID")
+    _validate_positive_id(user_id, "User ID")
+
+    conversation = _get_conversation(conversation_id, clinic_id=clinic_id)
+    ChatSecurityService.ensure_user_can_access_conversation(
+        user_id, conversation.id,
+    )
+    participant = db.session.execute(
+        db.select(ConversationParticipant).where(
+            ConversationParticipant.conversation_id == conversation.id,
+            ConversationParticipant.clinic_id == clinic_id,
+            ConversationParticipant.user_id == user_id,
+            ConversationParticipant.status == ParticipantStatus.ACCEPTED,
+        )
+    ).scalar_one_or_none()
+    if participant is None:
+        raise NotFoundError("Accepted conversation participant not found")
+
+    conditions = [
+        Message.clinic_id == clinic_id,
+        Message.conversation_id == conversation.id,
+        Message.sender_id != user_id,
+        Message.message_type != MessageType.SYSTEM,
+        Message.status.in_((MessageStatus.SENT, MessageStatus.EDITED)),
+    ]
+    if participant.last_read_message_id is not None:
+        last_read = _validate_read_message(
+            conversation, participant.last_read_message_id,
+        )
+        conditions.append(or_(
+            Message.created_at > last_read.created_at,
+            and_(
+                Message.created_at == last_read.created_at,
+                Message.id > last_read.id,
+            ),
+        ))
+
+    count = db.session.execute(
+        db.select(func.count(Message.id)).where(*conditions)
+    ).scalar_one()
+    return {
+        "conversation_id": conversation.id,
+        "clinic_id": clinic_id,
+        "user_id": user_id,
+        "last_read_message_id": participant.last_read_message_id,
+        "unread_count": int(count),
+    }

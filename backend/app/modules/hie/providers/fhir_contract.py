@@ -56,7 +56,10 @@ def validate_capability_statement(payload: Any) -> str:
         raise FHIRContractError("Expected a CapabilityStatement resource")
 
     version = statement.get("fhirVersion")
-    if version not in FHIR_R4_COMPATIBLE_VERSIONS:
+    if (
+        not isinstance(version, str)
+        or version not in FHIR_R4_COMPATIBLE_VERSIONS
+    ):
         raise FHIRContractError("FHIR server version is not in the accepted R4 baseline")
 
     rest = statement.get("rest")

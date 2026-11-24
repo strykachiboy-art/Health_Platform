@@ -29,6 +29,7 @@ from app.modules.appointment.models.appointment_model import Appointment
 from app.modules.billing.models.billing_model import Invoice
 from app.modules.clinic.models.clinic_model import Clinic
 from app.modules.lab.models.lab_model import LabOrder
+from app.modules.inventory.models.inventory_model import InventoryItem
 from app.modules.patient.models.patient_model import Patient
 from app.modules.pharmacy.models.pharmacy_model import Drug
 from app.modules.reports.models.reports_model import GeneratedReport
@@ -68,6 +69,7 @@ SUPPORTED_CSV_TYPES = {
     ReportType.STAFF,
     ReportType.APPOINTMENTS,
     ReportType.BILLING,
+    ReportType.INVENTORY,
     ReportType.LAB,
     ReportType.PHARMACY,
     ReportType.WARD,
@@ -77,9 +79,7 @@ SUPPORTED_XLSX_TYPES = SUPPORTED_CSV_TYPES
 
 SUPPORTED_PDF_TYPES = SUPPORTED_CSV_TYPES
 
-UNSUPPORTED_TYPES = {
-    ReportType.INVENTORY,
-}
+UNSUPPORTED_TYPES = set()
 
 
 # ============================================================================
@@ -1351,6 +1351,46 @@ def _gather_lab(
     return rows
 
 
+def _gather_inventory(
+    clinic_id: int,
+    filters: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Export canonical, clinic-scoped inventory stock snapshots.
+
+    This is a current-state item report, not a historical valuation or
+    movement-ledger report. Source quantities are never calculated or changed.
+    """
+    query = select(InventoryItem).where(
+        InventoryItem.clinic_id == clinic_id
+    )
+    if filters.get("active_only") is True:
+        query = query.where(InventoryItem.is_active.is_(True))
+    query = _apply_datetime_range(
+        query,
+        InventoryItem.created_at,
+        filters.get("date_from"),
+        filters.get("date_to"),
+    )
+    query = query.order_by(InventoryItem.id.asc())
+    items = db.session.execute(query).scalars().all()
+    return [
+        {
+            "id": item.id,
+            "clinic_id": item.clinic_id,
+            "name": item.name,
+            "category": _enum_value(item.category),
+            "sku": item.sku,
+            "barcode": item.barcode,
+            "unit": item.unit,
+            "quantity_on_hand": item.quantity_on_hand,
+            "reorder_level": item.reorder_level,
+            "is_active": item.is_active,
+            "created_at": _iso(item.created_at),
+        }
+        for item in items
+    ]
+
+
 def _gather_pharmacy(
     clinic_id: int,
     filters: dict[str, Any],
@@ -1865,6 +1905,7 @@ _GATHERERS: dict[
     ReportType.STAFF: _gather_staff,
     ReportType.APPOINTMENTS: _gather_appointments,
     ReportType.BILLING: _gather_billing,
+    ReportType.INVENTORY: _gather_inventory,
     ReportType.LAB: _gather_lab,
     ReportType.PHARMACY: _gather_pharmacy,
     ReportType.WARD: _gather_ward,

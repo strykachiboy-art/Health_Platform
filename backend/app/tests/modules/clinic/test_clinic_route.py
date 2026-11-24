@@ -15,6 +15,12 @@ def admin_headers(auth_headers_for, user):
     return auth_headers_for(user, role=Role.ADMIN)
 
 
+def super_admin_headers(auth_headers_for, user):
+    # Use a genuine SUPER_ADMIN database identity and matching signed JWT.
+    user.role = Role.SUPER_ADMIN
+    return auth_headers_for(user)
+
+
 def user_headers(auth_headers_for, user):
     return auth_headers_for(user)
 
@@ -143,13 +149,13 @@ class TestClinicRouteAuthentication:
 
 
 class TestClinicRouteAuthorization:
-    def test_admin_can_create_clinic(
+    def test_super_admin_can_create_clinic(
         self,
         client,
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -160,6 +166,21 @@ class TestClinicRouteAuthorization:
         )
 
         assert response.status_code == 201
+
+    def test_admin_cannot_create_clinic(
+        self,
+        client,
+        user,
+        auth_headers_for,
+        assert_forbidden,
+    ):
+        # Hospital ADMIN is intentionally denied new root clinic provisioning.
+        response = client.post(
+            "/api/v1/clinics",
+            json={"name": "Denied Admin Root Clinic"},
+            headers=admin_headers(auth_headers_for, user),
+        )
+        assert_forbidden(response)
 
     def test_non_admin_cannot_create_clinic(
         self,
@@ -367,7 +388,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -399,7 +420,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -437,7 +458,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -459,7 +480,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -483,7 +504,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -508,7 +529,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -528,7 +549,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -552,7 +573,7 @@ class TestCreateClinicRoute:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -870,6 +891,129 @@ class TestGetClinicRoute:
             response.get_json()["error"]
             == "Invalid clinic ID"
         )
+
+
+
+# ============================================================================
+# WD13 G05: SUPER ADMIN ROOT CLINIC REGISTRY READ PARITY
+# ============================================================================
+
+
+class TestSuperAdminClinicRegistryReadParity:
+    def test_super_admin_without_context_lists_all_root_clinics(
+        self, client, make_user, make_clinic, auth_headers_for,
+    ):
+        first = make_clinic(name="Registry First")
+        second = make_clinic(name="Registry Second")
+        sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
+
+        response = client.get(
+            "/api/v1/clinics", headers=auth_headers_for(sa),
+        )
+        assert response.status_code == 200
+        ids = {item["id"] for item in response.get_json()["data"]}
+        assert first.id in ids and second.id in ids
+
+    def test_super_admin_selected_context_still_lists_global_registry(
+        self, client, make_user, make_clinic, auth_headers_for,
+    ):
+        selected = make_clinic(name="Context Selected")
+        other = make_clinic(name="Context Other")
+        sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
+        response = client.get(
+            "/api/v1/clinics",
+            headers=auth_headers_for(sa, clinic_context_id=selected.id),
+        )
+        assert response.status_code == 200
+        ids = {item["id"] for item in response.get_json()["data"]}
+        assert selected.id in ids and other.id in ids
+
+    def test_super_admin_can_filter_global_registry_by_status(
+        self, client, make_user, make_clinic, auth_headers_for,
+    ):
+        active = make_clinic(name="Status Active")
+        suspended = make_clinic(
+            name="Status Suspended", status=ClinicStatus.SUSPENDED,
+        )
+        sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
+        response = client.get(
+            "/api/v1/clinics",
+            query_string={"status": ClinicStatus.SUSPENDED.value},
+            headers=auth_headers_for(sa),
+        )
+        assert response.status_code == 200
+        ids = {item["id"] for item in response.get_json()["data"]}
+        assert suspended.id in ids
+        assert active.id not in ids
+
+    def test_super_admin_without_context_reads_any_clinic(
+        self, client, make_user, make_clinic, auth_headers_for,
+    ):
+        target = make_clinic(name="Global Detail")
+        sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
+        response = client.get(
+            f"/api/v1/clinics/{target.id}",
+            headers=auth_headers_for(sa),
+        )
+        assert response.status_code == 200
+        assert response.get_json()["data"]["id"] == target.id
+
+    def test_super_admin_selected_context_reads_other_clinic(
+        self, client, make_user, make_clinic, auth_headers_for,
+    ):
+        selected = make_clinic(name="Detail Selected")
+        other = make_clinic(name="Detail Other")
+        sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
+        response = client.get(
+            f"/api/v1/clinics/{other.id}",
+            headers=auth_headers_for(sa, clinic_context_id=selected.id),
+        )
+        assert response.status_code == 200
+        assert response.get_json()["data"]["id"] == other.id
+
+    def test_super_admin_unknown_clinic_still_returns_404(
+        self, client, make_user, auth_headers_for,
+    ):
+        sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
+        response = client.get(
+            "/api/v1/clinics/999999", headers=auth_headers_for(sa),
+        )
+        assert response.status_code == 404
+
+    def test_unprivileged_patient_cannot_list_or_read_registry(
+        self, client, make_user, make_clinic, auth_headers_for,
+    ):
+        clinic = make_clinic(name="Patient Denied Clinic")
+        patient = make_user(clinic=clinic, role=Role.PATIENT)
+        headers = auth_headers_for(patient)
+        list_response = client.get("/api/v1/clinics", headers=headers)
+        detail_response = client.get(
+            f"/api/v1/clinics/{clinic.id}", headers=headers,
+        )
+        assert list_response.status_code == 403
+        assert detail_response.status_code == 403
+
+    def test_super_admin_branch_list_is_not_newly_granted(
+        self, client, make_user, make_clinic, auth_headers_for,
+    ):
+        clinic = make_clinic(name="Branch Boundary")
+        sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
+        response = client.get(
+            f"/api/v1/clinics/{clinic.id}/branches",
+            headers=auth_headers_for(sa),
+        )
+        assert response.status_code == 403
+
+    def test_super_admin_cannot_use_admin_only_clinic_update(
+        self, client, make_user, make_clinic, auth_headers_for,
+    ):
+        clinic = make_clinic(name="Update Boundary")
+        sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
+        response = client.patch(
+            f"/api/v1/clinics/{clinic.id}",
+            json={"name": "Denied"}, headers=auth_headers_for(sa),
+        )
+        assert response.status_code == 403
 
 
 # ============================================================================
@@ -1798,7 +1942,7 @@ class TestClinicRouteExceptionMapping:
             fake_create_clinic,
         )
 
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -1830,7 +1974,7 @@ class TestClinicRouteExceptionMapping:
             fake_create_clinic,
         )
 
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -1859,7 +2003,7 @@ class TestClinicRouteExceptionMapping:
             fake_create_clinic,
         )
 
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",
@@ -2245,7 +2389,7 @@ class TestClinicRouteValidation:
         user,
         auth_headers_for,
     ):
-        headers = admin_headers(auth_headers_for, user)
+        headers = super_admin_headers(auth_headers_for, user)
 
         response = client.post(
             "/api/v1/clinics",

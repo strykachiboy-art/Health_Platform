@@ -32,6 +32,7 @@ from app.core.enums.clinical_safety_enums import (
     AlertAcknowledgementType,
     ClinicalAlertStatus,
     ClinicalRuleAction,
+    ClinicalRuleSeverity,
 )
 from app.core.exceptions import (
     ConflictError,
@@ -527,6 +528,10 @@ def list_clinical_alerts(
     patient_id: int | None = None,
     status: ClinicalAlertStatus | str | None = None,
     rule_id: int | None = None,
+    severity: ClinicalRuleSeverity | str | None = None,
+    action: ClinicalRuleAction | str | None = None,
+    source_type: str | None = None,
+    source_id: int | None = None,
 ) -> dict[str, Any]:
     clinic_id = _validate_positive_id(
         clinic_id,
@@ -576,6 +581,32 @@ def list_clinical_alerts(
         filters.append(
             ClinicalAlert.rule_id == rule_id
         )
+
+    if severity is not None:
+        try:
+            severity = ClinicalRuleSeverity(severity)
+        except ValueError as exc:
+            raise ValidationError(
+                "Invalid clinical alert severity"
+            ) from exc
+        filters.append(ClinicalAlert.severity == severity)
+
+    if action is not None:
+        try:
+            action = ClinicalRuleAction(action)
+        except ValueError as exc:
+            raise ValidationError(
+                "Invalid clinical alert action"
+            ) from exc
+        filters.append(ClinicalAlert.action == action)
+
+    if source_type is not None:
+        source_type = _normalize_source_type(source_type)
+        filters.append(ClinicalAlert.source_type == source_type)
+
+    if source_id is not None:
+        source_id = _validate_positive_id(source_id, "Source ID")
+        filters.append(ClinicalAlert.source_id == source_id)
 
     total = db.session.execute(
         db.select(

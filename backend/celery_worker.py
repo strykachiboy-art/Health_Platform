@@ -30,5 +30,6 @@ from app.modules.billing.services import billing_service
 from app.modules.clinic.services import clinic_service
 from app.core.notifications.services import notification_service
 from app.modules.chat.tasks import chat_outbox_task
+from app.modules.chat.tasks import case_chat_sync_task
 from app.core.backup import backup_tasks
 from app.core.observability import alert_tasks

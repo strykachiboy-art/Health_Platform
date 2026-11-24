@@ -641,6 +641,16 @@ def authenticate_google_user(
             "This account has been deactivated"
         )
 
+    from app.core.auth.user.services.super_admin_login_mfa_service import (
+        maybe_start_login_challenge,
+    )
+    challenge = maybe_start_login_challenge(user)
+    if challenge is not None:
+        # Google identity was verified, but no privileged JWT or completed
+        # login audit exists until the second factor succeeds.
+        db.session.commit()
+        return challenge
+
     tokens = issue_auth_tokens(
         user
     )

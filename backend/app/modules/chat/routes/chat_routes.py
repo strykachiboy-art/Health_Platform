@@ -50,6 +50,7 @@ from app.modules.chat.services.conversation_service import (
     add_participant,
     create_conversation,
     get_conversation,
+    get_conversation_unread_state,
     leave_conversation,
     list_conversations,
     list_participants,
@@ -1069,6 +1070,24 @@ def update_chat_read_state(
         return _domain_error(exc)
 
 
+@chat_bp.get(
+    "/conversations/<int:conversation_id>/unread"
+)
+@login_required
+def get_chat_conversation_unread(conversation_id: int):
+    try:
+        clinic_id = _current_clinic_id()
+        user_id = _current_user_id()
+        result = get_conversation_unread_state(
+            conversation_id=conversation_id,
+            clinic_id=clinic_id,
+            user_id=user_id,
+        )
+        return jsonify({"success": True, "data": result}), 200
+    except DomainError as exc:
+        return _domain_error(exc)
+
+
 @chat_bp.post(
     "/conversations/<int:conversation_id>/messages"
 )
@@ -1314,3 +1333,7 @@ def delete_chat_message(
 
     except DomainError as exc:
         return _domain_error(exc)
+
+# P24G final: existing chat blueprint, no parallel registration system.
+from app.modules.chat.routes.chat_engagement_routes import register_chat_engagement_routes
+register_chat_engagement_routes(chat_bp, _current_user_id, _current_clinic_id)

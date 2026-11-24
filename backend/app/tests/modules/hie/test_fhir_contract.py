@@ -53,6 +53,8 @@ def test_validate_capability_statement_accepts_r4_versions():
         {"resourceType": "CapabilityStatement", "fhirVersion": "4.0.0"},
         {"resourceType": "CapabilityStatement", "fhirVersion": "5.0.0", "rest": []},
         {"resourceType": "CapabilityStatement", "fhirVersion": "4.0.2", "rest": []},
+        {"resourceType": "CapabilityStatement", "fhirVersion": [], "rest": []},
+        {"resourceType": "CapabilityStatement", "fhirVersion": {}, "rest": []},
     ],
 )
 def test_validate_capability_statement_rejects_invalid_or_out_of_baseline_payloads(payload):

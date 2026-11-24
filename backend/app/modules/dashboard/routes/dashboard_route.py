@@ -134,3 +134,53 @@ def get_dashboard_route():
 
     except DomainError as exc:
         return _domain_error_response(exc)
+
+# CE1-S11: authenticated, clinic-/assignment-scoped, GET-only Surgery reads.
+# Registered by the existing dashboard blueprint, never by a new registry.
+from app.core.enums.role_enums import Role as _SurgeryViewRole
+from app.core.utils.decorators import (
+    active_staff_required as _surgery_active_staff,
+    get_current_clinic_id as _surgery_clinic_id,
+    role_required as _surgery_role_required,
+)
+from app.modules.surgery.services.surgical_dashboard_read_service import (
+    get_surgery_dashboard as _surgery_dashboard,
+    get_surgery_case_read_model as _surgery_case_read,
+)
+
+
+@dashboard_bp.get('/surgery')
+@_surgery_role_required(
+    _SurgeryViewRole.ADMIN, _SurgeryViewRole.SUPER_ADMIN,
+    _SurgeryViewRole.DOCTOR, _SurgeryViewRole.NURSE,
+)
+@_surgery_active_staff
+def get_surgery_documentation_dashboard_route():
+    try:
+        data = _surgery_dashboard(
+            actor_user_id=_current_user_id(),
+            clinic_id=_surgery_clinic_id(required=True),
+            limit=request.args.get('limit', '20'),
+            offset=request.args.get('offset', '0'),
+        )
+        return jsonify({'success': True, 'data': data}), 200
+    except DomainError as exc:
+        return _domain_error_response(exc)
+
+
+@dashboard_bp.get('/surgery/cases/<int:surgical_case_id>')
+@_surgery_role_required(
+    _SurgeryViewRole.ADMIN, _SurgeryViewRole.SUPER_ADMIN,
+    _SurgeryViewRole.DOCTOR, _SurgeryViewRole.NURSE,
+)
+@_surgery_active_staff
+def get_surgery_case_documentation_read_route(surgical_case_id: int):
+    try:
+        data = _surgery_case_read(
+            actor_user_id=_current_user_id(),
+            clinic_id=_surgery_clinic_id(required=True),
+            case_id=surgical_case_id,
+        )
+        return jsonify({'success': True, 'data': data}), 200
+    except DomainError as exc:
+        return _domain_error_response(exc)

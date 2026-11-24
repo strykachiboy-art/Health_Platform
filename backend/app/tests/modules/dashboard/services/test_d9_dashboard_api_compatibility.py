@@ -364,6 +364,7 @@ def test_clinical_schema_is_backward_compatible_and_hospital_is_additive():
         | {
             "hospital",
             "my_patients",
+            "surgery",
         }
     )
 
@@ -394,6 +395,7 @@ def test_management_schema_is_backward_compatible_and_hospital_is_additive():
         MANAGEMENT_LEGACY_FIELDS
         | {
             "hospital",
+            "surgery",
         }
     )
 
@@ -410,6 +412,7 @@ def test_operations_schema_is_backward_compatible_and_capacity_is_additive():
         OPERATIONS_LEGACY_FIELDS
         | {
             "hospital_capacity",
+            "surgery",
         }
     )
 

@@ -744,3 +744,13 @@ def get_nursing_note_amendments_route(note_id: int):
         ],
         "total": len(rows),
     }), 200
+
+# CT1C: register admission-scoped care-team integration on existing nursing API.
+from app.modules.nursing.routes.care_team_routes import register_care_team_routes
+
+register_care_team_routes(
+    nursing_bp,
+    current_user=_current_user,
+    current_clinic_id=_current_clinic_id,
+    request_json=_request_json,
+)

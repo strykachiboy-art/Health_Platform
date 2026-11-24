@@ -112,7 +112,7 @@ def _get_active_user(
     return actor
 
 
-def get_dashboard(
+def _dispatch_dashboard(
     *,
     actor_id: int,
     query: DashboardQuerySchema | None = None,
@@ -161,3 +161,17 @@ def get_dashboard(
         f"No dashboard is configured for role "
         f"'{actor.role.value}'"
     )
+
+# CE1-S11V2: preserve the original six-role dispatcher and enrich its
+# validated output with a least-privilege Surgery read model.
+def get_dashboard(
+    *,
+    actor_id: int,
+    query: DashboardQuerySchema | None = None,
+) -> DashboardResponse:
+    actor = _get_active_user(actor_id)
+    result = _dispatch_dashboard(actor_id=actor_id, query=query)
+    from app.modules.dashboard.services.surgery_dashboard_widget_service import (
+        add_surgery_to_existing_dashboard,
+    )
+    return add_surgery_to_existing_dashboard(result, actor)

@@ -1,0 +1,26 @@
+{
+  "Name": "CSP-RAD3-SYNTHETIC-PACS",
+  "HttpServerEnabled": true,
+  "HttpPort": 8042,
+  "RemoteAccessAllowed": true,
+  "AuthenticationEnabled": true,
+  "DicomServerEnabled": true,
+  "DicomPort": 4242,
+  "DicomAet": "RAD3PACS",
+  "DicomCheckModalityHost": false,
+  "DicomAlwaysAllowStore": false,
+  "DicomAlwaysAllowFind": false,
+  "DicomAlwaysAllowMove": false,
+  "OverwriteInstances": false,
+  "StorageDirectory": "/var/lib/orthanc/db",
+  "MaximumStorageSize": 128,
+  "DicomWeb": {"Enable": true, "Root": "/dicom-web/"},
+  "Worklists": {
+    "Enable": true,
+    "SaveInOrthancDatabase": true,
+    "SetStudyInstanceUidIfMissing": false,
+    "DeleteWorklistsOnStableStudy": false,
+    "DeleteWorklistsDelay": 0,
+    "FilterIssuerAet": false
+  }
+}

@@ -92,6 +92,7 @@ from app.modules.nursing.models.nursing_model import (
     NursingNote,
     NursingHandoff,
 )
+from app.modules.nursing.models.admission_care_assignment_model import AdmissionCareAssignment
 
 # Clinical Orders
 from app.modules.clinical_orders.models.imaging_order_model import (
@@ -109,6 +110,54 @@ from app.modules.clinical_orders.models.diet_order_model import (
 from app.modules.clinical_orders.models.nursing_order_model import (
     NursingOrder,
     NursingOrderExecution,
+)
+
+# Radiology RIS - inert domain records (no final signing or PACS)
+from app.modules.radiology.models.ris_model import (
+    RadiologyExam, RadiologyScheduledStep, RadiologyReport,
+    RadiologyReportVersion, RadiologyStudyAssociation,
+)
+
+# Surgery
+from app.modules.surgery.models.surgical_case_model import SurgicalCase
+from app.modules.surgery.models.theatre_model import (
+    OperatingTheatre,
+    TheatreBooking,
+)
+from app.modules.surgery.models.surgical_authorization_model import (
+    SurgicalProfessionalPrivilege,
+    SurgicalConsentEvidence,
+)
+
+from app.modules.surgery.models.surgical_checklist_model import SurgicalSafetyChecklistAttestation
+
+from app.modules.surgery.models.anesthesia_model import (
+    AnesthesiaPreoperativeAssessment,
+    AnesthesiaBaselineObservation,
+)
+
+from app.modules.surgery.models.intraoperative_evidence_model import (
+    SurgicalEvidenceJournal,
+    SurgicalEvidenceEvent,
+    SurgicalInstrumentCount,
+)
+
+from app.modules.surgery.models.surgical_material_trace_model import (
+    SurgicalMaterialTrace,
+)
+
+from app.modules.surgery.models.pacu_preparation_model import (
+    SurgicalPacuPreparation,
+    SurgicalPacuObservation,
+)
+
+from app.modules.surgery.models.operative_report_model import (
+    SurgicalOperativeReport,
+    SurgicalOperativeSignature,
+)
+
+from app.modules.surgery.models.surgical_clinical_reference_model import (
+    SurgicalClinicalReference,
 )
 
 # Medication Reconciliation
@@ -164,6 +213,12 @@ from app.modules.settings.models.integration_config import IntegrationConfig
 # Google Auth
 from app.core.auth.user.models.user_auth_identity_model import UserAuthIdentity
 
+# SA-SEC-01: inert MFA schema; no provider registration or migration
+from app.core.auth.user.models.super_admin_mfa_model import (
+    SuperAdminMfaEnrollment,
+    SuperAdminMfaRecoveryCode,
+)
+
 # User Device
 from app.core.auth.user.models.user_device_model import UserDevice
 
@@ -175,6 +230,8 @@ from app.modules.asset_control.models.asset_maintenance_model import AssetMainte
 
 # Chat
 from app.modules.chat.models.conversation_model import Conversation
+from app.modules.chat.models.admission_case_conversation_model import AdmissionCaseConversation
+from app.modules.chat.models.admission_case_chat_sync_request_model import AdmissionCaseChatSyncRequest
 from app.modules.chat.models.conversation_participant_model import (
     ConversationParticipant,
 )
@@ -285,6 +342,7 @@ __all__ = [
     "NursingCareTask",
     "NursingNote",
     "NursingHandoff",
+    "AdmissionCareAssignment",
 
     # Clinical Orders
     "ImagingOrder",
@@ -294,6 +352,25 @@ __all__ = [
     "NursingOrder",
     "NursingOrderExecution",
 
+    # Surgery
+    "SurgicalCase",
+    "OperatingTheatre",
+    "TheatreBooking",
+    "SurgicalProfessionalPrivilege",
+    "SurgicalConsentEvidence",
+
+    "SurgicalSafetyChecklistAttestation",
+    "AnesthesiaPreoperativeAssessment",
+    "AnesthesiaBaselineObservation",
+    "SurgicalEvidenceJournal",
+    "SurgicalEvidenceEvent",
+    "SurgicalInstrumentCount",
+    "SurgicalMaterialTrace",
+    "SurgicalPacuPreparation",
+    "SurgicalPacuObservation",
+    "SurgicalOperativeReport",
+    "SurgicalOperativeSignature",
+    "SurgicalClinicalReference",
     # Medication Reconciliation
     "MedicationReconciliation",
     "MedicationReconciliationItem",
@@ -332,6 +409,8 @@ __all__ = [
 
     # Authentication
     "UserAuthIdentity",
+    "SuperAdminMfaEnrollment",
+    "SuperAdminMfaRecoveryCode",
 
     # User Devices
     "UserDevice",
@@ -353,6 +432,8 @@ __all__ = [
 
     # Chat
     "Conversation",
+    "AdmissionCaseConversation",
+    "AdmissionCaseChatSyncRequest",
     "ConversationParticipant",
     "Message",
     "MessageAttachment",
