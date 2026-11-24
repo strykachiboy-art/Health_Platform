@@ -63,6 +63,13 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
             'Read users and explicitly manage backend-authorized access',
         icon: Icons.admin_panel_settings_outlined,
       ),
+      const Wd05AdministrationLink(
+        id: 'clinics',
+        title: 'Root clinic registry',
+        path: '/administration/clinics',
+        description: 'Super Admin clinic list and gated root creation',
+        icon: Icons.local_hospital_outlined,
+      ),
     ];
     if (selected) {
       links.addAll(const <Wd05AdministrationLink>[

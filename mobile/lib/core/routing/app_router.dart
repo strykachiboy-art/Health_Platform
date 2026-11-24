@@ -13,6 +13,8 @@ import 'package:clinic_system_pro/features/profile/presentation/account_clinic_s
 import 'package:clinic_system_pro/features/home/presentation/authenticated_home_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workflow_hub.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_hub.dart';
+import 'package:clinic_system_pro/features/administration/data/wd13_clinic_management_remote_data_source.dart';
+import 'package:clinic_system_pro/features/administration/presentation/wd13_clinic_management_screen.dart';
 import 'package:clinic_system_pro/features/coordination/presentation/wd06_coordination_hub.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_read_screen.dart';
 import 'package:clinic_system_pro/features/administration/data/wd05_administration_read_remote_data_source.dart';
@@ -398,6 +400,7 @@ GoRouter createAppRouter({
           connectivity: ConnectivityPlusDeviceConnectivitySource(),
         )
       : null;
+  final wd13RootClinicAttemptGate = Wd13RootClinicAttemptGate();
   return GoRouter(
     initialLocation: '/login',
     refreshListenable: sessionNavigationGuard,
@@ -1004,6 +1007,31 @@ GoRouter createAppRouter({
                     deviceRegistrationConnectivitySource ??
                     ConnectivityPlusDeviceConnectivitySource(),
                 onOpen: (path) => context.push<void>(path),
+              );
+            },
+          ),
+          // WD13 system-level clinic registry: Flask remains authoritative.
+          // Root POST is compile-time locked until entitlement enforcement.
+          GoRoute(
+            path: '/administration/clinics',
+            name: 'wd13-superadmin-root-clinics',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final dashboard = dashboardDataSource;
+              if (guard == null || dashboard == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  !identical(dashboard.sessionNavigationGuard, guard)) {
+                return const Scaffold(
+                  body: Center(child: Text('Clinic registry unavailable.')),
+                );
+              }
+              return Wd13ClinicManagementScreen(
+                source: Wd13ClinicManagementRemoteDataSource(
+                  apiClient: dashboard.apiClient,
+                  loadSession: dashboard.loadSession,
+                  sessionNavigationGuard: guard,
+                  createGate: wd13RootClinicAttemptGate,
+                ),
               );
             },
           ),

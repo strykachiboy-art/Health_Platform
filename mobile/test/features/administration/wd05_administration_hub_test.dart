@@ -107,12 +107,14 @@ void main() {
       'account',
       'audit',
       'users',
+      'clinics',
     ]);
     expect(_ids('super_admin', clinic: 7), <String>[
       'dashboard',
       'account',
       'audit',
       'users',
+      'clinics',
       'staff',
       'departments',
       'operations',
@@ -286,6 +288,7 @@ void main() {
         '/administration/settings',
         '/administration/audit-logs',
         '/administration/users',
+        '/administration/clinics',
       ]) {
         router.go(path);
         await tester.pumpAndSettle();
