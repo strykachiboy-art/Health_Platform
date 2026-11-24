@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import time
+from flask import current_app
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select, update
@@ -20,6 +21,7 @@ from app.core.exceptions import (
 from app.core.utils.decorators import transactional
 from app.extensions import celery, db
 from app.modules.clinic.models.clinic_model import Clinic
+from app.modules.clinic.services.clinic_operating_modes import normalize_explicit_operating_mode
 
 
 # =====================================================================
@@ -159,6 +161,19 @@ def _validate_operating_hours(
         raise ValidationError(
             "Opening time must be earlier than closing time"
         )
+
+
+def _resolve_operating_hours(opening_time, closing_time, operating_mode):
+    if operating_mode is None:
+        # Preserve the exact legacy behavior, including optional one-sided times.
+        _validate_operating_hours(opening_time, closing_time)
+        return opening_time, closing_time
+    if current_app.config.get("CLINIC_EXTENDED_OPERATING_HOURS_ENABLED", False) is not True:
+        raise ValidationError("Extended clinic operating hours are not enabled")
+    try:
+        return normalize_explicit_operating_mode(opening_time, closing_time, operating_mode)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
 
 
 def _validate_timezone(
@@ -395,6 +410,7 @@ def create_clinic(
     timezone: str = "UTC",
     opening_time=None,
     closing_time=None,
+    operating_mode=None,
 ) -> Clinic:
     name = _validate_name(name)
 
@@ -420,9 +436,8 @@ def create_clinic(
         timezone
     )
 
-    _validate_operating_hours(
-        opening_time,
-        closing_time,
+    opening_time, closing_time = _resolve_operating_hours(
+        opening_time, closing_time, operating_mode,
     )
 
     if (
@@ -518,6 +533,7 @@ def create_branch(
     timezone: str = "UTC",
     opening_time=None,
     closing_time=None,
+    operating_mode=None,
 ) -> Clinic:
     parent_clinic_id = _validate_positive_id(
         parent_clinic_id,
@@ -543,9 +559,8 @@ def create_branch(
         timezone
     )
 
-    _validate_operating_hours(
-        opening_time,
-        closing_time,
+    opening_time, closing_time = _resolve_operating_hours(
+        opening_time, closing_time, operating_mode,
     )
 
     _check_name_conflict(
@@ -625,6 +640,7 @@ def update_clinic(
         "timezone",
         "opening_time",
         "closing_time",
+        "operating_mode",
     }
 
     unknown_fields = set(fields) - allowed_fields
@@ -639,6 +655,17 @@ def update_clinic(
 
     if not fields:
         return clinic
+
+    # Mode changes are normalized to the same existing two time columns.
+    operating_mode = fields.pop("operating_mode", None)
+    if operating_mode is not None:
+        opening, closing = _resolve_operating_hours(
+            fields.get("opening_time"),
+            fields.get("closing_time"),
+            operating_mode,
+        )
+        fields["opening_time"] = opening
+        fields["closing_time"] = closing
 
     if "name" in fields:
         fields["name"] = _validate_name(
@@ -679,10 +706,8 @@ def update_clinic(
         clinic.closing_time,
     )
 
-    _validate_operating_hours(
-        opening_time,
-        closing_time,
-    )
+    if operating_mode is None:
+        _validate_operating_hours(opening_time, closing_time)
 
     if (
         "name" in fields

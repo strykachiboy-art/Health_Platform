@@ -28,9 +28,10 @@ class Clinic(db.Model):
             name="ck_clinics_ai_requests_non_negative",
         ),
         db.CheckConstraint(
-            "opening_time IS NULL "
-            "OR closing_time IS NULL "
-            "OR opening_time < closing_time",
+            "opening_time IS NULL OR closing_time IS NULL "
+            "OR opening_time <> closing_time "
+            "OR (CAST(opening_time AS VARCHAR) IN ('00:00:00', '00:00:00.000000') "
+            "AND CAST(closing_time AS VARCHAR) IN ('00:00:00', '00:00:00.000000'))",
             name="ck_clinics_valid_opening_hours",
         ),
     )

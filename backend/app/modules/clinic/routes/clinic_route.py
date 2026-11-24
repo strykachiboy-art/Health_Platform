@@ -1,4 +1,4 @@
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from pydantic import ValidationError as PydanticValidationError
 
@@ -22,6 +22,7 @@ from app.modules.clinic.schemas.clinic_schema import (
     ClinicUpdateSchema,
 )
 
+from app.modules.clinic.services.clinic_operating_modes import describe_operating_mode
 from app.modules.clinic.services.clinic_service import (
     add_ai_credits,
     change_status,
@@ -86,7 +87,7 @@ def _serialize_clinic(clinic):
     Serialize a clinic without exposing sensitive internal fields.
     """
 
-    return {
+    record = {
         "id": clinic.id,
         "name": clinic.name,
         "clinic_type": clinic.clinic_type.value,
@@ -122,6 +123,11 @@ def _serialize_clinic(clinic):
             else None
         ),
     }
+    if current_app.config.get("CLINIC_EXTENDED_OPERATING_HOURS_ENABLED", False) is True:
+        record["operating_mode"] = describe_operating_mode(
+            clinic.opening_time, clinic.closing_time,
+        )
+    return record
 
 
 # ============================================================================
@@ -344,6 +350,7 @@ def create_clinic_route():
             timezone=payload.timezone,
             opening_time=payload.opening_time,
             closing_time=payload.closing_time,
+            operating_mode=payload.operating_mode,
         )
 
         return jsonify(
@@ -536,6 +543,7 @@ def create_clinic_branch_route(clinic_id: int):
             timezone=payload.timezone,
             opening_time=payload.opening_time,
             closing_time=payload.closing_time,
+            operating_mode=payload.operating_mode,
         )
 
         return jsonify(

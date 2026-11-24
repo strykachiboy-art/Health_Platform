@@ -1,5 +1,5 @@
 from datetime import time
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import (
     BaseModel,
@@ -11,6 +11,7 @@ from pydantic import (
 )
 
 from app.core.enums.clinic_enums import ClinicStatus, ClinicType
+from app.modules.clinic.services.clinic_operating_modes import normalize_explicit_operating_mode
 
 
 class ClinicCreateSchema(BaseModel):
@@ -84,9 +85,16 @@ class ClinicCreateSchema(BaseModel):
         description="Clinic closing time",
     )
 
+    # Explicit mode is optional so existing clients retain their old contract.
+    operating_mode: Optional[Literal["unspecified", "always_open", "scheduled"]] = None
+
     @model_validator(mode="after")
     def validate_opening_hours(self):
-        if (
+        if self.operating_mode is not None:
+            normalize_explicit_operating_mode(
+                self.opening_time, self.closing_time, self.operating_mode,
+            )
+        elif (
             self.opening_time is not None
             and self.closing_time is not None
             and self.opening_time >= self.closing_time
@@ -162,9 +170,16 @@ class ClinicBranchCreateSchema(BaseModel):
         description="Branch closing time",
     )
 
+    # Explicit mode is optional so existing clients retain their old contract.
+    operating_mode: Optional[Literal["unspecified", "always_open", "scheduled"]] = None
+
     @model_validator(mode="after")
     def validate_opening_hours(self):
-        if (
+        if self.operating_mode is not None:
+            normalize_explicit_operating_mode(
+                self.opening_time, self.closing_time, self.operating_mode,
+            )
+        elif (
             self.opening_time is not None
             and self.closing_time is not None
             and self.opening_time >= self.closing_time
@@ -240,9 +255,16 @@ class ClinicUpdateSchema(BaseModel):
         description="Updated clinic closing time",
     )
 
+    # Explicit mode is optional so existing clients retain their old contract.
+    operating_mode: Optional[Literal["unspecified", "always_open", "scheduled"]] = None
+
     @model_validator(mode="after")
     def validate_opening_hours(self):
-        if (
+        if self.operating_mode is not None:
+            normalize_explicit_operating_mode(
+                self.opening_time, self.closing_time, self.operating_mode,
+            )
+        elif (
             self.opening_time is not None
             and self.closing_time is not None
             and self.opening_time >= self.closing_time
