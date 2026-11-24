@@ -400,6 +400,11 @@ class Config:
     # HIE Endpoint Policy
     # ------------------------------------------------------------------
     # Comma-separated operator-approved DNS hostnames. Empty fails closed.
+    # No approved partner adapter exists at this checkpoint. This hold is not
+    # an environment switch. The synthetic testing profile alone can exercise
+    # the preserved legacy provider contract.
+    HIE_PARTNER_RELEASE_HOLD = True
+
     HIE_ALLOWED_ENDPOINT_HOSTS = os.environ.get(
         "HIE_ALLOWED_ENDPOINT_HOSTS",
         "",
@@ -486,6 +491,11 @@ class ProductionConfig(Config):
 
 class TestingConfig(Config):
     TESTING = True
+
+    # Existing deterministic provider tests exercise the original contract.
+    # New readiness tests explicitly set the hold to True. Never a production
+    # activation path: the runtime hold also checks Flask's testing profile.
+    HIE_PARTNER_RELEASE_HOLD = False
 
     # Synthetic destinations for deterministic outbound-policy tests only.
     SMTP_ALLOWED_HOSTS = ("smtp.example.com",)
