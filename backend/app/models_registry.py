@@ -118,6 +118,7 @@ from app.modules.clinical_orders.models.nursing_order_model import (
 from app.modules.radiology.models.ris_model import (
     RadiologyExam, RadiologyScheduledStep, RadiologyReport,
     RadiologyReportVersion, RadiologyStudyAssociation,
+    RadiologyDicomIdentity, RadiologyWorklistPublication, RadiologyInterpretationGrant,
 )
 
 # Surgery

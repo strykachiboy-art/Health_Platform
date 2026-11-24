@@ -160,3 +160,29 @@ def private_history(exam_id):
     clinic_id, staff_id = _actor()
     return _ok(ris.get_draft_history(exam_id=exam_id,
         clinic_id=clinic_id, actor_staff_id=staff_id))
+
+@radiology_bp.get('/exams/<int:exam_id>/clinical-worklist')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def clinical_worklist_status(exam_id):
+    from app.modules.radiology.services import radc_worklist_service as clinical
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    clinic_id, staff_id = _actor()
+    return _ok(clinical.get_publication(exam_id=exam_id, clinic_id=clinic_id, actor_staff_id=staff_id))
+
+
+@radiology_bp.post('/exams/<int:exam_id>/clinical-worklist')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def clinical_worklist_publish(exam_id):
+    from app.modules.radiology.services import radc_worklist_service as clinical
+    from app.modules.radiology.schemas.ris_schema import _Strict, Positive
+    class _Publish(_Strict):
+        expected_version: Positive
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    clinic_id, staff_id = _actor()
+    dto = _body(_Publish)
+    return _ok(clinical.publish(exam_id=exam_id, clinic_id=clinic_id,
+        actor_staff_id=staff_id, expected_version=dto.expected_version))

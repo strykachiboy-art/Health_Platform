@@ -103,3 +103,58 @@ class RadiologyStudyAssociation(db.Model):
     source = db.Column(db.String(64), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
     # No writer/HTTP ingestion in RAD1. No archive_status='archived' field.
+
+class RadiologyDicomIdentity(db.Model):
+    """Durable local identity; never an archive verification receipt."""
+    __tablename__ = 'radiology_dicom_identities'
+    __table_args__ = (
+        db.UniqueConstraint('issuer_namespace', 'dicom_accession', name='uq_radc_issuer_accession'),
+        db.UniqueConstraint('study_instance_uid', name='uq_radc_allocated_study_uid'),
+        db.CheckConstraint('length(dicom_accession) BETWEEN 1 AND 16', name='ck_radc_accession_length'),
+        db.CheckConstraint('length(study_instance_uid) BETWEEN 1 AND 64', name='ck_radc_study_uid_length'),
+    )
+    exam_id = db.Column(db.Integer, db.ForeignKey('radiology_exams.id'), primary_key=True)
+    issuer_namespace = db.Column(db.String(64), nullable=False)
+    dicom_accession = db.Column(db.String(16), nullable=False)
+    patient_id = db.Column(db.Integer, db.ForeignKey('patients.id'), nullable=False)
+    patient_issuer = db.Column(db.String(64), nullable=False)
+    study_instance_uid = db.Column(db.String(64), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+
+class RadiologyWorklistPublication(db.Model):
+    """Append-only RIS publication intent, not external delivery evidence."""
+    __tablename__ = 'radiology_worklist_publications'
+    __table_args__ = (
+        db.UniqueConstraint('exam_id', 'exam_version', name='uq_radc_worklist_version'),
+        db.UniqueConstraint('step_id', name='uq_radc_worklist_step'),
+        db.CheckConstraint('exam_version >= 2 AND order_version >= 1', name='ck_radc_worklist_version'),
+        db.CheckConstraint('length(payload_sha256) = 64', name='ck_radc_worklist_digest'),
+    )
+    id = db.Column(db.Integer, primary_key=True)
+    exam_id = db.Column(db.Integer, db.ForeignKey('radiology_dicom_identities.exam_id'), nullable=False)
+    exam_version = db.Column(db.Integer, nullable=False)
+    order_version = db.Column(db.Integer, nullable=False)
+    step_id = db.Column(db.Integer, db.ForeignKey('radiology_scheduled_steps.id'), nullable=False)
+    payload = db.Column(db.JSON, nullable=False)
+    payload_sha256 = db.Column(db.String(64), nullable=False)
+    published_by_staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+
+
+class RadiologyInterpretationGrant(db.Model):
+    """Exam-specific credential approval; no self-service or HTTP grant writer."""
+    __tablename__ = 'radiology_interpretation_grants'
+    __table_args__ = (
+        db.CheckConstraint('expires_at > approved_at', name='ck_radc_grant_interval'),
+        db.CheckConstraint('revoked_at IS NULL OR revoked_at >= approved_at', name='ck_radc_grant_revocation'),
+        db.CheckConstraint('length(credential_reference) BETWEEN 1 AND 128', name='ck_radc_grant_reference'),
+    )
+    exam_id = db.Column(db.Integer, db.ForeignKey('radiology_exams.id'), primary_key=True)
+    staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), primary_key=True)
+    clinic_id = db.Column(db.Integer, db.ForeignKey('clinics.id'), nullable=False)
+    modality = db.Column(db.String(32), nullable=False)
+    credential_reference = db.Column(db.String(128), nullable=False)
+    approved_at = db.Column(db.DateTime, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    revoked_at = db.Column(db.DateTime, nullable=True)
