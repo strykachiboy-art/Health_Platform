@@ -29,6 +29,7 @@ class Wd13Clinic {
     this.email,
     this.openingTime,
     this.closingTime,
+    this.operatingMode,
   });
 
   final int id;
@@ -45,6 +46,15 @@ class Wd13Clinic {
   final String? email;
   final String? openingTime;
   final String? closingTime;
+
+  /// Absent on older backends or while extended hours are disabled.
+  final String? operatingMode;
+
+  static const operatingModes = <String>{
+    'unspecified',
+    'always_open',
+    'scheduled',
+  };
 
   static const types = <String>{
     'general',
@@ -79,6 +89,11 @@ class Wd13Clinic {
     final status = _requiredString(raw, 'status');
     final parent = raw['parent_clinic_id'];
     final hq = raw['is_headquarters'];
+    final rawMode = raw['operating_mode'];
+    if (rawMode != null &&
+        (rawMode is! String || !operatingModes.contains(rawMode))) {
+      throw const FormatException('Invalid clinic operating mode.');
+    }
     if (id is! int ||
         id <= 0 ||
         id > 2147483647 ||
@@ -105,6 +120,7 @@ class Wd13Clinic {
       email: _optionalString(raw, 'email'),
       openingTime: _optionalString(raw, 'opening_time'),
       closingTime: _optionalString(raw, 'closing_time'),
+      operatingMode: rawMode as String?,
     );
   }
 }
@@ -122,6 +138,7 @@ class Wd13RootClinicDraft {
     this.email = '',
     this.openingTime = '',
     this.closingTime = '',
+    this.operatingMode,
   });
 
   final String name;
@@ -135,6 +152,9 @@ class Wd13RootClinicDraft {
   final String email;
   final String openingTime;
   final String closingTime;
+
+  /// Null preserves the legacy create contract until backend rollout approval.
+  final String? operatingMode;
 
   static String _trimmed(
     String value,
@@ -178,9 +198,27 @@ class Wd13RootClinicDraft {
     }
     final opening = _time(openingTime);
     final closing = _time(closingTime);
-    if (opening != null && closing != null && opening.compareTo(closing) >= 0) {
+    final mode = operatingMode;
+    if (mode == null) {
+      // Old API behavior remains exactly as before while rollout is disabled.
+      if (opening != null &&
+          closing != null &&
+          opening.compareTo(closing) >= 0) {
+        throw const FormatException(
+          'Opening time must be earlier than closing time.',
+        );
+      }
+    } else if (!Wd13Clinic.operatingModes.contains(mode)) {
+      throw const FormatException('Invalid clinic operating mode.');
+    } else if (mode == 'scheduled') {
+      if (opening == null || closing == null || opening == closing) {
+        throw const FormatException(
+          'Scheduled hours require distinct opening and closing times.',
+        );
+      }
+    } else if (opening != null || closing != null) {
       throw const FormatException(
-        'Opening time must be earlier than closing time.',
+        '24/7 or unspecified mode cannot include hours.',
       );
     }
     final data = <String, dynamic>{
@@ -202,6 +240,7 @@ class Wd13RootClinicDraft {
     }
     if (opening != null) data['opening_time'] = opening;
     if (closing != null) data['closing_time'] = closing;
+    if (mode != null) data['operating_mode'] = mode;
     return data;
   }
 }
@@ -337,7 +376,9 @@ class Wd13ClinicManagementRemoteDataSource {
     if (clinic.name != name ||
         clinic.type != draft.type ||
         clinic.parentId != null ||
-        clinic.headquarters != draft.headquarters) {
+        clinic.headquarters != draft.headquarters ||
+        (draft.operatingMode != null &&
+            clinic.operatingMode != draft.operatingMode)) {
       throw const FormatException('Clinic creation receipt mismatch.');
     }
     return clinic;

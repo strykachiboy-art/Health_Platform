@@ -13,10 +13,16 @@ class Wd13ClinicManagementScreen extends StatefulWidget {
     this.allowUnmeteredStagingCreation = const bool.fromEnvironment(
       'WD13_ALLOW_UNMETERED_STAGING_CREATION',
     ),
+    this.allowExtendedOperatingHours = const bool.fromEnvironment(
+      'CLINIC_HOURS_01_STAGING_UI',
+    ),
   });
 
   final Wd13ClinicManagementRemoteDataSource source;
   final bool allowUnmeteredStagingCreation;
+
+  /// Staged-off independently of the server's own migration/feature gate.
+  final bool allowExtendedOperatingHours;
 
   @override
   State<Wd13ClinicManagementScreen> createState() =>
@@ -51,6 +57,7 @@ class _Wd13ClinicManagementScreenState
   bool _creating = false;
   bool _headquarters = false;
   String _type = 'general';
+  String? _operatingMode;
   String _filter = 'all';
   int _generation = 0;
 
@@ -71,6 +78,7 @@ class _Wd13ClinicManagementScreenState
       _clinics = null;
       _detail = null;
       _receipt = null;
+      _operatingMode = null;
       unawaited(_load());
     }
   }
@@ -98,6 +106,7 @@ class _Wd13ClinicManagementScreenState
       _clinics = null;
       _detail = null;
       _receipt = null;
+      _operatingMode = null;
       _loading = false;
       _creating = false;
       _error = 'Session context changed. Reopen with a verified Super Admin session.';
@@ -147,6 +156,7 @@ class _Wd13ClinicManagementScreenState
       setState(() {
         _clinics = result;
         _loading = false;
+        if (!_advancedHoursAvailable) _operatingMode = null;
       });
     } on Object catch (failure) {
       if (!_current(generation, revision)) return;
@@ -174,6 +184,14 @@ class _Wd13ClinicManagementScreenState
     }
   }
 
+  // Mode metadata is advertised only by an enabled backend. Both gates must
+  // pass; an empty list cannot establish server capability and stays legacy.
+  bool get _advancedHoursAvailable =>
+      widget.allowExtendedOperatingHours &&
+      _clinics != null &&
+      _clinics!.isNotEmpty &&
+      _clinics!.every((clinic) => clinic.operatingMode != null);
+
   Wd13RootClinicDraft _draft() => Wd13RootClinicDraft(
     name: _fields['name']!.text,
     type: _type,
@@ -184,8 +202,17 @@ class _Wd13ClinicManagementScreenState
     country: _fields['country']!.text,
     phone: _fields['phone']!.text,
     email: _fields['email']!.text,
-    openingTime: _fields['opening_time']!.text,
-    closingTime: _fields['closing_time']!.text,
+    openingTime:
+        _advancedHoursAvailable &&
+            (_operatingMode == 'always_open' || _operatingMode == 'unspecified')
+        ? ''
+        : _fields['opening_time']!.text,
+    closingTime:
+        _advancedHoursAvailable &&
+            (_operatingMode == 'always_open' || _operatingMode == 'unspecified')
+        ? ''
+        : _fields['closing_time']!.text,
+    operatingMode: _advancedHoursAvailable ? _operatingMode : null,
   );
 
   Future<void> _create() async {
@@ -387,8 +414,12 @@ class _Wd13ClinicManagementScreenState
               'Contact: ${_detail!.phone ?? '—'} · ${_detail!.email ?? '—'}',
             ),
             Text(
-              'Hours: ${_detail!.openingTime ?? '—'} - '
-              '${_detail!.closingTime ?? '—'}',
+              _detail!.operatingMode == 'always_open'
+                  ? 'Hours: Open 24/7'
+                  : _detail!.operatingMode == 'unspecified'
+                  ? 'Hours: Not configured'
+                  : 'Hours: ${_detail!.openingTime ?? '—'} - '
+                        '${_detail!.closingTime ?? '—'}',
             ),
           ],
           const Divider(height: 35),
@@ -455,9 +486,56 @@ class _Wd13ClinicManagementScreenState
           const SizedBox(height: 10),
           _field('timezone', 'IANA timezone (required)'),
           const SizedBox(height: 10),
-          _field('opening_time', 'Opening time HH:mm (optional)'),
-          const SizedBox(height: 10),
-          _field('closing_time', 'Closing time HH:mm (optional)'),
+          if (_advancedHoursAvailable) ...[
+            DropdownButton<String>(
+              key: const ValueKey('clinic-hours-01-mode-selector'),
+              value: _operatingMode ?? 'legacy',
+              items: const [
+                DropdownMenuItem(
+                  value: 'legacy',
+                  child: Text('Legacy operating hours'),
+                ),
+                DropdownMenuItem(
+                  value: 'unspecified',
+                  child: Text('Hours not configured'),
+                ),
+                DropdownMenuItem(
+                  value: 'always_open',
+                  child: Text('Open 24/7'),
+                ),
+                DropdownMenuItem(
+                  value: 'scheduled',
+                  child: Text('Scheduled / overnight'),
+                ),
+              ],
+              onChanged: _creating
+                  ? null
+                  : (value) => setState(() {
+                      _operatingMode = value == 'legacy' ? null : value;
+                      if (_operatingMode == 'always_open' ||
+                          _operatingMode == 'unspecified') {
+                        _fields['opening_time']!.clear();
+                        _fields['closing_time']!.clear();
+                      }
+                    }),
+            ),
+            const Text(
+              'Clinic hours describe routine availability; they never disable '
+              'login, emergency care, or overnight staff access.',
+              key: ValueKey('clinic-hours-01-availability-note'),
+            ),
+            const SizedBox(height: 10),
+          ] else
+            const Text(
+              'Extended clinic hours are not enabled. Legacy hours remain available.',
+              key: ValueKey('clinic-hours-01-staged-off'),
+            ),
+          if (_operatingMode != 'always_open' &&
+              _operatingMode != 'unspecified') ...[
+            _field('opening_time', 'Opening time HH:mm (optional)'),
+            const SizedBox(height: 10),
+            _field('closing_time', 'Closing time HH:mm (optional)'),
+          ],
           const SizedBox(height: 14),
           FilledButton(
             key: const ValueKey('wd13-create-root-clinic'),
