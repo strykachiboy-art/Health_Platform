@@ -421,6 +421,11 @@ class _Wd13ClinicManagementScreenState
                   : 'Hours: ${_detail!.openingTime ?? '—'} - '
                         '${_detail!.closingTime ?? '—'}',
             ),
+            if (_detail!.hoursStatus != null)
+              Text(
+                _detail!.hoursStatus!.summary,
+                key: const ValueKey('clinic-hours-02-registry-status'),
+              ),
           ],
           const Divider(height: 35),
           Text(

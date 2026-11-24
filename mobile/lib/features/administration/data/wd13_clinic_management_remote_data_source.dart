@@ -1,3 +1,4 @@
+import 'package:clinic_system_pro/core/models/clinic_hours_status.dart';
 import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
@@ -30,6 +31,7 @@ class Wd13Clinic {
     this.openingTime,
     this.closingTime,
     this.operatingMode,
+    this.hoursStatus,
   });
 
   final int id;
@@ -49,6 +51,7 @@ class Wd13Clinic {
 
   /// Absent on older backends or while extended hours are disabled.
   final String? operatingMode;
+  final ClinicHoursStatus? hoursStatus;
 
   static const operatingModes = <String>{
     'unspecified',
@@ -121,6 +124,7 @@ class Wd13Clinic {
       openingTime: _optionalString(raw, 'opening_time'),
       closingTime: _optionalString(raw, 'closing_time'),
       operatingMode: rawMode as String?,
+      hoursStatus: ClinicHoursStatus.fromJson(raw),
     );
   }
 }

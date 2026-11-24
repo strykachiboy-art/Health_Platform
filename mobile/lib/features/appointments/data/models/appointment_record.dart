@@ -28,6 +28,7 @@ class AppointmentRecord {
     required this.updatedAt,
     required this.cancelledAt,
     required this.cancellationReason,
+    this.clinicHoursConflict,
   });
 
   final int id;
@@ -46,6 +47,9 @@ class AppointmentRecord {
   final String? updatedAt;
   final String? cancelledAt;
   final String? cancellationReason;
+
+  /// Backend list metadata, not authorization. Null means unknown/not applicable.
+  final bool? clinicHoursConflict;
 
   factory AppointmentRecord.fromJson(
     Map<String, dynamic> json, {
@@ -71,7 +75,12 @@ class AppointmentRecord {
     if (reminder is! bool) {
       throw const FormatException('Invalid appointment reminder state.');
     }
+    final conflict = json['clinic_hours_conflict'];
+    if (conflict != null && conflict is! bool) {
+      throw const FormatException('Invalid clinic hours conflict state.');
+    }
     return AppointmentRecord(
+      clinicHoursConflict: conflict as bool?,
       id: _integer(json, 'id', 1),
       clinicId: clinicId,
       patientId: patientId,

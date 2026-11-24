@@ -302,6 +302,11 @@ class _AccountClinicScreenState extends State<AccountClinicScreen> {
                     'Assigned clinic: ${_profile?.assignedClinicName ?? 'Unavailable'}',
                     key: const ValueKey('p22-s05-profile-clinic'),
                   ),
+                  if (_profile?.clinicHoursStatus != null)
+                    Text(
+                      _profile!.clinicHoursStatus!.summary,
+                      key: const ValueKey('clinic-hours-02-profile-status'),
+                    ),
                 ] else ...[
                   const Text(
                     'The profile/me endpoint does not authorize super administrators. '

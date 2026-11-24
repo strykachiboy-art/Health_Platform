@@ -1,5 +1,6 @@
 // ignore_for_file: prefer_initializing_formals
 
+import 'package:clinic_system_pro/core/models/clinic_hours_status.dart';
 import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
@@ -13,6 +14,7 @@ class AuthenticatedProfile {
     this.staffName,
     this.assignedClinicId,
     this.assignedClinicName,
+    this.clinicHoursStatus,
   });
 
   final int userId;
@@ -20,6 +22,7 @@ class AuthenticatedProfile {
   final String? staffName;
   final int? assignedClinicId;
   final String? assignedClinicName;
+  final ClinicHoursStatus? clinicHoursStatus;
 
   factory AuthenticatedProfile.fromEnvelope(
     Map<String, dynamic> envelope, {
@@ -85,6 +88,9 @@ class AuthenticatedProfile {
       staffName: fullName.isEmpty ? null : fullName,
       assignedClinicId: assigned ?? userClinic,
       assignedClinicName: _safeOptionalText(clinicMap?['name']),
+      clinicHoursStatus: assigned == null || clinicMap == null
+          ? null
+          : ClinicHoursStatus.fromJson(clinicMap),
     );
   }
 

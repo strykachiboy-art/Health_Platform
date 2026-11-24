@@ -423,7 +423,8 @@ class _AppointmentListScreenState extends State<AppointmentListScreen> {
                 key: ValueKey('appointment-row-${record.id}'),
                 title: Text('Appointment #${record.id}'),
                 subtitle: Text(
-                  'Status: ${_appointmentStatusLabel(record.status)} | ${_type(record.appointmentType)}\nStart (backend): ${record.scheduledStart}',
+                  'Status: ${_appointmentStatusLabel(record.status)} | ${_type(record.appointmentType)}\nStart (backend): ${record.scheduledStart}'
+                  '${record.clinicHoursConflict == true ? '\nOutside configured clinic hours — review required' : ''}',
                 ),
                 isThreeLine: true,
                 trailing:
@@ -531,6 +532,11 @@ class _AppointmentDetailScreenState extends State<AppointmentDetailScreen> {
                 Text('Status: ${_appointmentStatusLabel(record.status)}'),
                 Text('Scheduled start (backend): ${record.scheduledStart}'),
                 Text('Scheduled end (backend): ${record.scheduledEnd}'),
+                if (record.clinicHoursConflict == true)
+                  const Text(
+                    'Outside configured clinic hours — review required. Existing appointment is unchanged.',
+                    key: ValueKey('clinic-hours-02-appointment-conflict'),
+                  ),
                 if (record.reason != null) Text('Reason: ${record.reason}'),
                 if (record.notes != null) Text('Notes: ${record.notes}'),
                 if (record.cancellationReason != null)
