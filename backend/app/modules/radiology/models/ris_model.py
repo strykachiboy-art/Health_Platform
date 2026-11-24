@@ -158,3 +158,24 @@ class RadiologyInterpretationGrant(db.Model):
     approved_at = db.Column(db.DateTime, nullable=False)
     expires_at = db.Column(db.DateTime, nullable=False)
     revoked_at = db.Column(db.DateTime, nullable=True)
+
+class RadiologyWorklistDelivery(db.Model):
+    """Staged external publication evidence, never image verification."""
+    __tablename__ = 'radiology_worklist_deliveries'
+    __table_args__ = (
+        db.UniqueConstraint('archive_key', 'external_id', name='uq_radc_delivery_external'),
+        db.CheckConstraint("state IN ('dispatch_pending','acknowledged','withdraw_pending','withdrawn')", name='ck_radc_delivery_state'),
+        db.CheckConstraint("state = 'dispatch_pending' OR external_id IS NOT NULL", name='ck_radc_delivery_identity'),
+        db.CheckConstraint("state = 'dispatch_pending' OR acknowledged_at IS NOT NULL", name='ck_radc_delivery_ack'),
+        db.CheckConstraint("(state = 'withdrawn' AND withdrawn_at IS NOT NULL) OR (state != 'withdrawn' AND withdrawn_at IS NULL)", name='ck_radc_delivery_withdrawal'),
+        db.CheckConstraint('length(payload_sha256) = 64', name='ck_radc_delivery_digest'),
+    )
+    publication_id = db.Column(db.Integer, db.ForeignKey('radiology_worklist_publications.id'), primary_key=True)
+    archive_key = db.Column(db.String(64), nullable=False)
+    external_id = db.Column(db.String(36), nullable=True)
+    payload_sha256 = db.Column(db.String(64), nullable=False)
+    state = db.Column(db.String(24), nullable=False)
+    actor_staff_id = db.Column(db.Integer, db.ForeignKey('staff.id'), nullable=False)
+    attempted_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
+    acknowledged_at = db.Column(db.DateTime, nullable=True)
+    withdrawn_at = db.Column(db.DateTime, nullable=True)
