@@ -146,6 +146,13 @@ def issue_auth_tokens(
             clinic_context_id
         ).id
 
+    # Central enforcement: no password, Google, refresh, or clinic-switch
+    # caller may mint a Super Admin token without valid MFA evidence.
+    from app.core.auth.user.services.super_admin_login_mfa_service import (
+        require_token_issuance_authority,
+    )
+    mfa_binding = require_token_issuance_authority(user)
+
     access_claims = {
         "role": user.role.value,
         "token_version": user.token_version,
@@ -154,6 +161,12 @@ def issue_auth_tokens(
     refresh_claims = {
         "token_version": user.token_version,
     }
+    if mfa_binding is not None:
+        access_claims["sa_mfa_verified"] = True
+        access_claims["sa_mfa_binding"] = mfa_binding
+        refresh_claims["role"] = Role.SUPER_ADMIN.value
+        refresh_claims["sa_mfa_verified"] = True
+        refresh_claims["sa_mfa_binding"] = mfa_binding
 
     if clinic_context_id is not None:
         access_claims["clinic_context_id"] = clinic_context_id
@@ -200,6 +213,13 @@ def authenticate_user(
         raise ValidationError(
             "This account has been deactivated"
         )
+
+    from app.core.auth.user.services.super_admin_login_mfa_service import (
+        maybe_start_login_challenge,
+    )
+    challenge = maybe_start_login_challenge(user)
+    if challenge is not None:
+        return challenge
 
     tokens = issue_auth_tokens(
         user

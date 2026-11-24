@@ -180,6 +180,32 @@ def login():
     ), 200
 
 
+@auth_bp.post("/mfa/complete")
+@limiter.limit(
+    lambda: current_app.config.get(
+        "AUTH_SUPER_ADMIN_LOGIN_MFA_COMPLETE_RATE_LIMIT", "5 per minute"
+    )
+)
+def complete_super_admin_login_mfa():
+    # A pre-MFA challenge is deliberately NOT a JWT. This endpoint cannot
+    # grant clinic-context access until second-factor verification succeeds.
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "Validation failed"}), 400
+    from app.core.auth.user.services.super_admin_login_mfa_service import (
+        complete_login_challenge,
+    )
+    try:
+        result = complete_login_challenge(
+            token=payload.get("challenge_token"),
+            factor=payload.get("factor"),
+        )
+    except DomainError as exc:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(exc)}), exc.status_code
+    return jsonify({"success": True, "data": result}), 200
+
+
 @auth_bp.post("/google/mobile")
 @limiter.limit(
     lambda: current_app.config.get(

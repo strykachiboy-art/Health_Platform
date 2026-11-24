@@ -204,4 +204,17 @@ def is_token_revoked(
     if user.token_version != token_version:
         return True
 
+    # Protect every jwt_required() route, including refresh, context switch,
+    # and restored sessions. Role promotion and MFA factor rotation invalidate
+    # older privileged credentials without trusting the Flutter client.
+    try:
+        from app.core.auth.user.services.super_admin_login_mfa_service import (
+            token_has_current_mfa_authority,
+        )
+        if not token_has_current_mfa_authority(user, jwt_payload):
+            return True
+    except Exception:
+        # Any provider/schema/policy failure must reject, not skip, MFA.
+        return True
+
     return False
