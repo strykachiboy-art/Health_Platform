@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, has_app_context, jsonify, request
 
 from flask_jwt_extended import get_jwt_identity
 
 from pydantic import ValidationError as PydanticValidationError
 
 from app.extensions import db
+from app.core.enums.appointment_enums import AppointmentStatus, AppointmentType
+from app.modules.clinic.models.clinic_model import Clinic
+from app.modules.clinic.services.clinic_operating_modes import appointment_within_hours
 
 from app.core.auth.user.models.user_model import User
 from app.core.enums.role_enums import Role
@@ -239,11 +242,28 @@ def _serialize_appointment(appointment):
 
 
 def _serialize_page(pagination):
+    items = [_serialize_appointment(item) for item in pagination.items]
+    if (has_app_context() and
+            current_app.config.get("CLINIC_EXTENDED_OPERATING_HOURS_ENABLED", False) is True):
+        # The existing list endpoints already resolve and authorize the effective clinic.
+        # Use only that clinic's schedule; never follow a client-supplied tenant ID.
+        clinic = db.session.get(Clinic, _current_clinic_id())
+        for appointment, record in zip(pagination.items, items):
+            conflict = None
+            if (clinic is not None and appointment.clinic_id == clinic.id
+                    and appointment.status in (AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED)
+                    and appointment.appointment_type != AppointmentType.EMERGENCY):
+                try:
+                    allowed = appointment_within_hours(
+                        clinic.opening_time, clinic.closing_time, clinic.timezone,
+                        appointment.scheduled_start, appointment.scheduled_end,
+                    )
+                    conflict = None if allowed is None else not allowed
+                except (ValueError, OverflowError):
+                    pass  # Invalid legacy timezone/interval is unknown, never an invented conflict.
+            record["clinic_hours_conflict"] = conflict
     return {
-        "items": [
-            _serialize_appointment(item)
-            for item in pagination.items
-        ],
+        "items": items,
         "total": pagination.total,
         "page": pagination.page,
         "per_page": pagination.per_page,

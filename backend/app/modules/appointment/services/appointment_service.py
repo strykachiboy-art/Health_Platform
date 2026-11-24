@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from flask import current_app, has_app_context
 
 from app.extensions import db, celery
 
@@ -13,6 +14,10 @@ from app.modules.clinic.services.clinic_service import (
     get_clinic,
 )
 from app.modules.clinic.models.clinic_model import Clinic
+from app.modules.clinic.services.clinic_operating_modes import (
+    appointment_within_hours,
+    normalize_booking_interval,
+)
 
 from app.core.enums.appointment_enums import (
     AppointmentStatus,
@@ -165,6 +170,32 @@ def _lock_clinic(
         )
 
     return clinic
+
+
+def _clinic_hours_enforced():
+    return (has_app_context()
+            and current_app.config.get("CLINIC_EXTENDED_OPERATING_HOURS_ENABLED", False) is True
+            and current_app.config.get("CLINIC_BOOKING_HOURS_ENFORCEMENT_ENABLED", False) is True)
+
+
+def _normalize_staged_booking_times(start, end):
+    try:
+        return normalize_booking_interval(start, end)
+    except (ValueError, OverflowError) as exc:
+        raise ValidationError(str(exc)) from exc
+
+
+def _ensure_clinic_booking_hours(clinic, appointment_type, start, end):
+    if not _clinic_hours_enforced() or appointment_type == AppointmentType.EMERGENCY:
+        return
+    try:
+        allowed = appointment_within_hours(
+            clinic.opening_time, clinic.closing_time, clinic.timezone, start, end,
+        )
+    except (ValueError, OverflowError) as exc:
+        raise ValidationError(str(exc)) from exc
+    if allowed is False:
+        raise ValidationError("Appointment is outside clinic operating hours")
 
 
 def _validate_schedule_times(
@@ -428,10 +459,14 @@ def create_appointment(
         "Staff ID",
     )
 
-    _validate_schedule_times(
-        scheduled_start,
-        scheduled_end,
-    )
+    # Keep the original request timestamps for the existing idempotency fingerprint.
+    # Normalize only the staged validation and persistence path.
+    normalized_times = None
+    if _clinic_hours_enforced():
+        normalized_times = _normalize_staged_booking_times(scheduled_start, scheduled_end)
+        _validate_schedule_times(*normalized_times)
+    else:
+        _validate_schedule_times(scheduled_start, scheduled_end)
 
     appointment_type = _normalize_appointment_type(
         appointment_type,
@@ -505,6 +540,9 @@ def create_appointment(
 
             return existing_appointment
 
+    if normalized_times is not None:
+        scheduled_start, scheduled_end = normalized_times
+
     clinic = _lock_clinic(
         clinic_id,
     )
@@ -518,6 +556,8 @@ def create_appointment(
         patient_id=patient_id,
         staff_id=staff_id,
     )
+
+    _ensure_clinic_booking_hours(clinic, appointment_type, scheduled_start, scheduled_end)
 
     _ensure_no_schedule_conflict(
         patient_id=patient_id,
@@ -604,6 +644,14 @@ def reschedule_appointment(
             clinic_id,
         )
 
+    # Match creation lock order: clinic first, then appointment.
+    hours_clinic = None
+    if _clinic_hours_enforced():
+        target_id = clinic_id
+        if target_id is None:
+            target_id = _get_appointment(appointment_id=appointment_id).clinic_id
+        hours_clinic = _lock_clinic(target_id)
+
     appointment = _get_appointment(
         appointment_id=appointment_id,
         clinic_id=clinic_id,
@@ -621,6 +669,8 @@ def reschedule_appointment(
         AppointmentStatus.CONFIRMED,
     )
 
+    if hours_clinic is not None:
+        new_start, new_end = _normalize_staged_booking_times(new_start, new_end)
     _validate_reschedule_times(
         new_start,
         new_end,
@@ -629,6 +679,13 @@ def reschedule_appointment(
     _validate_existing_appointment_patient_active(
         appointment
     )
+
+    if hours_clinic is not None:
+        if hours_clinic.id != appointment.clinic_id:
+            raise ConflictError("Appointment clinic changed during rescheduling")
+        _ensure_clinic_booking_hours(
+            hours_clinic, appointment.appointment_type, new_start, new_end,
+        )
 
     _ensure_no_schedule_conflict(
         patient_id=appointment.patient_id,

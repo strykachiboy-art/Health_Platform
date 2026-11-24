@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from pydantic import ValidationError as PydanticValidationError
 
@@ -12,6 +12,7 @@ from app.core.storage.storage_service import (
 )
 from app.core.utils.decorators import role_required
 
+from app.modules.clinic.services.clinic_operating_modes import operating_status
 from app.modules.profile.schemas.profile_schema import (
     ProfileUpdateSchema,
 )
@@ -88,6 +89,17 @@ def _payload() -> dict:
     return payload
 
 
+def _private_profile_payload(profile):
+    record = profile.model_dump(mode="json")
+    if (current_app.config.get("CLINIC_EXTENDED_OPERATING_HOURS_ENABLED", False) is True
+            and profile.clinic is not None):
+        clinic = profile.clinic
+        record["clinic"].update(operating_status(
+            clinic.opening_time, clinic.closing_time, clinic.timezone,
+        ))
+    return record
+
+
 @profile_bp.get("/me")
 @role_required(*PROFILE_ROLES)
 def get_my_profile():
@@ -100,9 +112,7 @@ def get_my_profile():
     return jsonify(
         {
             "success": True,
-            "data": profile.model_dump(
-                mode="json"
-            ),
+            "data": _private_profile_payload(profile),
         }
     ), 200
 
@@ -148,9 +158,7 @@ def update_my_profile():
         {
             "success": True,
             "message": "Profile updated successfully",
-            "data": profile.model_dump(
-                mode="json"
-            ),
+            "data": _private_profile_payload(profile),
         }
     ), 200
 
