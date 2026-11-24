@@ -65,6 +65,13 @@ CLINIC_VIEW_ROLES = (
     Role.AMBULANCE_COORDINATOR,
 )
 
+# Root-clinic registry reads are system-visible to SUPER_ADMIN;
+# branch listing keeps its existing role boundary.
+CLINIC_ROOT_VIEW_ROLES = (
+    Role.SUPER_ADMIN,
+    *CLINIC_VIEW_ROLES,
+)
+
 CLINIC_MANAGEMENT_ROLES = (
     Role.ADMIN,
 )
@@ -121,13 +128,13 @@ def _serialize_clinic(clinic):
 # AUTHORIZATION HELPERS
 # ============================================================================
 
-def _is_admin():
+def _is_system_clinic_reader():
     role = getattr(g, "current_user_role", None)
 
     if isinstance(role, Role):
-        return role == Role.ADMIN
+        return role in (Role.ADMIN, Role.SUPER_ADMIN)
 
-    return role == Role.ADMIN.value
+    return role in (Role.ADMIN.value, Role.SUPER_ADMIN.value)
 
 
 def _get_current_user():
@@ -159,8 +166,8 @@ def _get_authorized_clinic(clinic_id: int):
     """
     Enforce clinic tenant isolation.
 
-    ADMIN users may access any clinic.
-    Non-admin users may access only their own clinic.
+    ADMIN and SUPER_ADMIN may read any clinic.
+    Other authorized roles may read only their assigned clinic.
     """
 
     if clinic_id <= 0:
@@ -175,7 +182,7 @@ def _get_authorized_clinic(clinic_id: int):
 
     user = _get_current_user()
 
-    if _is_admin():
+    if _is_system_clinic_reader():
         return None
 
     user_clinic_id = getattr(user, "clinic_id", None)
@@ -369,7 +376,7 @@ def create_clinic_route():
 
 
 @clinic_bp.get("")
-@role_required(*CLINIC_VIEW_ROLES)
+@role_required(*CLINIC_ROOT_VIEW_ROLES)
 def list_clinics_route():
     parsed_status = _parse_status()
 
@@ -377,7 +384,7 @@ def list_clinics_route():
         return parsed_status
 
     try:
-        if _is_admin():
+        if _is_system_clinic_reader():
             clinics = list_clinics(
                 status=parsed_status,
             )
@@ -430,7 +437,7 @@ def list_clinics_route():
 
 
 @clinic_bp.get("/<int:clinic_id>")
-@role_required(*CLINIC_VIEW_ROLES)
+@role_required(*CLINIC_ROOT_VIEW_ROLES)
 def get_clinic_route(clinic_id: int):
     authorization_error = _get_authorized_clinic(
         clinic_id
