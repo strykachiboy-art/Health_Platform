@@ -53,6 +53,7 @@ from app.modules.lab.models.lab_model import (
     LabOrder,
     LabOrderItem,
     LabReportPublication,
+    LabReportCorrectionRejection,
 )
 
 # Pharmacy
@@ -315,6 +316,7 @@ __all__ = [
     "LabOrder",
     "LabOrderItem",
     "LabReportPublication",
+    "LabReportCorrectionRejection",
 
     # Pharmacy
     "Drug",

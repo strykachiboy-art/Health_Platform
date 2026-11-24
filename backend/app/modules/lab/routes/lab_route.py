@@ -1016,3 +1016,55 @@ def lab_replacement_preview_route(order_id):
 def lab_replacement_publish_route(order_id):
     from app.modules.lab.services.lab_replacement_service import publish_replacement
     return _release_response(publish_replacement(order_id=order_id,clinic_id=_get_current_clinic_id(),doctor_user_id=_get_current_user().id,preview_sha256=_release_body('preview_sha256')))
+
+@lab_bp.post('/orders/<int:order_id>/patient-replacement-rejection')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def reject_lab_replacement_route(order_id):
+    from app.modules.lab.services.lab_replacement_service import reject_correction
+    body = request.get_json(silent=True)
+    if request.args or not isinstance(body,dict) or set(body) != {'preview_sha256','reason_code'}:
+        raise ValidationError('Invalid correction rejection request')
+    return _release_response(reject_correction(order_id=order_id,clinic_id=_get_current_clinic_id(),doctor_user_id=_get_current_user().id,preview_sha256=body['preview_sha256'],reason_code=body['reason_code']))
+
+
+@lab_bp.get('/orders/<int:order_id>/patient-critical-release-preview')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def critical_lab_release_preview_route(order_id):
+    from app.modules.lab.services.lab_release_service import preview_critical_release
+    if request.args:
+        raise ValidationError('Unsupported query parameters')
+    return _release_response(preview_critical_release(order_id=order_id,clinic_id=_get_current_clinic_id(),doctor_user_id=_get_current_user().id))
+
+
+@lab_bp.post('/orders/<int:order_id>/patient-critical-release')
+@role_required(Role.DOCTOR)
+@active_staff_required
+def critical_lab_release_route(order_id):
+    from app.modules.lab.services.lab_release_service import release_critical_report
+    body = request.get_json(silent=True)
+    if request.args or not isinstance(body,dict) or set(body) != {'preview_sha256','communication_confirmed','communication_method'}:
+        raise ValidationError('Invalid critical release request')
+    return _release_response(release_critical_report(order_id=order_id,clinic_id=_get_current_clinic_id(),doctor_user_id=_get_current_user().id,**body))
+
+
+@lab_bp.get('/me/released-results/<int:order_id>/pdf')
+@role_required(Role.PATIENT)
+def released_lab_pdf_route(order_id):
+    from flask import current_app, send_file, abort
+    from io import BytesIO
+    from app.modules.lab.services.lab_release_print_service import released_pdf
+    from app.modules.printing.services.print_policy import PrintDenied
+    if request.args or request.headers.get('Idempotency-Key') is not None or not current_app.testing or current_app.config.get('RAD6_PRINTING_ENABLED') is not True:
+        abort(404)
+    try:
+        data, doc = released_pdf(order_id=order_id,clinic_id=_get_current_clinic_id(),user_id=_get_current_user().id)
+    except PrintDenied:
+        abort(404)
+    response = send_file(BytesIO(data),mimetype='application/pdf',as_attachment=True,download_name=f'released-lab-{order_id}-v{doc.source_version}.pdf',max_age=0)
+    response.headers['Cache-Control']='private, no-store, max-age=0'
+    response.headers['X-Content-Type-Options']='nosniff'
+    response.headers['X-Source-SHA256']=doc.source_digest
+    response.headers['X-Clinical-Release']='patient-copy'
+    return response

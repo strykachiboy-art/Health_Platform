@@ -1077,6 +1077,22 @@ def _reconcile_pending_payment(
     )
 
 
+def _hosted_checkout_url(result):
+    from urllib.parse import urlsplit
+    if not isinstance(result,dict) or result.get('status') != 'initialized':
+        return None
+    value = result.get('authorization_url') or result.get('payment_link')
+    if not isinstance(value,str) or not 10 <= len(value) <= 2048 or any(c.isspace() or ord(c)<32 for c in value) or chr(92) in value:
+        return None
+    try:
+        parsed=urlsplit(value)
+        if parsed.scheme!='https' or parsed.hostname!='checkout.paystack.com' or parsed.username is not None or parsed.password is not None or parsed.port not in (None,443):
+            return None
+    except (TypeError,ValueError):
+        return None
+    return value
+
+
 def orchestrate_payment(
     *,
     clinic_id,
@@ -1089,7 +1105,13 @@ def orchestrate_payment(
     idempotency_key=None,
     idempotency_user_id=None,
     actor_user_id=None,
+    require_test_credentials=False,
 ):
+    if require_test_credentials:
+        from flask import has_app_context, current_app
+        from app.core.exceptions import ServiceUnavailableError
+        if not has_app_context() or not current_app.testing or gateway != PaymentGateway.PAYSTACK:
+            raise ServiceUnavailableError('Patient sandbox checkout is held')
     if idempotency_key is None:
         raise ValidationError(
             "Idempotency-Key is required for "
@@ -1111,6 +1133,9 @@ def orchestrate_payment(
             gateway,
             clinic_id=clinic_id,
         )
+        if require_test_credentials:
+            if not isinstance(getattr(gateway_client,'secret_key',None),str) or not gateway_client.secret_key.startswith('sk_test_'):
+                raise ServiceUnavailableError('Sandbox payment credentials required')
         customer_email = _patient_email_for_invoice(
             invoice
         )
@@ -1168,6 +1193,10 @@ def orchestrate_payment(
                 payment.failure_reason,
             )
 
+        if require_test_credentials:
+            # Do not initiate another provider operation for an uncertain prior
+            # sandbox attempt (which may have been created under older credentials).
+            return _outcome(payment,'pending','Sandbox payment requires reconciliation')
         return _reconcile_pending_payment(
             clinic_id=clinic_id,
             payment=payment,
@@ -1287,8 +1316,9 @@ def orchestrate_payment(
             "successful",
         )
 
-    return _outcome(
-        payment,
-        "pending",
-        "Payment initialized; provider confirmation required",
-    )
+    outcome = _outcome(payment,"pending","Payment initialized; provider confirmation required")
+    if require_test_credentials:
+        url = _hosted_checkout_url(result)
+        if url is not None:
+            outcome['checkout_url'] = url
+    return outcome

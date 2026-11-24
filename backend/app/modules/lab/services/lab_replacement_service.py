@@ -15,7 +15,7 @@ from app.core.audit.services.audit_service import create_audit_log
 from app.core.notifications.services.notification_service import create_notification_in_transaction
 from app.modules.clinical_records.services import clinical_record_service as records
 from app.modules.clinic.services.clinic_service import ensure_clinic_active
-from app.modules.lab.models.lab_model import LabOrderItem, LabReportPublication
+from app.modules.lab.models.lab_model import LabOrderItem, LabReportPublication, LabReportCorrectionRejection
 from app.modules.lab.services import lab_release_service as base
 from app.modules.lab.services.lab_service import _get_lab_order, _validate_actor_for_order, _resolve_result_flag
 from app.modules.staff.models.staff_model import Staff
@@ -88,18 +88,43 @@ def _chain(order):
 def _state(order):
     original, history = _chain(order)
     pubs = publications(order)
-    if len(pubs) not in (len(history), len(history)-1):
+    rejected = list(db.session.execute(select(LabReportCorrectionRejection).where(
+        LabReportCorrectionRejection.order_id == order.id)).scalars())
+    pub_by_version = {p.version: p for p in pubs}
+    reject_by_version = {r.version: r for r in rejected}
+    versions = {a.new_version for a in history}
+    if (len(pub_by_version) != len(pubs) or len(reject_by_version) != len(rejected)
+        or set(pub_by_version) & set(reject_by_version)
+        or not (set(pub_by_version) | set(reject_by_version)) <= versions):
         raise _conflict()
     previous_withdrawal = order.patient_release_withdrawn_at
-    for pub, amendment in zip(pubs, history):
-        if previous_withdrawal is None or pub.version != amendment.new_version or pub.amendment_id != amendment.id or pub.recipient_user_id != order.patient_release_user_id or pub.content_sha256 != amendment.new_content_sha256:
+    earliest = datetime.fromisoformat(base._time(previous_withdrawal))
+    pending = None
+    for amendment in history:
+        pub = pub_by_version.get(amendment.new_version)
+        rejection = reject_by_version.get(amendment.new_version)
+        verified = datetime.fromisoformat(amendment.new_content['correction_verified_at'])
+        if previous_withdrawal is None or verified < earliest:
             raise _conflict()
-        if datetime.fromisoformat(amendment.new_content['correction_verified_at']) < datetime.fromisoformat(base._time(previous_withdrawal)) or datetime.fromisoformat(base._time(pub.released_at)) < datetime.fromisoformat(amendment.new_content['correction_verified_at']):
-            raise _conflict()
-        previous_withdrawal = pub.withdrawn_at
-    if len(history) > len(pubs) and (previous_withdrawal is None or datetime.fromisoformat(history[-1].new_content['correction_verified_at']) < datetime.fromisoformat(base._time(previous_withdrawal))):
-        raise _conflict()
-    return original, history, pubs
+        if pub is not None:
+            if (pub.amendment_id != amendment.id or pub.recipient_user_id != order.patient_release_user_id
+                or pub.content_sha256 != amendment.new_content_sha256
+                or datetime.fromisoformat(base._time(pub.released_at)) < verified):
+                raise _conflict()
+            previous_withdrawal = pub.withdrawn_at
+            if previous_withdrawal is not None:
+                earliest = datetime.fromisoformat(base._time(previous_withdrawal))
+        elif rejection is not None:
+            if (rejection.amendment_id != amendment.id or rejection.content_sha256 != amendment.new_content_sha256
+                or rejection.reason_code not in ('incorrect_correction','insufficient_evidence')
+                or datetime.fromisoformat(base._time(rejection.rejected_at)) < verified):
+                raise _conflict()
+            earliest = datetime.fromisoformat(base._time(rejection.rejected_at))
+        else:
+            if amendment is not history[-1]:
+                raise _conflict()
+            pending = amendment
+    return original, history, pubs, pending
 
 
 def _same_recipient(order, *, lock=False):
@@ -113,8 +138,10 @@ def _same_recipient(order, *, lock=False):
 def verify_correction(*, order_id, clinic_id, tech_user_id, expected_version, changes, reason):
     order, actor = _tech(order_id, clinic_id, tech_user_id)
     _same_recipient(order, lock=True)
-    original, history, pubs = _state(order)
-    if len(history) != len(pubs) or (pubs and pubs[-1].withdrawn_at is None):
+    original, history, pubs, pending = _state(order)
+    if any(row['flag']=='critical' for row in original['results']):
+        raise _conflict()  # Critical corrected versions require a separate approved review contract.
+    if pending is not None or (pubs and pubs[-1].withdrawn_at is None):
         raise _conflict()
     withdrawal_reason = pubs[-1].withdrawal_reason if pubs else order.patient_release_withdrawal_reason
     if withdrawal_reason != 'clinical_correction':
@@ -134,7 +161,8 @@ def verify_correction(*, order_id, clinic_id, tech_user_id, expected_version, ch
         if item.result_display_metadata != meta or item.result_value != row['result_value'] or item.flag is None or item.flag.value != row['flag'] or base._time(item.resulted_at) != row['resulted_at'] or item.result_notes or item.result_file_url:
             raise _conflict()
         indexes[item.id] = i
-    report = copy.deepcopy(history[-1].new_content['report'] if history else original)
+    prior_approved = next((a for a in history if pubs and a.new_version == pubs[-1].version), None)
+    report = copy.deepcopy(prior_approved.new_content['report'] if prior_approved else original)
     before = copy.deepcopy(report)
     seen = set()
     for change in changes:
@@ -155,23 +183,27 @@ def verify_correction(*, order_id, clinic_id, tech_user_id, expected_version, ch
             raise _conflict()
         report['results'][i]['result_value'] = value.strip()
         report['results'][i]['flag'] = supplied.value
-    if report == before:
+    if report == before or (history and report == history[-1].new_content['report']):
         raise ValidationError('Correction must change a result')
     now = datetime.now(timezone.utc)
     withdrawn_at = pubs[-1].withdrawn_at if pubs else order.patient_release_withdrawn_at
     if now < datetime.fromisoformat(base._time(withdrawn_at)):
         raise _conflict()
+    if history and (not pubs or history[-1].new_version != pubs[-1].version):
+        rejection = db.session.get(LabReportCorrectionRejection, history[-1].id)
+        if rejection is None or now < datetime.fromisoformat(base._time(rejection.rejected_at)):
+            raise _conflict()
     amendment = records.append_clinical_record_amendment(clinic_id=clinic_id, patient_id=order.patient_id, source_record_type=TYPE, source_record_id=order.id, current_status=ClinicalRecordStatus.AMENDED if history else ClinicalRecordStatus.FINAL, previous_version=version, amended_by_staff_id=actor.id, reason=reason.strip(), new_content={'report':report,'correction_verified_at':base._time(now)})
     return {'order_id':order.id,'record_version':amendment.new_version,'release_status':'correction_pending'}
 
 
 def _pending(order):
-    _, history, pubs = _state(order)
-    if len(history) != len(pubs)+1 or (pubs and pubs[-1].withdrawn_at is None):
+    _, history, pubs, pending = _state(order)
+    if pending is None or (pubs and pubs[-1].withdrawn_at is None):
         raise _conflict()
     if (pubs[-1].withdrawal_reason if pubs else order.patient_release_withdrawal_reason) != 'clinical_correction':
         raise _conflict()
-    return history[-1]
+    return pending
 
 
 def _preview(order, amendment, user_id):
@@ -210,8 +242,8 @@ def withdraw_current(order, doctor, reason_code):
     pub = active_publication(order)
     if pub is None:
         return None
-    _, history, pubs = _state(order)
-    if not pubs or pub.id != pubs[-1].id or len(history) != len(pubs):
+    _, history, pubs, pending = _state(order)
+    if not pubs or pub.id != pubs[-1].id or pending is not None or history[-1].new_version != pub.version:
         raise _conflict()
     now = datetime.now(timezone.utc)
     if now < datetime.fromisoformat(base._time(pub.released_at)):
@@ -224,9 +256,11 @@ def withdraw_current(order, doctor, reason_code):
 def status_fields(order):
     if order.patient_release_withdrawn_at is None:
         return {'record_version':1 if order.patient_released_at is not None else 0,'correction_pending':False}
-    _, history, pubs = _state(order)
-    if len(history) > len(pubs):
-        return {'record_version':history[-1].new_version,'correction_pending':True}
+    _, history, pubs, pending = _state(order)
+    if pending is not None:
+        return {'record_version':pending.new_version,'correction_pending':True}
+    if history and (not pubs or history[-1].new_version != pubs[-1].version):
+        return {'record_version':history[-1].new_version,'correction_pending':False,'correction_rejected':True,'release_status':'withdrawn'}
     if pubs:
         pub = pubs[-1]
         return {'record_version':pub.version,'correction_pending':False,'release_status':'released' if pub.withdrawn_at is None else 'withdrawn','released_at':base._time(pub.released_at),'withdrawn_at':base._time(pub.withdrawn_at) if pub.withdrawn_at is not None else None}
@@ -237,10 +271,32 @@ def current_report(order):
     if order.patient_release_withdrawn_at is None:
         return base._original_released(order)
     try:
-        _, history, pubs = _state(order)
-        if not pubs or len(history)!=len(pubs) or pubs[-1].withdrawn_at is not None:
+        _, history, pubs, pending = _state(order)
+        if not pubs or pending is not None or history[-1].new_version != pubs[-1].version or pubs[-1].withdrawn_at is not None:
             raise _conflict()
         pub=pubs[-1]; amendment=history[-1]
         return {**amendment.new_content['report'],'record_version':pub.version,'correction_verified_at':amendment.new_content['correction_verified_at'],'release_status':'released','released_at':base._time(pub.released_at)}
     except (ConflictError, ValidationError):
         raise NotFoundError('Laboratory report unavailable') from None
+
+@transactional
+def reject_correction(*, order_id, clinic_id, doctor_user_id, preview_sha256, reason_code):
+    order, doctor = base._doctor_order(order_id, clinic_id, doctor_user_id, lock=True)
+    recipient = _same_recipient(order, lock=True)
+    amendment = _pending(order)
+    if reason_code not in ('incorrect_correction','insufficient_evidence'):
+        raise ValidationError('Invalid correction rejection reason')
+    if not isinstance(preview_sha256, str) or preview_sha256 != _preview(order, amendment, recipient.id)['preview_sha256']:
+        raise ConflictError('Corrected report changed; review again', code='LAB_RELEASE_PREVIEW_CHANGED')
+    now = datetime.now(timezone.utc)
+    if now < datetime.fromisoformat(amendment.new_content['correction_verified_at']):
+        raise _conflict()
+    db.session.add(LabReportCorrectionRejection(amendment_id=amendment.id, order_id=order.id,
+        version=amendment.new_version, content_sha256=amendment.new_content_sha256,
+        rejected_by_id=doctor.id, rejected_at=now, reason_code=reason_code))
+    db.session.flush()
+    create_audit_log(action=AuditAction.STATUS_CHANGE, entity_type='LabOrder', entity_id=order.id,
+        clinic_id=clinic_id, patient_id=order.patient_id, user_id=doctor_user_id,
+        description='Verified laboratory correction rejected; report remains withheld',
+        new_value={'record_version':amendment.new_version,'reason_code':reason_code})
+    return {'order_id':order.id,'record_version':amendment.new_version,'release_status':'withdrawn','correction_pending':False,'correction_rejected':True}

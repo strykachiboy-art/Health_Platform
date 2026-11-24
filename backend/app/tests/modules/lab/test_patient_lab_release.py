@@ -378,3 +378,157 @@ def test_b02_noncorrection_withdrawal_stays_held(scenario, auth_headers_for, rea
     assert response.status_code==200
     assert correct(s,auth_headers_for).status_code==409
     assert own_detail(s).status_code==404
+
+def b03_reject(s,digest,reason='incorrect_correction',headers=None):
+    return s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-replacement-rejection",json={'preview_sha256':digest,'reason_code':reason},headers=headers or s['doctor_headers'])
+
+
+def test_b03_rejected_amendment_preserved_and_superseded(scenario, db, auth_headers_for):
+    from app.modules.clinical_records.models.clinical_record_amendment_model import ClinicalRecordAmendment
+    from app.modules.lab.models.lab_model import LabReportPublication, LabReportCorrectionRejection
+    s=scenario; correction_setup(s)
+    assert correct(s,auth_headers_for,value='6').status_code==200
+    old=replacement_preview(s).get_json()['data']['preview_sha256']
+    assert b03_reject(s,'0'*64).status_code==409
+    assert b03_reject(s,old,'bad_reason').status_code==422
+    assert b03_reject(s,old).status_code==200
+    assert b03_reject(s,old).status_code==409
+    assert replacement_publish(s,old).status_code==409
+    assert own_detail(s).status_code==404 and own_list(s).get_json()['data']['items']==[]
+    status=s['client'].get(f"/api/v1/lab/orders/{s['order'].id}/patient-release",headers=auth_headers_for(s['tech'].user)).get_json()['data']
+    assert status['correction_rejected'] is True and status['record_version']==2 and status['correction_pending'] is False
+    assert correct(s,auth_headers_for,value='7',version=1).status_code==409
+    assert correct(s,auth_headers_for,value='7',version=2).status_code==200
+    new=replacement_preview(s).get_json()['data']
+    assert new['report']['record_version']==3 and new['report']['results'][0]['result_value']=='7'
+    assert replacement_publish(s,old).status_code==409
+    assert replacement_publish(s,new['preview_sha256']).status_code==200
+    assert own_detail(s).get_json()['data']['record_version']==3
+    amendments=db.session.execute(select(ClinicalRecordAmendment).where(ClinicalRecordAmendment.source_record_type=='lab_report').order_by(ClinicalRecordAmendment.new_version)).scalars().all()
+    rejection=db.session.execute(select(LabReportCorrectionRejection)).scalar_one()
+    publication=db.session.execute(select(LabReportPublication)).scalar_one()
+    assert [a.new_version for a in amendments]==[2,3]
+    assert rejection.amendment_id==amendments[0].id and publication.amendment_id==amendments[1].id
+    assert amendments[0].new_content['report']['results'][0]['result_value']=='6'
+    assert s['item'].result_value=='5' and s['order'].patient_release_snapshot['results'][0]['result_value']=='5'
+    assert len(db.session.execute(select(Notification).where(Notification.user_id==s['patient_user'].id)).scalars().all())==2
+
+
+def test_b03_rejection_wrong_roles_and_wrong_doctor(scenario, db, auth_headers_for, clinic, make_authenticated_staff):
+    s=scenario; correction_setup(s); assert correct(s,auth_headers_for).status_code==200
+    _, unassigned=make_authenticated_staff(clinic,Role.DOCTOR); db.session.commit()
+    digest=replacement_preview(s).get_json()['data']['preview_sha256']
+    assert b03_reject(s,digest,headers=auth_headers_for(s['tech'].user)).status_code==403
+    assert b03_reject(s,digest,headers=s['patient_headers']).status_code==403
+    assert b03_reject(s,digest,headers=unassigned).status_code==404
+    assert replacement_preview(s).status_code==200
+    assert own_detail(s).status_code==404
+
+
+def test_b03_concurrent_reject_publish_on_postgres(scenario,db,app,auth_headers_for):
+    if db.engine.dialect.name!='postgresql': pytest.skip('PostgreSQL row locking required')
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from app.core.exceptions import ConflictError
+    from app.modules.lab.services import lab_replacement_service as replacements
+    from app.modules.lab.models.lab_model import LabReportPublication, LabReportCorrectionRejection
+    s=scenario; correction_setup(s); assert correct(s,auth_headers_for).status_code==200
+    digest=replacement_preview(s).get_json()['data']['preview_sha256']
+    ids=(s['order'].id,s['order'].clinic_id,s['doctor'].user_id,s['patient_user'].id)
+    db.session.remove(); barrier=Barrier(2,timeout=15)
+    def attempt(reject):
+        with app.app_context():
+            barrier.wait()
+            try:
+                kwargs=dict(order_id=ids[0],clinic_id=ids[1],doctor_user_id=ids[2],preview_sha256=digest)
+                if reject: replacements.reject_correction(**kwargs,reason_code='incorrect_correction'); return 'rejected'
+                replacements.publish_replacement(**kwargs); return 'published'
+            except ConflictError: return 'conflict'
+            finally: db.session.remove()
+    with ThreadPoolExecutor(max_workers=2) as pool: results=list(pool.map(attempt,[True,False]))
+    assert results.count('conflict')==1
+    p=db.session.execute(select(LabReportPublication)).scalars().all()
+    r=db.session.execute(select(LabReportCorrectionRejection)).scalars().all()
+    assert len(p)+len(r)==1
+    assert len(db.session.execute(select(Notification).where(Notification.user_id==ids[3])).scalars().all())==1+len(p)
+
+
+def test_b03_critical_initial_release_requires_separate_attestation(scenario,db,auth_headers_for):
+    s=scenario;s['test'].critical_high=4;db.session.commit();finalize(s)
+    assert s['item'].flag is LabResultFlag.CRITICAL
+    assert preview(s).status_code==409
+    base=f"/api/v1/lab/orders/{s['order'].id}/patient-critical-release"
+    res=s['client'].get(base+'-preview',headers=s['doctor_headers']);assert res.status_code==200,res.get_json()
+    data=res.get_json()['data'];assert data['report']['results'][0]['flag']=='critical' and data['requires_direct_communication'] is True
+    body={'preview_sha256':data['preview_sha256'],'communication_confirmed':True,'communication_method':'telephone'}
+    assert publish(s,body['preview_sha256']).status_code==409
+    assert s['client'].post(base,json={**body,'communication_confirmed':False},headers=s['doctor_headers']).status_code==422
+    assert s['client'].post(base,json={**body,'communication_method':'notification'},headers=s['doctor_headers']).status_code==422
+    assert s['client'].post(base,json=body,headers=auth_headers_for(s['tech'].user)).status_code==403
+    assert s['client'].post(base,json={**body,'preview_sha256':'0'*64},headers=s['doctor_headers']).status_code==409
+    assert own_detail(s).status_code==404
+    assert s['client'].post(base,json=body,headers=s['doctor_headers']).status_code==200
+    assert own_detail(s).get_json()['data']['results'][0]['flag']=='critical'
+    assert s['order'].patient_release_critical_review['method']=='telephone'
+    original_review=dict(s['order'].patient_release_critical_review)
+    s['order'].patient_release_critical_review={**original_review,'preview_sha256':'0'*64};db.session.commit()
+    assert own_detail(s).status_code==404
+    s['order'].patient_release_critical_review=original_review;db.session.commit()
+    assert own_detail(s).status_code==200
+    assert s['client'].post(base,json=body,headers=s['doctor_headers']).status_code==409
+    assert len(db.session.execute(select(Notification).where(Notification.user_id==s['patient_user'].id)).scalars().all())==1
+    assert s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-withdrawal",json={'reason_code':'clinical_correction'},headers=s['doctor_headers']).status_code==200
+    assert correct(s,auth_headers_for).status_code==409 and own_detail(s).status_code==404
+
+
+def test_b03_normal_cannot_use_critical_release_path(scenario):
+    s=scenario;finalize(s)
+    base=f"/api/v1/lab/orders/{s['order'].id}/patient-critical-release"
+    assert s['client'].get(base+'-preview',headers=s['doctor_headers']).status_code==409
+    assert own_detail(s).status_code==404
+
+
+def test_b03_released_pdf_current_owner_and_version(scenario,db,app,auth_headers_for,clinic,make_user,make_patient):
+    s=scenario;finalize(s);release_valid(s)
+    path=f"/api/v1/lab/me/released-results/{s['order'].id}/pdf"
+    app.config['RAD6_PRINTING_ENABLED']=False
+    assert s['client'].get(path,headers=s['patient_headers']).status_code==404
+    app.config['RAD6_PRINTING_ENABLED']=True
+    r=s['client'].get(path,headers=s['patient_headers']);assert r.status_code==200,r.get_json()
+    assert r.data.startswith(b'%PDF-') and r.headers['X-Clinical-Release']=='patient-copy'
+    assert 'v1.pdf' in r.headers['Content-Disposition'] and 'no-store' in r.headers['Cache-Control']
+    old_digest=r.headers['X-Source-SHA256']
+    outsider=make_user(clinic,role=Role.PATIENT);make_patient(clinic,user_id=outsider.id);db.session.commit()
+    assert s['client'].get(path,headers=auth_headers_for(outsider)).status_code==404
+    assert s['client'].get(path,headers=s['doctor_headers']).status_code==403
+    assert s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-withdrawal",json={'reason_code':'clinical_correction'},headers=s['doctor_headers']).status_code==200
+    assert s['client'].get(path,headers=s['patient_headers']).status_code==404
+    assert correct(s,auth_headers_for).status_code==200
+    assert replacement_publish(s,replacement_preview(s).get_json()['data']['preview_sha256']).status_code==200
+    r=s['client'].get(path,headers=s['patient_headers']);assert r.status_code==200
+    assert 'v2.pdf' in r.headers['Content-Disposition'] and r.headers['X-Source-SHA256']!=old_digest
+
+
+def test_b03_pdf_unsupported_unit_held_not_truncated(scenario,db,app):
+    s=scenario;s['test'].unit='\u03bcg/L';db.session.commit();finalize(s);release_valid(s)
+    assert own_detail(s).get_json()['data']['results'][0]['unit']=='\u03bcg/L'
+    app.config['RAD6_PRINTING_ENABLED']=True
+    assert s['client'].get(f"/api/v1/lab/me/released-results/{s['order'].id}/pdf",headers=s['patient_headers']).status_code==404
+
+
+def test_b03_supersession_does_not_inherit_rejected_values(scenario,db,auth_headers_for):
+    s=scenario
+    test=LabTest(clinic_id=s['order'].clinic_id,name='Second synthetic test',unit='mg/dL',reference_range='1 - 10')
+    db.session.add(test);db.session.flush()
+    item=LabOrderItem(order_id=s['order'].id,test_id=test.id);db.session.add(item);db.session.commit()
+    enter_result(item.id,'5',None,None,None,s['order'].clinic_id)
+    correction_setup(s)
+    assert correct(s,auth_headers_for,value='6').status_code==200
+    assert b03_reject(s,replacement_preview(s).get_json()['data']['preview_sha256']).status_code==200
+    body={'expected_version':2,'changes':[{'item_id':item.id,'result_value':'7','flag':'normal'}],'reason':'New verified synthetic correction'}
+    r=s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-correction",json=body,headers=auth_headers_for(s['tech'].user))
+    assert r.status_code==200,r.get_json()
+    report=replacement_preview(s).get_json()['data']
+    assert [row['result_value'] for row in report['report']['results']]==['5','7']
+    assert replacement_publish(s,report['preview_sha256']).status_code==200
+    assert [row['result_value'] for row in own_detail(s).get_json()['data']['results']]==['5','7']

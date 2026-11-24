@@ -89,7 +89,7 @@ def _recipient(order, *, lock=False):
     return user
 
 
-def _report(order, *, lock=False):
+def _report(order, *, lock=False, allow_critical=False):
     validate_lab_order_integrity(order)
     if order.status is not LabOrderStatus.COMPLETED:
         raise ConflictError('Only a verified completed order may be released')
@@ -105,7 +105,8 @@ def _report(order, *, lock=False):
     for item in items:
         # The first staged slice deliberately holds critical, unclassified,
         # annotated, attachment-bearing and historical unsnapshotted results.
-        if item.flag not in (LabResultFlag.NORMAL, LabResultFlag.ABNORMAL) or item.result_notes or item.result_file_url:
+        flags = (LabResultFlag.NORMAL, LabResultFlag.ABNORMAL, LabResultFlag.CRITICAL) if allow_critical else (LabResultFlag.NORMAL, LabResultFlag.ABNORMAL)
+        if item.flag not in flags or item.result_notes or item.result_file_url:
             raise ConflictError('Laboratory result requires additional clinical release review', code='LAB_RELEASE_REVIEW_REQUIRED')
         meta = item.result_display_metadata
         if (not isinstance(meta, dict) or set(meta) != {'test_name','loinc_code','unit','reference_range'}
@@ -147,11 +148,16 @@ def release_status(*, order_id, clinic_id, doctor_user_id):
 
 
 @transactional
-def release_report(*, order_id, clinic_id, doctor_user_id, preview_sha256):
+def release_report(*, order_id, clinic_id, doctor_user_id, preview_sha256, critical_method=None):
     order, doctor = _doctor_order(order_id, clinic_id, doctor_user_id, lock=True)
     recipient = _recipient(order, lock=True)
-    report = _report(order, lock=True)
-    if not isinstance(preview_sha256, str) or preview_sha256 != _digest(report, recipient.id):
+    if critical_method is not None and critical_method not in ('in_person','telephone','secure_clinical_conversation'):
+        raise ValidationError('Invalid critical review attestation')
+    report = _report(order, lock=True, allow_critical=critical_method is not None)
+    if critical_method is not None and not any(row['flag']=='critical' for row in report['results']):
+        raise ConflictError('No critical result requiring this review')
+    expected = _digest({'critical_review':report},recipient.id) if critical_method is not None else _digest(report,recipient.id)
+    if not isinstance(preview_sha256, str) or preview_sha256 != expected:
         raise ConflictError('Report changed; review the current preview before releasing', code='LAB_RELEASE_PREVIEW_CHANGED')
     now = datetime.now(timezone.utc)
     if now < datetime.fromisoformat(report['completed_at']):
@@ -160,6 +166,9 @@ def release_report(*, order_id, clinic_id, doctor_user_id, preview_sha256):
     order.patient_released_by_id = doctor.id
     order.patient_release_user_id = recipient.id
     order.patient_release_snapshot = report
+    if critical_method is not None:
+        order.patient_release_critical_review = {'method':critical_method,'attested_at':_time(now),'doctor_id':doctor.id,'preview_sha256':expected}
+        create_audit_log(action=AuditAction.STATUS_CHANGE,entity_type='LabOrder',entity_id=order.id,clinic_id=clinic_id,patient_id=order.patient_id,user_id=doctor_user_id,description='Doctor attested direct critical result communication',new_value={'method':critical_method,'attested_at':_time(now)})
     create_audit_log(action=AuditAction.STATUS_CHANGE, entity_type='LabOrder', entity_id=order.id, clinic_id=clinic_id, patient_id=order.patient_id, user_id=doctor_user_id, description='Laboratory report released to patient', old_value={'patient_release': 'unreleased'}, new_value={'patient_release': 'released', 'released_at': _time(now)})
     # Reuse existing notification creation within the SAME transaction.
     # No external delivery or test values in the message. The reference is an
@@ -215,8 +224,19 @@ def _original_released(order):
         raise _unavailable()
     keys = {'test_name','loinc_code','unit','reference_range','result_value','flag','resulted_at'}
     for row in snapshot['results']:
-        if (not isinstance(row, dict) or set(row) != keys or row['flag'] not in ('normal','abnormal') or any(not isinstance(row[k], str) or not row[k].strip() for k in ('test_name','result_value','resulted_at')) or any(row[k] is not None and not isinstance(row[k], str) for k in ('loinc_code','unit','reference_range'))):
+        if (not isinstance(row, dict) or set(row) != keys or row['flag'] not in ('normal','abnormal','critical') or any(not isinstance(row[k], str) or not row[k].strip() for k in ('test_name','result_value','resulted_at')) or any(row[k] is not None and not isinstance(row[k], str) for k in ('loinc_code','unit','reference_range'))):
             raise _unavailable()
+    critical = any(row['flag']=='critical' for row in snapshot['results'])
+    review = order.patient_release_critical_review
+    if critical:
+        if (not isinstance(review,dict) or set(review)!={'method','attested_at','doctor_id','preview_sha256'}
+            or review['method'] not in ('in_person','telephone','secure_clinical_conversation')
+            or review['attested_at'] != _time(order.patient_released_at)
+            or review['doctor_id'] != order.patient_released_by_id
+            or review['preview_sha256'] != _digest({'critical_review':snapshot},order.patient_release_user_id)):
+            raise _unavailable()
+    elif review is not None:
+        raise _unavailable()
     return {**snapshot, 'released_at': _time(order.patient_released_at), 'release_status': 'released'}
 
 
@@ -247,3 +267,22 @@ def get_released(*, user_id, clinic_id, order_id):
     report = _released(order)
     create_audit_log(action=AuditAction.VIEW, entity_type='LabOrder', entity_id=order.id, clinic_id=clinic_id, patient_id=patient.id, user_id=user_id, description='Patient viewed released laboratory report')
     return report
+
+@transactional
+def preview_critical_release(*, order_id, clinic_id, doctor_user_id):
+    order, _ = _doctor_order(order_id, clinic_id, doctor_user_id)
+    recipient = _recipient(order)
+    report = _report(order, allow_critical=True)
+    if not any(row['flag'] == 'critical' for row in report['results']):
+        raise ConflictError('No critical result requiring this review')
+    create_audit_log(action=AuditAction.VIEW,entity_type='LabOrder',entity_id=order.id,clinic_id=clinic_id,patient_id=order.patient_id,user_id=doctor_user_id,description='Doctor reviewed critical report before direct communication')
+    return {'report':report,'preview_sha256':_digest({'critical_review':report},recipient.id),'requires_direct_communication':True}
+
+
+def release_critical_report(*, order_id, clinic_id, doctor_user_id, preview_sha256, communication_confirmed, communication_method):
+    # This is an explicit clinician attestation, NOT evidence that an automated
+    # message was delivered. A generic in-app notification is never sufficient.
+    if communication_confirmed is not True or communication_method not in ('in_person','telephone','secure_clinical_conversation'):
+        raise ValidationError('Confirmed direct clinical communication is required')
+    return release_report(order_id=order_id,clinic_id=clinic_id,doctor_user_id=doctor_user_id,
+        preview_sha256=preview_sha256,critical_method=communication_method)

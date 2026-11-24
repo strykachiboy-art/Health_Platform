@@ -147,6 +147,7 @@ class LabOrder(db.Model):
     __tablename__ = "lab_orders"
 
     __table_args__ = (
+        db.CheckConstraint("patient_release_critical_review IS NULL OR patient_released_at IS NOT NULL", name="ck_lab_release_critical_review"),
         db.CheckConstraint("patient_release_withdrawal_reason IS NULL OR (patient_release_withdrawn_at IS NOT NULL AND patient_release_withdrawal_reason IN ('clinical_correction','identity_review','other_safety_review'))", name="ck_lab_patient_release_withdraw_reason"),
         db.CheckConstraint('(patient_released_at IS NULL AND patient_released_by_id IS NULL AND patient_release_user_id IS NULL AND patient_release_snapshot IS NULL) OR (patient_released_at IS NOT NULL AND patient_released_by_id IS NOT NULL AND patient_release_user_id IS NOT NULL AND patient_release_snapshot IS NOT NULL AND completed_at IS NOT NULL AND verified_at IS NOT NULL AND patient_released_at >= completed_at)', name="ck_lab_patient_release_pair"),
         db.CheckConstraint('(patient_release_withdrawn_at IS NULL AND patient_release_withdrawn_by_id IS NULL) OR (patient_release_withdrawn_at IS NOT NULL AND patient_release_withdrawn_by_id IS NOT NULL AND patient_released_at IS NOT NULL AND patient_release_withdrawn_at >= patient_released_at)', name="ck_lab_patient_release_withdrawal"),
@@ -432,6 +433,7 @@ class LabOrder(db.Model):
     patient_release_withdrawn_at = db.Column(db.DateTime(timezone=True), nullable=True)
     patient_release_withdrawn_by_id = db.Column(db.Integer, db.ForeignKey("staff.id", name="fk_lab_release_withdrawal_doctor"), nullable=True)
     patient_release_withdrawal_reason = db.Column(db.String(32), nullable=True)
+    patient_release_critical_review = db.Column(db.JSON(none_as_null=True), nullable=True)
 
     # -------------------------------------------------------------
     # Relationships
@@ -600,3 +602,20 @@ class LabReportPublication(db.Model):
     withdrawn_at = db.Column(db.DateTime(timezone=True),nullable=True)
     withdrawn_by_id = db.Column(db.Integer,db.ForeignKey('staff.id',ondelete='RESTRICT'),nullable=True)
     withdrawal_reason = db.Column(db.String(32),nullable=True)
+
+class LabReportCorrectionRejection(db.Model):
+    """Immutable physician decision; corrected content stays in shared amendments."""
+    __tablename__ = 'lab_report_correction_rejections'
+    __table_args__ = (
+        db.UniqueConstraint('order_id', 'version', name='uq_lab_correction_rejection_version'),
+        db.CheckConstraint('version >= 2', name='ck_lab_correction_rejection_version'),
+        db.CheckConstraint('length(content_sha256) = 64', name='ck_lab_correction_rejection_hash'),
+        db.CheckConstraint("reason_code IN ('incorrect_correction','insufficient_evidence')", name='ck_lab_correction_rejection_reason'),
+    )
+    amendment_id = db.Column(db.Integer, db.ForeignKey('clinical_record_amendments.id', ondelete='RESTRICT'), primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey('lab_orders.id', ondelete='RESTRICT'), nullable=False)
+    version = db.Column(db.Integer, nullable=False)
+    content_sha256 = db.Column(db.String(64), nullable=False)
+    rejected_by_id = db.Column(db.Integer, db.ForeignKey('staff.id', ondelete='RESTRICT'), nullable=False)
+    rejected_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    reason_code = db.Column(db.String(32), nullable=False)
