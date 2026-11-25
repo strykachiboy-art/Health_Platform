@@ -131,9 +131,49 @@ _GAPB_LEGACY_AUTH_MODULES = (
 )
 
 
+# GAP05-B: exact legacy read-contract cases need real tenant/clinic grants.
+# Do not opt entire modules or adversarial tests into the grant fixture.
+_GAP05_BOUND_READ_CASES = {
+    '/modules/appointment/test_appointment_route.py': frozenset({
+        'test_get_patient_appointments_accepts_pagination',
+        'test_get_patient_appointments_not_found',
+        'test_get_patient_appointments_rejects_invalid_pagination',
+        'test_get_patient_appointments_success',
+        'test_get_staff_appointments_domain_error',
+        'test_get_staff_appointments_rejects_invalid_date',
+        'test_get_staff_appointments_rejects_invalid_pagination',
+        'test_get_staff_appointments_rejects_unknown_query_field',
+        'test_get_staff_appointments_success',
+        'test_get_staff_appointments_with_date_filter',
+    }),
+    '/modules/clinical_orders/test_unified_order_read_model.py': frozenset({
+        'test_unified_route_allows_clinical_view_roles',
+        'test_unified_route_supports_type_and_status_filters',
+    }),
+    '/modules/lab/test_lab_route.py': frozenset({
+        'test_get_lab_order_maps_not_found',
+        'test_get_lab_order_success',
+        'test_list_orders_for_patient_forwards_pagination',
+        'test_list_orders_for_patient_rejects_invalid_pagination',
+        'test_list_orders_for_patient_rejects_unknown_query',
+        'test_list_orders_for_patient_requires_patient_id',
+        'test_list_orders_for_patient_success',
+    }),
+    '/modules/nursing/test_nursing_route_contract.py': frozenset({
+        'test_list_routes_serialize_total_and_items',
+    }),
+}
+
+
 def _gapb_legacy_auth_target(request):
     path = str(request.node.path).replace('\\', '/')
-    return any(path.endswith(tail) for tail in _GAPB_LEGACY_AUTH_MODULES)
+    if any(path.endswith(tail) for tail in _GAPB_LEGACY_AUTH_MODULES):
+        return True
+    name = request.node.name.split('[', 1)[0]
+    return any(
+        path.endswith(tail) and name in names
+        for tail, names in _GAP05_BOUND_READ_CASES.items()
+    )
 
 
 @pytest.fixture()

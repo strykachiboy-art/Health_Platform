@@ -48,6 +48,11 @@ class Config:
         os.environ.get("PATIENT_CLINICAL_TIMELINE_ENABLED", "false").lower() == "true"
     )
 
+    # Staged search requires testing mode and an explicit enable flag.
+    UNIFIED_CLINICAL_SEARCH_ENABLED = (
+        os.environ.get("UNIFIED_CLINICAL_SEARCH_ENABLED", "false").lower() == "true"
+    )
+
     # Patient result release is a separate, disabled-by-default feature.
     PATIENT_LAB_RELEASE_ENABLED = (
         os.environ.get("PATIENT_LAB_RELEASE_ENABLED", "false").lower() == "true"
