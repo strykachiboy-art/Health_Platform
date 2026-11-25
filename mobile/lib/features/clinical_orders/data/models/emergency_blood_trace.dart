@@ -111,7 +111,7 @@ class EmergencyBloodTrace {
       final issued = json['issued_units'];
       final followups = json['lab_followups'];
       if (issued is! List ||
-          issued.isNotEmpty ||
+          (json['inventory_required'] != true && issued.isNotEmpty) ||
           followups is! List ||
           followups.isNotEmpty ||
           json['emergency_review_outcome'] != null) {
@@ -170,7 +170,8 @@ class EmergencyBloodTrace {
     }
     if (units.length != unitsIssued ||
         followups.length != unitsIssued ||
-        (unitsIssued > 0 && orderStatus != 'completed') ||
+        (unitsIssued > 0 && orderStatus != 'completed' &&
+            !(json['inventory_required'] == true && orderStatus == 'in_progress')) ||
         (orderStatus == 'completed' && unitsIssued == 0)) {
       throw const FormatException('Incomplete emergency release traceability.');
     }

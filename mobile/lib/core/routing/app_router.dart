@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/blood_bank/data/blood_bank_source.dart';
+import 'package:clinic_system_pro/features/blood_bank/presentation/blood_bank_workspace.dart';
 import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
 import 'package:clinic_system_pro/features/clinical_timeline/data/timeline_source.dart';
 import 'package:clinic_system_pro/features/unified_search/data/search_source.dart';
@@ -242,6 +244,29 @@ GoRouter createAppRouter({
     pharmacyInventorySource = null;
     labReadSource = null;
   }
+  // BB02 shares the existing authenticated client and guard for its entire lifetime.
+  final bbReader = clinicalOrdersDataSource;
+  final bbGuard = sessionNavigationGuard;
+  final bbSource = bbReader != null && bbGuard != null &&
+          identical(bbReader.sessionNavigationGuard, bbGuard)
+      ? BloodBankSource(api: bbReader.apiClient, loadSession: bbReader.loadSession,
+          guard: bbGuard, admissions: patientAdmissionDataSource)
+      : null;
+  Widget bbWorkspace(GoRouterState state) {
+    final source = bbSource;
+    if (source == null || !source.guard.canAccessProtectedRoutes) {
+      return const Scaffold(body: Center(child: Text('Blood Bank unavailable.')));
+    }
+    int? id(String key) => int.tryParse(state.pathParameters[key] ?? '');
+    for (final name in const ['patientId', 'orderId', 'transfusionId']) {
+      if (state.pathParameters.containsKey(name) &&
+          ((id(name) ?? 0) <= 0 || id(name)! > 2147483647)) {
+        return const Scaffold(body: Center(child: Text('Invalid Blood Bank record.')));
+      }
+    }
+    return BloodBankWorkspace(key: ValueKey(state.uri.path), source: source,
+        patientId: id('patientId'), orderId: id('orderId'), transfusionId: id('transfusionId'));
+  }
   // Retain one-shot clinical adapters for the router lifetime, keyed by exact
   // patient/record/action. Route revisits cannot manufacture another POST.
   final p23hActionAdapters = <String, Object>{};
@@ -460,6 +485,10 @@ GoRouter createAppRouter({
         state.matchedLocation,
       );
       if (authRedirect != null) return authRedirect;
+      if ((state.uri.path == '/blood-bank' || state.uri.path.startsWith('/blood-bank/')) &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       if (state.uri.path == '/unified-search' &&
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
@@ -1620,6 +1649,13 @@ GoRouter createAppRouter({
               );
             },
           ),
+          for (final path in const [
+            '/blood-bank',
+            '/blood-bank/order/:orderId',
+            '/blood-bank/patient/:patientId',
+            '/blood-bank/patient/:patientId/order/:orderId',
+            '/blood-bank/patient/:patientId/transfusion/:transfusionId',
+          ]) GoRoute(path: path, builder: (context, state) => bbWorkspace(state)),
           GoRoute(
             path: '/clinical-orders/blood-products',
             name: 'p23d-d-blood-lookup',
@@ -1638,6 +1674,8 @@ GoRouter createAppRouter({
               }
               return BloodProductOrdersScreen(
                 key: const ValueKey('p23d-d-blood-lookup'),
+                onOpenBloodBank: () => context.push<void>('/blood-bank'),
+                onOpenInventoryOrder: (order) => context.push<void>('/blood-bank/order/${order.id}'),
                 unifiedSource: source,
                 admissionDataSource: patientAdmissionDataSource,
               );
@@ -1670,6 +1708,8 @@ GoRouter createAppRouter({
               }
               return BloodProductOrdersScreen(
                 key: ValueKey('p23d-d-blood-patient-$patientId'),
+                onOpenBloodBank: () => context.push<void>('/blood-bank/patient/$patientId'),
+                onOpenInventoryOrder: (order) => context.push<void>('/blood-bank/patient/$patientId/order/${order.id}'),
                 unifiedSource: source,
                 admissionDataSource: admissions,
                 patientId: patientId,

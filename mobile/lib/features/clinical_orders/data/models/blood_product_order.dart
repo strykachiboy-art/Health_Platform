@@ -28,6 +28,7 @@ class BloodProductOrder {
     required this.completedAt,
     required this.cancelledAt,
     this.emergencyTrace,
+    this.inventoryRequired = false,
   });
 
   static const productTypes = <String>{
@@ -86,6 +87,7 @@ class BloodProductOrder {
   final String? completedAt;
   final String? cancelledAt;
   final EmergencyBloodTrace? emergencyTrace;
+  final bool inventoryRequired;
 
   bool get isOpen => status != 'completed' && status != 'cancelled';
   bool get canVerify => isOpen && compatibilityStatus == 'pending';
@@ -152,6 +154,35 @@ class BloodProductOrder {
     final type = _text(json, 'product_type', 40);
     final units = _int(json, 'units_requested');
     final issued = _int(json, 'units_issued', min: 0);
+    final inventoryFlag = json['inventory_required'];
+    if (inventoryFlag != null && inventoryFlag is! bool) {
+      throw const FormatException('Invalid inventory contract.');
+    }
+    final inventoryRequired = inventoryFlag == true;
+    if (inventoryRequired) {
+      final raw = json['issued_units'];
+      if (raw is! List || raw.length != issued || raw.length > 100) {
+        throw const FormatException('Missing physical issue evidence.');
+      }
+      final componentIds = <int>{};
+      final issueIds = <int>{};
+      final labels = <String>{};
+      for (final row in raw) {
+        if (row is! Map<String, dynamic> ||
+            _int(row, 'clinic_id') != clinic || _int(row, 'patient_id') != patient ||
+            _int(row, 'admission_id') != admission || _int(row, 'order_id') != id ||
+            !componentIds.add(_int(row, 'blood_unit_id')) ||
+            !issueIds.add(_int(row, 'id')) ||
+            !labels.add(_text(row, 'unit_identifier', 128)) ||
+            !bloodTypes.contains(_text(row, 'product_blood_type', 16)) ||
+            row['product_blood_type'] == 'unknown') {
+          throw const FormatException('Invalid physical issue scope.');
+        }
+        _int(row, 'compatibility_evidence_id');
+        _int(row, 'issued_by_staff_id');
+        _time(row, 'issued_at', required: true);
+      }
+    }
     final priority = _text(json, 'priority', 32);
     final status = _text(json, 'status', 32);
     final compatibility = _text(json, 'compatibility_status', 32);
@@ -213,7 +244,9 @@ class BloodProductOrder {
                 issued != 0)) ||
         (status != 'completed' &&
             status != 'cancelled' &&
-            (completedAt != null || cancelledAt != null || issued != 0))) {
+            (completedAt != null || cancelledAt != null ||
+                (issued != 0 && (!inventoryRequired || status != 'in_progress' ||
+                    issued >= units || fulfilledBy == null || compatibility == 'pending'))))) {
       throw const FormatException('Inconsistent blood-product lifecycle.');
     }
     final emergencyTrace = EmergencyBloodTrace.fromOrderJson(
@@ -250,6 +283,7 @@ class BloodProductOrder {
       completedAt: completedAt,
       cancelledAt: cancelledAt,
       emergencyTrace: emergencyTrace,
+      inventoryRequired: inventoryRequired,
     );
   }
 }

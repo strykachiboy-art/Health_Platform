@@ -522,6 +522,13 @@ List<HomeDestination> homeDestinationsFor({
         '/lab-release', Icons.science_outlined));
     }
   }
+  if (clinicContextId != null && clinicContextId > 0) {
+    if (const {'admin', 'doctor', 'nurse', 'lab_technician'}.contains(normalizedRole)) {
+      destinations.add(const HomeDestination('blood_bank', 'Blood Bank', '/blood-bank', Icons.bloodtype_outlined));
+    } else if (normalizedRole == 'patient') {
+      destinations.add(const HomeDestination('my_transfusions', 'My transfusions', '/blood-bank', Icons.bloodtype_outlined));
+    }
+  }
   return List<HomeDestination>.unmodifiable(destinations);
 }
 

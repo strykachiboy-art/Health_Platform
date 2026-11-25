@@ -58,6 +58,7 @@ class BloodProductRemoteDataSource {
 
   static bool _same(AuthTokenResponse a, AuthTokenResponse b) =>
       a.userId == b.userId &&
+      a.tenantId == b.tenantId &&
       a.clinicContextId == b.clinicContextId &&
       a.role.trim().toLowerCase() == b.role.trim().toLowerCase() &&
       a.accessToken == b.accessToken &&
@@ -228,7 +229,7 @@ class BloodProductRemoteDataSource {
     required String crossmatchReference,
     required bool laboratoryAttested,
   }) {
-    if (!order.canVerify || !laboratoryAttested) {
+    if (order.inventoryRequired || !order.canVerify || !laboratoryAttested) {
       throw ArgumentError('Manual laboratory verification is required.');
     }
     _required(crossmatchReference, 'crossmatchReference', 128);
@@ -272,7 +273,7 @@ class BloodProductRemoteDataSource {
     required String note,
     required bool issuanceAttested,
   }) {
-    if (!order.canFulfill ||
+    if (order.inventoryRequired || !order.canFulfill ||
         order.compatibilityStatus != 'compatible' ||
         !issuanceAttested ||
         unitsIssued < 1 ||
@@ -316,7 +317,7 @@ class BloodProductRemoteDataSource {
     required BloodProductOrder order,
     required String reason,
   }) {
-    if (!order.isOpen) {
+    if (order.inventoryRequired || !order.isOpen) {
       throw ArgumentError('Terminal order cannot be cancelled.');
     }
     _required(reason, 'reason', 10000);

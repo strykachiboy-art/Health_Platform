@@ -18,11 +18,15 @@ class BloodProductOrdersScreen extends StatefulWidget {
     required this.unifiedSource,
     this.admissionDataSource,
     this.patientId,
+    this.onOpenBloodBank,
+    this.onOpenInventoryOrder,
   });
 
   final ClinicalOrdersRemoteDataSource unifiedSource;
   final PatientAdmissionRemoteDataSource? admissionDataSource;
   final int? patientId;
+  final VoidCallback? onOpenBloodBank;
+  final ValueChanged<BloodProductOrder>? onOpenInventoryOrder;
 
   @override
   State<BloodProductOrdersScreen> createState() =>
@@ -432,7 +436,12 @@ class _BloodProductOrdersScreenState extends State<BloodProductOrdersScreen> {
         if (order.compatibilityStatus == 'emergency_release' ||
             order.emergencyTrace != null)
           _emergencyStatus(order),
-        if (_lab && order.canVerify) ...[
+        if (order.inventoryRequired) ...[
+          const Text('Physical inventory order. Use Blood Bank for live actions; no count-only issue.'),
+          if (widget.onOpenInventoryOrder != null)
+            OutlinedButton(onPressed: () => widget.onOpenInventoryOrder!(order), child: const Text('Open Blood Bank order')),
+        ],
+        if (_lab && !order.inventoryRequired && order.canVerify) ...[
           TextField(
             key: ValueKey('p23d-d-crossmatch-${order.id}'),
             controller: _crossmatch,
@@ -462,6 +471,7 @@ class _BloodProductOrdersScreenState extends State<BloodProductOrdersScreen> {
           ),
         ],
         if (_lab &&
+            !order.inventoryRequired &&
             order.canFulfill &&
             order.compatibilityStatus == 'compatible') ...[
           TextField(
@@ -496,7 +506,7 @@ class _BloodProductOrdersScreenState extends State<BloodProductOrdersScreen> {
             child: const Text('Record issue once'),
           ),
         ],
-        if (_doctor && _admission?.id == order.admissionId && order.isOpen) ...[
+        if (_doctor && !order.inventoryRequired && _admission?.id == order.admissionId && order.isOpen) ...[
           TextField(
             key: ValueKey('p23d-d-cancel-note-${order.id}'),
             controller: _actionNote,
@@ -517,7 +527,10 @@ class _BloodProductOrdersScreenState extends State<BloodProductOrdersScreen> {
   Widget build(BuildContext context) {
     final choices = BloodProductOrder.productTypes.toList()..sort();
     return Scaffold(
-      appBar: AppBar(title: const Text('Blood-product orders')),
+      appBar: AppBar(title: const Text('Blood-product orders'), actions: [
+        if (widget.onOpenBloodBank != null)
+          IconButton(tooltip: 'Open Blood Bank', onPressed: widget.onOpenBloodBank, icon: const Icon(Icons.bloodtype_outlined)),
+      ]),
       body: _loading
           ? const Center(
               child: CircularProgressIndicator(key: ValueKey('p23d-d-loading')),

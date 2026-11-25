@@ -4,6 +4,7 @@ import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.da
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
 
 const timelineCategories = <String>{
+  'blood_transfusion',
   'appointments',
   'consultations',
   'vitals',
@@ -100,6 +101,11 @@ const timelineEvents = <String, (String, String, String)>{
     'completed',
     'procedure_order',
   ),
+  'blood_component_issued': ('blood_transfusion', 'recorded', 'blood_product_order'),
+  'blood_transfusion_started': ('blood_transfusion', 'recorded', 'blood_transfusion'),
+  'blood_transfusion_completed': ('blood_transfusion', 'completed', 'blood_transfusion'),
+  'blood_transfusion_stopped': ('blood_transfusion', 'recorded', 'blood_transfusion'),
+  'blood_reaction_documented': ('blood_transfusion', 'recorded', 'blood_transfusion'),
   'surgical_case_plan_recorded': ('surgery', 'recorded', 'surgical_case'),
   'surgical_procedure_performance_recorded': (
     'surgery',
@@ -275,6 +281,8 @@ class TimelineEvent {
   String? route(int patientId) => switch (sourceKind) {
     'consultation' => '/consultations/patient/$patientId/$sourceId',
     'prescription' => '/patients/$patientId/prescriptions/$sourceId',
+    'blood_product_order' => '/blood-bank/patient/$patientId/order/$sourceId',
+    'blood_transfusion' => '/blood-bank/patient/$patientId/transfusion/$sourceId',
     'surgical_case' => '/surgery/cases/$sourceId',
     'appointment' => '/appointments/patient/$patientId',
     'lab_order' => '/patients/$patientId/lab-orders',
@@ -287,6 +295,8 @@ class TimelineEvent {
     'consultation',
     'prescription',
     'surgical_case',
+    'blood_product_order',
+    'blood_transfusion',
   }.contains(sourceKind);
 }
 
