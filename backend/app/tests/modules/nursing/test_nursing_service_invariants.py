@@ -966,6 +966,31 @@ def test_only_assigned_incoming_nurse_can_acknowledge_handoff(
         actor_staff_id=outgoing.id,
     )
 
+    from app.modules.nursing.models.admission_care_assignment_model import (
+        AdmissionCareAssignment,
+    )
+
+    # The designated incoming nurse still cannot take over an admission
+    # without an explicit current primary nurse assignment (CT3B).
+    with pytest.raises(ConflictError, match="No explicit current primary nurse"):
+        nursing_service.acknowledge_handoff(
+            handoff.id, clinic_id=clinic.id, actor_staff_id=incoming.id,
+        )
+    db.session.refresh(handoff)
+    assert handoff.status == NursingHandoffStatus.READY
+    assert handoff.acknowledged_at is None
+
+    # Seed the same explicit clinical allocation used by the CT3A fixtures.
+    admin = make_staff(clinic=clinic, role=Role.ADMIN)
+    assignment = AdmissionCareAssignment(
+        clinic_id=clinic.id, patient_id=admission.patient_id,
+        admission_id=admission.id, staff_id=outgoing.id,
+        assignment_kind="primary_nurse", assigned_by_user_id=admin.user_id,
+        assignment_reason="Synthetic initial clinical allocation", assigned_at=_db_now(),
+    )
+    db.session.add(assignment)
+    db.session.commit()
+
     with pytest.raises(
         ConflictError,
     ):
@@ -974,6 +999,10 @@ def test_only_assigned_incoming_nurse_can_acknowledge_handoff(
             clinic_id=clinic.id,
             actor_staff_id=stranger.id,
         )
+    db.session.refresh(assignment)
+    assert assignment.ended_at is None
+    db.session.refresh(handoff)
+    assert handoff.status == NursingHandoffStatus.READY
 
     acknowledged = (
         nursing_service
@@ -997,6 +1026,18 @@ def test_only_assigned_incoming_nurse_can_acknowledge_handoff(
         acknowledged.acknowledged_at
         is not None
     )
+    db.session.refresh(assignment)
+    assert assignment.ended_at is not None
+    assert assignment.ended_by_user_id == incoming.user_id
+    current = db.session.execute(db.select(AdmissionCareAssignment).where(
+        AdmissionCareAssignment.clinic_id == clinic.id,
+        AdmissionCareAssignment.admission_id == admission.id,
+        AdmissionCareAssignment.assignment_kind == "primary_nurse",
+        AdmissionCareAssignment.ended_at.is_(None),
+    )).scalar_one()
+    assert current.staff_id == incoming.id
+    assert current.assigned_at == assignment.ended_at
+
 
 
 def test_handoff_rejects_same_outgoing_and_incoming_nurse(

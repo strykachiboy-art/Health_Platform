@@ -121,31 +121,45 @@ def register_user(
 def issue_auth_tokens(
     user: User,
     clinic_context_id: int | None = None,
+    *,
+    tenant_id=None,
+    auto_assign_clinic: bool = True,
+    rotate_session: bool = False,
 ) -> dict:
-    if not isinstance(user, User):
-        raise ValidationError(
-            "Invalid user"
-        )
+    """Issue tokens only with server-validated tenant and clinic memberships.
 
-    if not user.is_active:
-        raise ValidationError(
-            "This account has been deactivated"
-        )
-
-    if clinic_context_id is not None:
-        if user.role is not Role.SUPER_ADMIN:
-            raise ValidationError(
-                "Only a super administrator can use a clinic context"
-            )
-
-        from app.core.auth.user.services.clinic_context_service import (
-            _get_active_clinic,
-        )
-
-        clinic_context_id = _get_active_clinic(
-            clinic_context_id
-        ).id
-
+    Unscoped login remains valid for newly onboarded patients; it grants no
+    organization or clinic authority. Organization admins receive no clinical
+    permission simply because of their organization role.
+    """
+    from app.modules.clinic.services.session_authority import (
+        bound_context_for_issuance, validate_platform_clinic,
+    )
+    if not isinstance(user, User) or not user.is_active:
+        raise ValidationError("Invalid or inactive user")
+    if rotate_session:
+        # Serialize competing context rotations and re-check the source JWT
+        # after acquiring the row lock, before auditing/minting a new session.
+        from flask_jwt_extended import get_jwt
+        from sqlalchemy import select
+        from app.extensions import db
+        from app.modules.clinic.services.session_authority import TenantContextDenied
+        user = db.session.execute(select(User).where(User.id == user.id)
+            .with_for_update().execution_options(populate_existing=True)).scalar_one()
+        claims = get_jwt()
+        if not user.is_active or claims.get('sub') != str(user.id) or claims.get('token_version') != user.token_version:
+            raise TenantContextDenied('Session changed before context rotation')
+    platform_clinic_id = None
+    if user.role is Role.SUPER_ADMIN and clinic_context_id is not None:
+        if tenant_id is not None:
+            from app.modules.clinic.services.session_authority import TenantContextDenied
+            raise TenantContextDenied('Platform session cannot bind clinical membership')
+        platform_clinic_id = validate_platform_clinic(user, clinic_context_id)
+        clinic_context_id = None
+    organization_id, selected_clinic_id = bound_context_for_issuance(
+        user, tenant_id=tenant_id, clinic_id=clinic_context_id,
+        auto_assign_clinic=auto_assign_clinic,
+    )
     # Central enforcement: no password, Google, refresh, or clinic-switch
     # caller may mint a Super Admin token without valid MFA evidence.
     from app.core.auth.user.services.super_admin_login_mfa_service import (
@@ -153,14 +167,28 @@ def issue_auth_tokens(
     )
     mfa_binding = require_token_issuance_authority(user)
 
-    access_claims = {
-        "role": user.role.value,
-        "token_version": user.token_version,
-    }
+    # A verified MFA JWT carries the pre-rotation token_version. Validate
+    # both authorities before rotating; only the new pair uses the new version.
+    # Callers of context-switch routes commit this change with the new session.
+    if rotate_session:
+        from app.core.auth.user.services.token_service import revoke_user_tokens
+        revoke_user_tokens(user.id)
 
-    refresh_claims = {
-        "token_version": user.token_version,
+    access_claims = {
+        'role': user.role.value,
+        'token_version': user.token_version,
     }
+    refresh_claims = {'token_version': user.token_version}
+    if organization_id is not None:
+        access_claims['tenant_id'] = organization_id
+        refresh_claims['tenant_id'] = organization_id
+    if selected_clinic_id is not None:
+        access_claims['clinic_context_id'] = selected_clinic_id
+        refresh_claims['clinic_context_id'] = selected_clinic_id
+    if platform_clinic_id is not None:
+        access_claims['platform_clinic_id'] = platform_clinic_id
+        refresh_claims['platform_clinic_id'] = platform_clinic_id
+        refresh_claims['role'] = Role.SUPER_ADMIN.value
     if mfa_binding is not None:
         access_claims["sa_mfa_verified"] = True
         access_claims["sa_mfa_binding"] = mfa_binding
@@ -168,26 +196,15 @@ def issue_auth_tokens(
         refresh_claims["sa_mfa_verified"] = True
         refresh_claims["sa_mfa_binding"] = mfa_binding
 
-    if clinic_context_id is not None:
-        access_claims["clinic_context_id"] = clinic_context_id
-        refresh_claims["clinic_context_id"] = clinic_context_id
-
     access_token = create_access_token(
-        identity=str(user.id),
-        additional_claims=access_claims,
-    )
-
+        identity=str(user.id), additional_claims=access_claims)
     refresh_token = create_refresh_token(
-        identity=str(user.id),
-        additional_claims=refresh_claims,
-    )
-
+        identity=str(user.id), additional_claims=refresh_claims)
     return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "user_id": user.id,
-        "role": user.role.value,
-        "clinic_context_id": clinic_context_id,
+        'access_token': access_token, 'refresh_token': refresh_token,
+        'user_id': user.id, 'role': user.role.value,
+        'tenant_id': organization_id, 'clinic_context_id': platform_clinic_id if platform_clinic_id is not None else selected_clinic_id,
+        'context_kind': 'platform' if user.role is Role.SUPER_ADMIN else 'clinical',
     }
 
 

@@ -217,4 +217,12 @@ def is_token_revoked(
         # Any provider/schema/policy failure must reject, not skip, MFA.
         return True
 
+    # Tenant membership and MFA are independent mandatory checks.
+    try:
+        from app.modules.clinic.services.session_authority import validate_bound_claims
+        if not validate_bound_claims(jwt_payload, user):
+            return True
+    except Exception:
+        return True
+
     return False

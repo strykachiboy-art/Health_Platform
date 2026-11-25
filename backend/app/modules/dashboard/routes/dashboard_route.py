@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from pydantic import ValidationError as PydanticValidationError
 
 from app.core.exceptions import DomainError, ValidationError
@@ -41,6 +41,52 @@ def _current_user_id() -> int:
         )
 
     return user_id
+
+
+def _enforce_clinic_dashboard_session(actor_id: int) -> None:
+    # Existing dashboard services use legacy assigned-clinic authority.
+    # Explicit multi-clinic session mismatches must fail closed.
+    from app.extensions import db
+    from app.core.auth.user.models.user_model import User
+    from app.core.enums.role_enums import Role
+    from app.modules.clinic.services.session_authority import TenantContextDenied
+    from app.modules.clinic.services.tenant_boundary import (
+        TenantAccessDenied, require_tenant_clinic_access,
+    )
+
+    actor = db.session.get(User, actor_id)
+    if actor is None or not actor.is_active:
+        raise TenantContextDenied('Active dashboard identity required')
+
+    # A patient's dashboard is about that specific authenticated patient;
+    # patient-first sign-up must not require clinical membership.
+    if actor.role is Role.PATIENT:
+        return
+
+    # The current super-admin implementation queries every tenant's clinical
+    # and operational tables. Platform-wide exception approval/audit is not
+    # implemented in GAP-B, so do not expose that endpoint.
+    if actor.role is Role.SUPER_ADMIN:
+        raise TenantContextDenied('Platform-wide clinical dashboard unavailable')
+
+    claims = get_jwt()
+    tenant_id = claims.get('tenant_id')
+    clinic_id = claims.get('clinic_context_id')
+    if (not isinstance(tenant_id, str) or type(clinic_id) is not int
+            or clinic_id <= 0):
+        raise TenantContextDenied('Explicit clinic-bound dashboard session required')
+
+    if actor.clinic_id != clinic_id:
+        raise TenantContextDenied('Selected clinic does not match dashboard data scope')
+
+    try:
+        require_tenant_clinic_access(
+            user_id=actor.id, organization_id=tenant_id, clinic_id=clinic_id)
+    except TenantAccessDenied as exc:
+        raise TenantContextDenied('Active clinical dashboard membership required') from exc
+
+    if actor.staff is not None and actor.staff.clinic_id != clinic_id:
+        raise TenantContextDenied('Staff dashboard clinic mismatch')
 
 
 def _validation_error_response(
@@ -93,6 +139,7 @@ def _domain_error_response(
 def get_dashboard_route():
     try:
         actor_id = _current_user_id()
+        _enforce_clinic_dashboard_session(actor_id)
 
         query_payload = {
             key: request.args.get(key)

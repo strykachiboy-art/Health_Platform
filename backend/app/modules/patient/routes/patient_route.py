@@ -155,9 +155,8 @@ def _get_patient_in_current_clinic(
         )
 
     if patient.clinic_id != clinic_id:
-        raise ValidationError(
-            "Patient does not belong to the authenticated user's clinic"
-        )
+        # Foreign and nonexistent patient IDs must be indistinguishable.
+        raise NotFoundError(f"Patient {patient_id} not found")
 
     return patient
 

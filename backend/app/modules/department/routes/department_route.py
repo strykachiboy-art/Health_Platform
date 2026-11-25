@@ -59,7 +59,8 @@ DEPARTMENT_VIEW_ROLES = (
 
 
 def _current_clinic_id() -> int:
-    clinic_id = getattr(g, "current_clinic_id", None)
+    from app.core.utils.decorators import get_administrative_clinic_id
+    clinic_id = get_administrative_clinic_id()
 
     if (
         isinstance(clinic_id, bool)

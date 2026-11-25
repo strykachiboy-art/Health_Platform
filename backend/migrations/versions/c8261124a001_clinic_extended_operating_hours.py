@@ -28,7 +28,9 @@ _NEW = (
 
 
 def upgrade():
-    op.drop_constraint(_CHECK, _TABLE, type_="check")
+    # Earlier migration histories may not have installed the ORM-only check.
+    # Always install and validate the replacement; never rewrite schedules.
+    op.drop_constraint(_CHECK, _TABLE, type_="check", if_exists=True)
     op.create_check_constraint(_CHECK, _TABLE, _NEW)
 
 

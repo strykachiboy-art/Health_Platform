@@ -89,29 +89,13 @@ def build_audit_query(
 
     statement = db.select(AuditLog)
 
-    if role is Role.ADMIN:
-        if actor_clinic_id is None:
-            raise PermissionError(
-                "Audit administrator must belong to a clinic"
-            )
-
-        statement = statement.where(
-            AuditLog.clinic_id == actor_clinic_id
-        )
-
-        if (
-            target_clinic_id is not None
-            and target_clinic_id != actor_clinic_id
-        ):
-            raise PermissionError(
-                "Audit clinic scope is not permitted"
-            )
-
-    elif role is Role.SUPER_ADMIN:
-        if target_clinic_id is not None:
-            statement = statement.where(
-                AuditLog.clinic_id == target_clinic_id
-            )
+    # Even a platform super-admin must select an explicitly authorized
+    # clinic; there is no ambient global clinical/audit scope.
+    if actor_clinic_id is None:
+        raise PermissionError("An authorized clinic context is required")
+    statement = statement.where(AuditLog.clinic_id == actor_clinic_id)
+    if target_clinic_id is not None and target_clinic_id != actor_clinic_id:
+        raise PermissionError("Audit clinic scope is not permitted")
 
     if user_id is not None:
         statement = statement.where(

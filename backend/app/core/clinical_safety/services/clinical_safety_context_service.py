@@ -881,6 +881,17 @@ def build_clinical_safety_context(
         evaluation_at=at,
     )
 
+    # Preserve consultation diagnoses; add only explicitly confirmed, current
+    # problem-list ICD diagnoses as of the requested evaluation timestamp.
+    from flask import current_app
+    problem_conditions = None
+    if current_app.testing and current_app.config.get('PATIENT_PROBLEM_LIST_ENABLED', False) is True:
+        from app.modules.patient.problems.safety import confirmed_problem_context
+        problem_conditions, problem_codes = confirmed_problem_context(
+            clinic_id=clinic_id, patient_id=patient.id, evaluation_at=at,
+        )
+        diagnosis_codes = list(dict.fromkeys([*diagnosis_codes, *problem_codes]))
+
     labs = _latest_completed_labs(
         clinic_id=clinic_id,
         patient_id=patient.id,
@@ -936,6 +947,9 @@ def build_clinical_safety_context(
         "medications": medications,
         "evaluation_at": at.isoformat(),
     }
+
+    if problem_conditions is not None:
+        context['problem_conditions'] = problem_conditions
 
     proposed = _normalize_proposed_medication(
         proposed_medication

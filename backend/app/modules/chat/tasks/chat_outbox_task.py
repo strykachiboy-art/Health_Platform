@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.extensions import celery, socketio
+from app.extensions import celery, socketio, db
+from app.core.auth.user.models.user_model import User
+from app.modules.clinic.models.clinic_model import Clinic
+from app.modules.clinic.services.tenant_boundary import (
+    TenantAccessDenied, require_tenant_clinic_access,
+)
 from app.modules.chat.realtime.chat_socket import (
     user_room,
 )
@@ -39,10 +44,10 @@ def _emit_outbox_event(event) -> None:
         )
 
     payload = {
+        **event.payload,
         "event_id": event.id,
         "clinic_id": event.clinic_id,
         "event_type": event.event_type,
-        **event.payload,
     }
 
     conversation_id = payload.get(
@@ -66,13 +71,29 @@ def _emit_outbox_event(event) -> None:
         )
     )
 
+    clinic = db.session.get(Clinic, event.clinic_id)
+    if clinic is None:
+        raise ValueError("Chat event clinic unavailable")
     for user_id in recipient_user_ids:
+        recipient = db.session.get(User, user_id)
+        if recipient is None or not recipient.is_active:
+            continue
+        try:
+            require_tenant_clinic_access(
+                user_id=user_id,
+                organization_id=clinic.organization_id,
+                clinic_id=clinic.id,
+            )
+        except TenantAccessDenied:
+            # Revoked or cross-tenant recipients never receive live events.
+            continue
         socketio.emit(
             event_name,
             payload,
             room=user_room(
                 event.clinic_id,
                 user_id,
+                recipient.token_version,
             ),
             namespace="/chat",
         )

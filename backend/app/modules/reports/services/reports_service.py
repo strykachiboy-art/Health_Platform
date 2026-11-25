@@ -768,99 +768,37 @@ def _is_admin(
 def _resolve_clinic_scope(
     requester: Staff,
     requested_clinic_id: int | None,
-) -> int | None:
+) -> int:
+    """Every report read/write requires an explicit current clinic grant.
+
+    A platform role is not a clinical grant. This guard also applies to
+    direct service calls outside HTTP, including future async callers.
     """
-    Resolve the clinic scope available to the requester.
-
-    Super Admin:
-        may select any clinic or omit it for system-wide listing.
-
-    Admin / Non-admin:
-        are restricted to their own clinic.
-    """
-    if _is_super_admin(
-        requester
-    ):
-        if requested_clinic_id is None:
-            return None
-
-        requested_clinic_id = _validate_positive_id(
-            requested_clinic_id,
-            "clinic_id",
-        )
-
-        _get_clinic(
-            requested_clinic_id
-        )
-
-        return requested_clinic_id
-
-    requester_clinic_id = (
-        _get_requester_clinic_id(
-            requester
-        )
+    from app.modules.clinic.services.tenant_boundary import (
+        require_tenant_clinic_access, TenantAccessDenied,
     )
-
-    if requester_clinic_id is None:
-        raise ValidationError(
-            "Authenticated staff is not assigned to a clinic"
-        )
-
+    actor = getattr(requester, "user", None)
+    if actor is None or not actor.is_active:
+        raise ValidationError("Authorized clinical user required")
     if requested_clinic_id is None:
-        return requester_clinic_id
-
-    requested_clinic_id = _validate_positive_id(
-        requested_clinic_id,
-        "clinic_id",
-    )
-
-    if (
-        requested_clinic_id
-        != requester_clinic_id
-    ):
-        raise ValidationError(
-            "Unauthorized clinic access"
+        requested_clinic_id = _get_requester_clinic_id(requester)
+    if requested_clinic_id is None:
+        raise ValidationError("Explicit authorized clinic context required")
+    cid = _validate_positive_id(requested_clinic_id, "clinic_id")
+    clinic = _get_clinic(cid)
+    try:
+        require_tenant_clinic_access(
+            user_id=actor.id,
+            organization_id=clinic.organization_id,
+            clinic_id=cid,
         )
+    except TenantAccessDenied as exc:
+        raise ValidationError("Unauthorized clinic access") from exc
+    return cid
 
-    return requester_clinic_id
-
-
-def _validate_report_generator(
-    requester: Staff,
-    clinic_id: int,
-) -> Staff:
-    """
-    Validate that the authenticated requester may generate
-    a report for the requested clinic.
-    """
-    _validate_positive_id(
-        clinic_id,
-        "clinic_id",
-    )
-
-    if _is_super_admin(
-        requester
-    ):
-        return requester
-
-    requester_clinic_id = (
-        _get_requester_clinic_id(
-            requester
-        )
-    )
-
-    if requester_clinic_id is None:
-        raise ValidationError(
-            "Authenticated staff is not assigned to a clinic"
-        )
-
-    if requester_clinic_id != clinic_id:
-        raise ValidationError(
-            "Unauthorized clinic access"
-        )
-
+def _validate_report_generator(requester: Staff, clinic_id: int) -> Staff:
+    _resolve_clinic_scope(requester, clinic_id)
     return requester
-
 
 def _validate_generated_by_scope(
     generated_by_id: int,
@@ -2291,20 +2229,36 @@ def _save_report_file(
 
 def _delete_report_file(
     file_path: str | None,
+    *,
+    clinic_id: int | None = None,
 ) -> None:
-    """
-    Safely delete a generated report file.
-    """
-    if not file_path:
-        return
+    """Delete only a report artifact inside the configured report root.
 
+    Resolves symlinks before deleting. When invoked from report generation,
+    checks the authenticated clinic's file prefix too. Never delete a path
+    passed from outside the server-owned report directory.
+    """
+    if file_path is None:
+        return
+    if not isinstance(file_path, str) or not file_path.strip():
+        raise ValidationError("Invalid report artifact path")
+    if clinic_id is not None:
+        clinic_id = _validate_positive_id(clinic_id, "clinic_id")
+    storage_root = os.path.realpath(_get_storage_directory())
+    target = os.path.realpath(os.path.abspath(file_path))
     try:
-        if os.path.exists(
-            file_path
-        ):
-            os.remove(
-                file_path
-            )
+        allowed_root = os.path.commonpath((storage_root, target)) == storage_root
+    except ValueError:
+        allowed_root = False
+    if not allowed_root or target == storage_root:
+        raise ValidationError("Report artifact is outside the storage root")
+    if clinic_id is not None:
+        name = os.path.basename(target)
+        if not name.startswith(f"clinic_{clinic_id}_"):
+            raise ValidationError("Report artifact is outside the clinic scope")
+    try:
+        if os.path.isfile(target):
+            os.remove(target)
     except OSError:
         pass
 
@@ -2339,10 +2293,12 @@ def get_report(
             f"Report {report_id} not found"
         )
 
-    clinic_scope = _resolve_clinic_scope(
-        requester,
-        report.clinic_id,
-    )
+    if report.clinic_id is None:
+        raise NotFoundError("Report not found")
+    try:
+        clinic_scope = _resolve_clinic_scope(requester, report.clinic_id)
+    except (ValidationError, NotFoundError) as exc:
+        raise NotFoundError("Report not found") from exc
 
     if (
         clinic_scope is not None
@@ -2771,6 +2727,7 @@ def generate_report(
         db.session.rollback()
 
         _delete_report_file(
-            file_path
+            file_path,
+            clinic_id=clinic_id,
         )
         raise

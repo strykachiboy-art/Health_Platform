@@ -22,7 +22,7 @@ from app.core.notifications.services.notification_service import (
     mark_all_notifications_read,
     mark_notification_read,
 )
-from app.core.utils.decorators import get_current_clinic_id, role_required
+from app.core.utils.decorators import get_administrative_clinic_id, role_required
 from app.extensions import db
 
 
@@ -111,8 +111,12 @@ def _inbox_clinic_id(user):
         from flask import g
         if g.current_user_role != Role.SUPER_ADMIN.value:
             raise ValidationError("Super admin role context mismatch")
-        return get_current_clinic_id(required=True)
-    return user.clinic_id
+        return get_administrative_clinic_id(required=True)
+    # Unscoped/stale clinical sessions cannot inherit an assigned clinic.
+    clinic_id = get_administrative_clinic_id(required=True)
+    if clinic_id != user.clinic_id:
+        raise ValidationError('Notification clinic scope mismatch')
+    return clinic_id
 
 
 def _serialize_notification(notification):

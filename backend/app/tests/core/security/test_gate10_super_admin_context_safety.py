@@ -85,10 +85,11 @@ def test_super_admin_context_selection_and_clear_are_explicit(
         "source": "selected",
     }
 
-    assert selected_access["clinic_context_id"] == (
+    assert selected_access["platform_clinic_id"] == (
         clinic.id
     )
 
+    assert "tenant_id" not in selected_access and "clinic_context_id" not in selected_access
     clear_response = client.delete(
         CLINIC_CONTEXT_ENDPOINT,
         headers=selected_headers,
@@ -106,6 +107,8 @@ def test_super_admin_context_selection_and_clear_are_explicit(
     )
 
     assert "clinic_context_id" not in cleared_access
+    assert "platform_clinic_id" not in cleared_access
+    assert "tenant_id" not in cleared_access
 
     cleared_headers = {
         "Authorization": (

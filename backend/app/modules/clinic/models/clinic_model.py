@@ -34,12 +34,25 @@ class Clinic(db.Model):
             "AND CAST(closing_time AS VARCHAR) IN ('00:00:00', '00:00:00.000000'))",
             name="ck_clinics_valid_opening_hours",
         ),
+        # GAP-A created this constraint in the migration; make the ORM metadata
+        # consistent so GAP-B composite clinic-membership FKs can be tested.
+        db.UniqueConstraint('id', 'organization_id', name='uq_clinics_id_organization_id'),
     )
 
     id = db.Column(
         db.Integer,
         primary_key=True,
     )
+
+    # GAP-A: mandatory organization owner. Existing parent relationship is unchanged.
+    organization_id = db.Column(
+        db.UUID(as_uuid=True),
+        db.ForeignKey('hospital_organizations.id'),
+        nullable=False,
+        index=True,
+    )
+
+    organization = db.relationship('HospitalOrganization', back_populates='clinics')
 
     name = db.Column(
         db.String(150),

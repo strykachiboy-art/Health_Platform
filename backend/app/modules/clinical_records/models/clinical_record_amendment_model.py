@@ -19,7 +19,7 @@ class ClinicalRecordAmendment(db.Model):
             "'nursing_note', "
             "'medication_administration', "
             "'medication_reconciliation', "
-            "'discharge_summary', 'lab_report', 'staged_radiology_report'"
+            "'discharge_summary', 'lab_report', 'staged_radiology_report', 'patient_problem'"
             ")",
             name="ck_clinical_record_amendments_type",
         ),

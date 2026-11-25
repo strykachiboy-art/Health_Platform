@@ -1115,3 +1115,14 @@ def discharge_summary_amendments_route(admission_id: int):
             "total": len(rows),
         }
     ), 200
+
+
+@ward_bp.get('/admissions/<int:admission_id>/problem-context')
+@role_required(Role.DOCTOR, Role.NURSE)
+def admission_problem_context_route(admission_id):
+    """Current confirmed problem review for nursing and discharge planning."""
+    from app.modules.patient.problems.routes import _respond
+    from app.modules.patient.problems.workflow_context import admission_problem_context
+    if request.args:
+        return jsonify({'success': False, 'error': 'Unsupported query parameters'}), 400
+    return _respond(admission_problem_context, admission_id)

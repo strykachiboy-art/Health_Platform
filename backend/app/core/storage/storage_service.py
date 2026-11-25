@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from uuid import uuid4
+import re
 
 from flask import current_app
 from werkzeug.datastructures import FileStorage
@@ -383,10 +384,22 @@ def profile_image_url(
     if storage_key is None:
         return None
 
-    storage_key = storage_key.strip()
+    if not isinstance(storage_key, str):
+        raise ValidationError("Invalid public profile image storage key")
 
+    storage_key = storage_key.strip()
     if not storage_key:
         return None
+
+    # No path traversal, query strings, fragments, alternate URL schemes,
+    # clinic document keys, encoded separators, or cross-category links.
+    # Legacy harmless profile_images/public.png remains compatible.
+    if re.fullmatch(
+        r"profile_images/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(?:jpg|png|webp)",
+        storage_key,
+        flags=re.ASCII,
+    ) is None:
+        raise ValidationError("Invalid public profile image storage key")
 
     base_url = current_app.config.get(
         "STORAGE_PUBLIC_BASE_URL"

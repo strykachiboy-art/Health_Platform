@@ -156,9 +156,12 @@ def test_process_chat_outbox_emits_and_processes_event(
 
     assert emission["event_name"] == expected_socket_event
     assert emission["namespace"] == "/chat"
+    # Revoked sessions have a different room generation: exact versioned
+    # room is now part of the security contract.
     assert emission["room"] == user_room(
         clinic.id,
         user.id,
+        user.token_version,
     )
 
     assert emission["payload"] == {

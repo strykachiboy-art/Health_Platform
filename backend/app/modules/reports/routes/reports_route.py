@@ -160,34 +160,11 @@ def _get_current_user_id(
     )
 
 
-def _get_current_clinic_id(
-    user: User | None = None,
-) -> int:
-    """Return the authenticated user's clinic ID."""
-    user = user or _get_current_user()
-
-    clinic_id = getattr(
-        user,
-        "clinic_id",
-        None,
-    )
-
-    if clinic_id is None:
-        raise DomainError(
-            "Authenticated user is not assigned to a clinic"
-        )
-
-    if (
-        isinstance(clinic_id, bool)
-        or not isinstance(clinic_id, int)
-        or clinic_id <= 0
-    ):
-        raise DomainError(
-            "Authenticated user has an invalid clinic assignment"
-        )
-
-    return clinic_id
-
+def _get_current_clinic_id(user: User | None = None) -> int:
+    # Authorization comes from the revalidated tenant/clinic JWT, never from
+    # an account's default clinic field or its platform role.
+    from app.core.utils.decorators import get_current_clinic_id
+    return get_current_clinic_id(required=True)
 
 def _is_super_admin(
     user: User,
@@ -399,14 +376,9 @@ def get_reports():
             query_payload
         )
 
-        if _is_super_admin(
+        clinic_id = _get_current_clinic_id(
             user
-        ):
-            clinic_id = None
-        else:
-            clinic_id = _get_current_clinic_id(
-                user
-            )
+        )
 
         result = list_reports(
             requester_user_id=requester_user_id,
@@ -459,11 +431,16 @@ def get_single_report(
         requester_user_id = _get_current_user_id(
             user
         )
+        bound_clinic_id = _get_current_clinic_id(user)
 
         report = get_report(
             report_id=report_id,
             requester_user_id=requester_user_id,
         )
+
+        if report.clinic_id != bound_clinic_id:
+            from app.core.exceptions import NotFoundError
+            raise NotFoundError("Report not found")
 
         return (
             jsonify(

@@ -22,6 +22,8 @@ from app.core.utils.decorators import transactional
 from app.extensions import celery, db
 from app.modules.clinic.models.clinic_model import Clinic
 from app.modules.clinic.services.clinic_operating_modes import normalize_explicit_operating_mode
+from app.modules.clinic.models.organization_model import HospitalOrganization
+from uuid import UUID
 
 
 # =====================================================================
@@ -411,6 +413,8 @@ def create_clinic(
     opening_time=None,
     closing_time=None,
     operating_mode=None,
+    organization_id=None,
+    platform_provisioner_id=None,
 ) -> Clinic:
     name = _validate_name(name)
 
@@ -458,12 +462,37 @@ def create_clinic(
 
         _ensure_active_clinic(parent)
 
+    # Ownership must come from an existing parent or an explicitly validated
+    # server-side provisioning contract, never an untrusted client claim.
+    if parent is not None:
+        owner_id = parent.organization_id
+    else:
+        if organization_id is None and platform_provisioner_id is not None:
+            from app.core.auth.user.models.user_model import User
+            from app.core.enums.role_enums import Role
+            actor = db.session.get(User, platform_provisioner_id)
+            if actor is None or not actor.is_active or actor.role is not Role.SUPER_ADMIN:
+                raise ValidationError('GAPA_ROOT_PLATFORM_PROVISIONER_REQUIRED')
+            owner = HospitalOrganization(name=name)
+            db.session.add(owner)
+            db.session.flush()
+            owner_id = owner.id
+        else:
+            if not isinstance(organization_id, UUID):
+                raise ValidationError('GAPA_ROOT_ORGANIZATION_REQUIRED')
+            owner_id = organization_id
+            if db.session.get(HospitalOrganization, owner_id) is None:
+                raise ValidationError('GAPA_UNKNOWN_ORGANIZATION')
+    if owner_id is None:
+        raise ValidationError('GAPA_OWNER_NOT_RESOLVED')
+
     _check_name_conflict(
         name=name,
         parent_clinic_id=parent_clinic_id,
     )
 
     clinic = Clinic(
+        organization_id=owner_id,
         name=name,
         clinic_type=clinic_type,
         status=ClinicStatus.ACTIVE,
@@ -509,6 +538,7 @@ def create_clinic(
             "is_headquarters": (
                 clinic.is_headquarters
             ),
+            "organization_id": str(clinic.organization_id),
             "opening_time": _audit_value(clinic.opening_time),
             "closing_time": _audit_value(clinic.closing_time),
             "timezone": clinic.timezone,
@@ -571,7 +601,11 @@ def create_branch(
         parent_clinic_id=parent.id,
     )
 
+    if parent.organization_id is None:
+        raise ValidationError('GAPA_PARENT_OWNER_REQUIRED')
+
     branch = Clinic(
+        organization_id=parent.organization_id,
         name=name,
         clinic_type=clinic_type,
         status=ClinicStatus.ACTIVE,
@@ -851,6 +885,8 @@ def update_branch_configuration(
             clinic,
             new_parent,
         )
+        if clinic.organization_id is None or new_parent.organization_id != clinic.organization_id:
+            raise ValidationError('GAPA_CROSS_ORGANIZATION_REPARENT_DENIED')
 
         _check_name_conflict(
             name=clinic.name,

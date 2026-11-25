@@ -859,15 +859,44 @@ def test_amendment_schema_forbids_extra_fields():
         )
 
 
+@pytest.fixture()
+def bound_medrec_headers(app, clinic):
+    """Explicit synthetic grants, with the real tenant-bound token issuer."""
+    from app.core.auth.user.services.user_service import issue_auth_tokens
+    from app.modules.clinic.models.organization_model import (
+        TenantMembership, ClinicMembership,
+    )
+
+    def issue(user, role):
+        assert user.role == role and user.clinic_id == clinic.id
+        db.session.add(TenantMembership(
+            user_id=user.id, organization_id=clinic.organization_id,
+            role="member", status="active", is_active=True,
+        ))
+        db.session.flush()
+        db.session.add(ClinicMembership(
+            user_id=user.id, organization_id=clinic.organization_id,
+            clinic_id=clinic.id, role=role.value, is_active=True,
+        ))
+        db.session.commit()
+        with app.test_request_context():
+            pair = issue_auth_tokens(user, clinic_context_id=clinic.id)
+        assert pair["clinic_context_id"] == clinic.id
+        assert pair["tenant_id"] == str(clinic.organization_id)
+        return {"Authorization": "Bearer " + pair["access_token"]}
+
+    return issue
+
+
 def test_nurse_cannot_create_reconciliation_route(
     ctx,
     clinic,
     client,
-    auth_headers_for,
+    bound_medrec_headers,
 ):
     response = client.post(
         "/api/v1/medication-reconciliations",
-        headers=auth_headers_for(
+        headers=bound_medrec_headers(
             ctx["nurse"].user,
             role=Role.NURSE,
         ),
@@ -888,11 +917,11 @@ def test_doctor_can_create_reconciliation_route(
     ctx,
     clinic,
     client,
-    auth_headers_for,
+    bound_medrec_headers,
 ):
     response = client.post(
         "/api/v1/medication-reconciliations",
-        headers=auth_headers_for(
+        headers=bound_medrec_headers(
             ctx["doctor"].user,
             role=Role.DOCTOR,
         ),

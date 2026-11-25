@@ -4,6 +4,12 @@ import pytest
 
 from app.core.enums.clinic_enums import ClinicStatus
 from app.core.enums.role_enums import Role
+from flask_jwt_extended import create_access_token
+
+def _forged(user, **claims):
+    token = create_access_token(identity=str(user.id), additional_claims={"role": user.role.value, "token_version": user.token_version, **claims})
+    return {"Authorization": "Bearer " + token}
+
 
 
 CLINIC_CONTEXT_ENDPOINT = (
@@ -38,16 +44,8 @@ def test_normal_user_cannot_switch_clinic_with_forged_jwt_context(
         ),
     )
 
-    assert response.status_code == 200
-
-    body = response.get_json()
-
-    assert body["success"] is True
-    assert body["data"] == {
-        "clinic_id": assigned_clinic.id,
-        "clinic_name": assigned_clinic.name,
-        "source": "assigned",
-    }
+    assert response.status_code == 401
+    assert "data" not in response.get_json()
 
 
 @pytest.mark.parametrize(
@@ -78,12 +76,11 @@ def test_super_admin_rejects_malformed_jwt_clinic_context(
         ),
     )
 
-    assert response.status_code == 422
-
-    body = response.get_json()
-
-    assert body["success"] is False
-    assert body["error"] == "Invalid clinic context"
+    assert response.status_code == 401
+    assert "data" not in response.get_json()
+    response = client.get(CLINIC_CONTEXT_ENDPOINT, headers=_forged(user, platform_clinic_id=tampered_context))
+    assert response.status_code == 401
+    assert "data" not in response.get_json()
 
 
 def test_super_admin_rejects_nonexistent_jwt_clinic_context(
@@ -103,12 +100,11 @@ def test_super_admin_rejects_nonexistent_jwt_clinic_context(
         ),
     )
 
-    assert response.status_code == 404
-
-    body = response.get_json()
-
-    assert body["success"] is False
-    assert body["error"] == "Clinic 999999 not found"
+    assert response.status_code == 401
+    assert "data" not in response.get_json()
+    response = client.get(CLINIC_CONTEXT_ENDPOINT, headers=_forged(user, platform_clinic_id=999999))
+    assert response.status_code == 401
+    assert "data" not in response.get_json()
 
 
 def test_super_admin_rejects_inactive_jwt_clinic_context(
@@ -134,9 +130,8 @@ def test_super_admin_rejects_inactive_jwt_clinic_context(
         ),
     )
 
-    assert response.status_code == 422
-
-    body = response.get_json()
-
-    assert body["success"] is False
-    assert body["error"] == "Selected clinic is not active"
+    assert response.status_code == 401
+    assert "data" not in response.get_json()
+    response = client.get(CLINIC_CONTEXT_ENDPOINT, headers=_forged(user, platform_clinic_id=inactive_clinic.id))
+    assert response.status_code == 401
+    assert "data" not in response.get_json()

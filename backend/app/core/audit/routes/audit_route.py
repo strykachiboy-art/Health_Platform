@@ -115,31 +115,23 @@ def _get_filters() -> AuditLogFilterSchema:
     )
 
 
-def _authorize_audit_reader(user: User) -> None:
+def _authorize_audit_reader(user: User) -> int:
+    from app.core.utils.decorators import get_current_clinic_id
+    clinic_id = get_current_clinic_id(required=True)
     if not can_read_audit_logs(
         actor_role=user.role,
-        actor_clinic_id=user.clinic_id,
-        target_clinic_id=user.clinic_id,
+        actor_clinic_id=clinic_id,
+        target_clinic_id=clinic_id,
     ):
-        raise ValidationError(
-            "Insufficient audit permissions"
-        )
-
-    if (
-        user.role is Role.ADMIN
-        and user.clinic_id is None
-    ):
-        raise ValidationError(
-            "Audit administrator must belong to a clinic"
-        )
-
+        raise ValidationError("Insufficient audit permissions")
+    return clinic_id
 
 @audit_bp.get("")
 @role_required(*AUDIT_READ_ROLES)
 def get_audit_logs():
     user = _get_current_user()
 
-    _authorize_audit_reader(user)
+    audit_clinic_id = _authorize_audit_reader(user)
 
     filters = _get_filters()
 
@@ -149,7 +141,7 @@ def get_audit_logs():
 
     result = list_audit_logs(
         actor_role=user.role,
-        actor_clinic_id=user.clinic_id,
+        actor_clinic_id=audit_clinic_id,
         **query_filters,
         **pagination,
     )
@@ -169,12 +161,12 @@ def get_audit_logs():
 def get_single_audit_log(log_id: int):
     user = _get_current_user()
 
-    _authorize_audit_reader(user)
+    audit_clinic_id = _authorize_audit_reader(user)
 
     audit_log = get_audit_log(
         audit_log_id=log_id,
         actor_role=user.role,
-        actor_clinic_id=user.clinic_id,
+        actor_clinic_id=audit_clinic_id,
     )
 
     if audit_log is None:

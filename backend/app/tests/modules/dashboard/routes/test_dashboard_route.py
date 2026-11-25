@@ -20,6 +20,89 @@ from app.modules.dashboard.schemas.dashboard_schema import (
 
 
 # ============================================================================
+# GAP-B: legitimate signed tenant + clinic test fixture
+# ============================================================================
+
+@pytest.fixture(autouse=True)
+def _gapb_revocation_store_for_legacy_dashboard(app, monkeypatch):
+    from app import extensions
+
+    class Store:
+        def exists(self, key):
+            return 0
+        def setex(self, key, ttl, value):
+            return True
+
+    monkeypatch.setattr(extensions, 'redis_client', Store())
+
+
+@pytest.fixture()
+def clinic(db, make_clinic):
+    # Synthetic tenancy must exist before the child clinic INSERT.
+    from uuid import uuid4
+    from app.modules.clinic.models.organization_model import HospitalOrganization
+
+    organization = HospitalOrganization(
+        id=uuid4(), name='GAPB dashboard legacy fixture organization',
+    )
+    db.session.add(organization)
+    db.session.flush()
+    return make_clinic(
+        name='GAPB legacy dashboard root',
+        organization_id=organization.id,
+        is_headquarters=True,
+    )
+
+
+@pytest.fixture()
+def make_auth_headers(app, db, clinic):
+    # Build real clinic-bound JWTs for existing route assertions.
+    from flask_jwt_extended import create_access_token
+    from app.modules.clinic.models.organization_model import (
+        HospitalOrganization, TenantMembership, ClinicMembership,
+    )
+
+    organization = db.session.get(HospitalOrganization, clinic.organization_id)
+    if organization is None:
+        raise AssertionError('Synthetic clinic organization is missing')
+
+    def _make(user, role=None):
+        if user.clinic_id != clinic.id:
+            raise AssertionError('Legacy dashboard actor has unexpected clinic')
+        existing = db.session.query(TenantMembership).filter_by(
+            organization_id=organization.id, user_id=user.id,
+        ).one_or_none()
+        if existing is None:
+            db.session.add(TenantMembership(
+                organization_id=organization.id, user_id=user.id,
+                role='member', status='active', is_active=True,
+            ))
+            # Materialize the composite FK parent before inserting its child.
+            # GAP-B explicitly requires (organization_id, user_id) to exist.
+            db.session.flush()
+            db.session.add(ClinicMembership(
+                organization_id=organization.id, clinic_id=clinic.id,
+                user_id=user.id, role=user.role.value, is_active=True,
+            ))
+            db.session.commit()
+        claimed_role = role if role is not None else user.role
+        claimed_role = getattr(claimed_role, 'value', claimed_role)
+        with app.test_request_context():
+            token = create_access_token(
+                identity=str(user.id),
+                additional_claims={
+                    'role': claimed_role,
+                    'token_version': user.token_version,
+                    'tenant_id': str(organization.id),
+                    'clinic_context_id': clinic.id,
+                },
+            )
+        return {'Authorization': 'Bearer ' + token}
+
+    return _make
+
+
+# ============================================================================
 # TEST HELPERS
 # ============================================================================
 

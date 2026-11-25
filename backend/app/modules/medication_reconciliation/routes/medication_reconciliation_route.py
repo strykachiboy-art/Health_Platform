@@ -435,3 +435,14 @@ def get_reconciliation_amendments_route(
         ],
         "total": len(rows),
     }), 200
+
+
+@medication_reconciliation_bp.get('/<int:reconciliation_id>/problem-context')
+@role_required(*MED_RECON_VIEW_ROLES)
+def medication_problem_context_route(reconciliation_id):
+    """Bounded current-condition review; does not alter medication decisions."""
+    from app.modules.patient.problems.routes import _respond
+    from app.modules.patient.problems.workflow_context import medication_problem_context
+    if request.args:
+        return jsonify({'success': False, 'error': 'Unsupported query parameters'}), 400
+    return _respond(medication_problem_context, reconciliation_id)

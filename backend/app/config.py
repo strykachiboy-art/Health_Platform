@@ -37,6 +37,12 @@ class Config:
         os.environ.get("CLINIC_EXTENDED_OPERATING_HOURS_ENABLED", "false").lower() == "true"
     )
 
+    # Staged longitudinal problem list; requires both migration histories and
+    # explicit tenant-bound clinical sessions. Never enabled by deployment here.
+    PATIENT_PROBLEM_LIST_ENABLED = (
+        os.environ.get("PATIENT_PROBLEM_LIST_ENABLED", "false").lower() == "true"
+    )
+
     # Patient result release is a separate, disabled-by-default feature.
     PATIENT_LAB_RELEASE_ENABLED = (
         os.environ.get("PATIENT_LAB_RELEASE_ENABLED", "false").lower() == "true"

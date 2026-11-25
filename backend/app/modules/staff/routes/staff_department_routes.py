@@ -11,7 +11,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.utils.decorators import (
-    get_current_clinic_id,
+    get_administrative_clinic_id,
     role_required,
 )
 
@@ -197,7 +197,7 @@ def assign_staff_department_route(
 
         membership = assign_staff_to_department(
             staff_id=staff_id,
-            clinic_id=get_current_clinic_id(
+            clinic_id=get_administrative_clinic_id(
                 required=True
             ),
             department_id=department_id,
@@ -238,7 +238,7 @@ def list_staff_departments_route(
     try:
         memberships = get_staff_departments(
             staff_id=staff_id,
-            clinic_id=get_current_clinic_id(
+            clinic_id=get_administrative_clinic_id(
                 required=True
             ),
             include_ended=query.include_ended,
@@ -277,7 +277,7 @@ def list_department_staff_route(
     try:
         memberships = list_department_staff(
             department_id=department_id,
-            clinic_id=get_current_clinic_id(
+            clinic_id=get_administrative_clinic_id(
                 required=True
             ),
             include_ended=query.include_ended,
@@ -312,7 +312,7 @@ def set_primary_staff_department_route(
     try:
         membership = set_primary_department(
             staff_id=staff_id,
-            clinic_id=get_current_clinic_id(
+            clinic_id=get_administrative_clinic_id(
                 required=True
             ),
             department_id=department_id,
@@ -347,7 +347,7 @@ def remove_staff_department_route(
     try:
         membership = remove_staff_from_department(
             staff_id=staff_id,
-            clinic_id=get_current_clinic_id(
+            clinic_id=get_administrative_clinic_id(
                 required=True
             ),
             department_id=department_id,

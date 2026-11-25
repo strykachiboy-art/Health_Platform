@@ -519,11 +519,12 @@ def select_clinic_context_route():
             user_id=user.id,
             clinic_id=data.clinic_id,
         )
-
+        # Invalidate BOTH old access and refresh tokens, not access JTI alone.
         tokens = issue_auth_tokens(
-            user,
-            clinic_context_id=data.clinic_id,
+            user, clinic_context_id=data.clinic_id,
+            auto_assign_clinic=False, rotate_session=True,
         )
+        db.session.commit()
     except DomainError as exc:
         db.session.rollback()
 
@@ -580,18 +581,17 @@ def clear_clinic_context_route():
 
     try:
         jwt_payload = get_jwt()
-        clinic_context_id = jwt_payload.get(
-            "clinic_context_id"
-        )
+        clinic_context_id = jwt_payload.get("platform_clinic_id")
 
         clear_clinic_context(
             user_id=user.id,
             clinic_id=clinic_context_id,
         )
-
         tokens = issue_auth_tokens(
-            user
+            user, tenant_id=jwt_payload.get('tenant_id'),
+            auto_assign_clinic=False, rotate_session=True,
         )
+        db.session.commit()
     except DomainError as exc:
         db.session.rollback()
 
@@ -657,19 +657,14 @@ def refresh():
     try:
         jwt_payload = get_jwt()
 
-        clinic_context_id = None
-
+        from app.modules.clinic.services.session_authority import context_from_claims
+        tenant_id, clinic_context_id = context_from_claims(user.id, jwt_payload)
         if user.role is Role.SUPER_ADMIN:
-            clinic_context_id = resolve_effective_clinic_id(
-                user_id=user.id,
-                jwt_payload=jwt_payload,
-            )
-
+            clinic_context_id = jwt_payload.get('platform_clinic_id')
         revoke_current_token()
-
         tokens = issue_auth_tokens(
-            user,
-            clinic_context_id=clinic_context_id,
+            user, clinic_context_id=clinic_context_id,
+            tenant_id=tenant_id, auto_assign_clinic=False,
         )
 
     except DomainError as exc:
@@ -781,3 +776,100 @@ def logout():
             "message": "Successfully logged out",
         }
     ), 200
+
+
+# ================================================================
+# GAP-B: server-authorized organization and multi-clinic selection.
+# Does not replace the legacy super-admin clinic endpoints.
+# ================================================================
+
+def _gapb_authenticated_user():
+    from app.modules.clinic.services.session_authority import TenantContextDenied
+    try:
+        identity = int(get_jwt_identity())
+    except (TypeError, ValueError):
+        raise TenantContextDenied('Invalid authenticated identity')
+    user = db.session.get(User, identity)
+    if user is None or not user.is_active:
+        raise TenantContextDenied('Inactive authenticated identity')
+    return user
+
+
+@auth_bp.get('/tenant-context')
+@jwt_required()
+def get_tenant_context_route():
+    from app.modules.clinic.services.session_authority import context_from_claims
+    try:
+        user = _gapb_authenticated_user()
+        tenant_id, clinic_id = context_from_claims(user.id, get_jwt())
+    except DomainError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), exc.status_code
+    return jsonify({'success': True, 'data': {
+        'tenant_id': tenant_id, 'clinic_id': clinic_id,
+    }}), 200
+
+
+@auth_bp.post('/tenant-context')
+@jwt_required()
+def select_tenant_context_route():
+    from app.core.auth.user.services.clinic_context_service import select_tenant_context
+    try:
+        user = _gapb_authenticated_user()
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) != {'organization_id'}:
+            return jsonify({'success': False, 'error': 'Organization ID is required'}), 400
+        select_tenant_context(user.id, payload['organization_id'])
+        tokens = issue_auth_tokens(
+            user, tenant_id=payload['organization_id'], auto_assign_clinic=False, rotate_session=True)
+        db.session.commit()
+    except DomainError as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), exc.status_code
+    return jsonify({'success': True, 'data': tokens}), 200
+
+
+@auth_bp.post('/tenant-context/clinic')
+@jwt_required()
+def select_member_clinic_context_route():
+    from app.core.auth.user.services.clinic_context_service import select_clinic_context
+    from app.modules.clinic.services.session_authority import TenantContextDenied
+    try:
+        user = _gapb_authenticated_user()
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) != {'clinic_id'}:
+            return jsonify({'success': False, 'error': 'Clinic ID is required'}), 400
+        clinic_id = payload['clinic_id']
+        if type(clinic_id) is not int or clinic_id <= 0:
+            raise TenantContextDenied('Invalid clinic ID')
+        from app.modules.clinic.models.clinic_model import Clinic
+        from app.modules.clinic.services.session_authority import context_from_claims
+        selected_tenant_id, _ = context_from_claims(user.id, get_jwt())
+        target_clinic = db.session.get(Clinic, clinic_id)
+        if (selected_tenant_id is None or target_clinic is None or str(target_clinic.organization_id) != selected_tenant_id):
+            raise TenantContextDenied('Select this organization before switching clinics')
+        select_clinic_context(user.id, clinic_id)
+        tokens = issue_auth_tokens(
+            user, clinic_context_id=clinic_id, tenant_id=selected_tenant_id,
+            auto_assign_clinic=False, rotate_session=True)
+        db.session.commit()
+    except DomainError as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), exc.status_code
+    return jsonify({'success': True, 'data': tokens}), 200
+
+
+@auth_bp.delete('/tenant-context')
+@jwt_required()
+def clear_tenant_context_route():
+    from app.core.auth.user.services.clinic_context_service import clear_tenant_context
+    from app.modules.clinic.services.session_authority import context_from_claims
+    try:
+        user = _gapb_authenticated_user()
+        old_tenant_id, _ = context_from_claims(user.id, get_jwt())
+        clear_tenant_context(user.id, previous_tenant_id=old_tenant_id)
+        tokens = issue_auth_tokens(user, auto_assign_clinic=False, rotate_session=True)
+        db.session.commit()
+    except DomainError as exc:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(exc)}), exc.status_code
+    return jsonify({'success': True, 'data': tokens}), 200

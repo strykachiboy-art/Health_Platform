@@ -82,6 +82,19 @@ def get_current_clinic_id(*, required: bool = False) -> int | None:
     return clinic_id
 
 
+def get_administrative_clinic_id(*, required: bool = False) -> int | None:
+    """Use only in pre-existing platform administration paths, never clinical routes."""
+    _load_auth_context()
+    if g.current_user_role == Role.SUPER_ADMIN.value:
+        from app.modules.clinic.services.session_authority import platform_context_from_claims
+        clinic_id = platform_context_from_claims(g.current_user_id, get_jwt())
+    else:
+        clinic_id = getattr(g, 'current_clinic_id', None)
+    if required and clinic_id is None:
+        raise ValidationError('Clinic context is required')
+    return clinic_id
+
+
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):

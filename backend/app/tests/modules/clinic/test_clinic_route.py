@@ -4,6 +4,21 @@ from app.core.enums.clinic_enums import ClinicStatus, ClinicType
 from app.core.enums.role_enums import Role
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.modules.clinic.routes import clinic_route
+from app.core.auth.user.services.user_service import issue_auth_tokens
+from app.extensions import db
+from app.modules.clinic.models.organization_model import ClinicMembership, HospitalOrganization
+
+
+def _grant(user, clinic):
+    # Positive fixture only. No production fallback, no broad implicit grants.
+    db.session.add(ClinicMembership(user_id=user.id, clinic_id=clinic.id,
+        organization_id=clinic.organization_id, role=user.role.value, is_active=True))
+    db.session.flush()
+
+
+def _platform_headers(user, clinic):
+    return {"Authorization": "Bearer " + issue_auth_tokens(user, clinic_context_id=clinic.id)["access_token"]}
+
 
 
 # ============================================================================
@@ -598,7 +613,7 @@ class TestCreateClinicRoute:
 
 
 class TestListClinicsRoute:
-    def test_admin_lists_all_clinics(
+    def test_admin_lists_only_explicitly_granted_clinics(
         self,
         client,
         make_clinic,
@@ -609,6 +624,8 @@ class TestListClinicsRoute:
             name="Second Clinic",
         )
 
+        _grant(user, second)
+        ungranted = make_clinic(name="Ungrantable sibling")
         headers = admin_headers(auth_headers_for, user)
 
         response = client.get(
@@ -625,6 +642,9 @@ class TestListClinicsRoute:
         assert user.clinic_id in ids
         assert second.id in ids
 
+        assert ungranted.id not in ids
+        assert ids == {user.clinic_id, second.id}
+
     def test_admin_can_filter_by_status(
         self,
         client,
@@ -633,6 +653,7 @@ class TestListClinicsRoute:
         user,
         auth_headers_for,
     ):
+        _grant(user, suspended_clinic)
         headers = admin_headers(auth_headers_for, user)
 
         response = client.get(
@@ -762,7 +783,7 @@ class TestListClinicsRoute:
 
         assert (
             response.get_json()["error"]
-            == "User is not assigned to a clinic"
+            == "Clinic context is required"
         )
 
 
@@ -772,7 +793,7 @@ class TestListClinicsRoute:
 
 
 class TestGetClinicRoute:
-    def test_admin_gets_any_clinic(
+    def test_admin_gets_explicitly_granted_clinic(
         self,
         client,
         make_clinic,
@@ -783,6 +804,9 @@ class TestGetClinicRoute:
             name="Other Clinic",
         )
 
+        denied = client.get(f"/api/v1/clinics/{other_clinic.id}", headers=admin_headers(auth_headers_for, user))
+        assert denied.status_code == 403 and "data" not in denied.get_json()
+        _grant(user, other_clinic)
         headers = admin_headers(auth_headers_for, user)
 
         response = client.get(
@@ -922,7 +946,7 @@ class TestSuperAdminClinicRegistryReadParity:
         sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
         response = client.get(
             "/api/v1/clinics",
-            headers=auth_headers_for(sa, clinic_context_id=selected.id),
+            headers=_platform_headers(sa, selected),
         )
         assert response.status_code == 200
         ids = {item["id"] for item in response.get_json()["data"]}
@@ -966,7 +990,7 @@ class TestSuperAdminClinicRegistryReadParity:
         sa = make_user(clinic=None, role=Role.SUPER_ADMIN)
         response = client.get(
             f"/api/v1/clinics/{other.id}",
-            headers=auth_headers_for(sa, clinic_context_id=selected.id),
+            headers=_platform_headers(sa, selected),
         )
         assert response.status_code == 200
         assert response.get_json()["data"]["id"] == other.id
@@ -1035,6 +1059,8 @@ class TestListClinicBranchesRoute:
             parent_clinic_id=clinic.id,
         )
 
+        _grant(user, branch)
+        ungranted = make_clinic(name="Unassigned Branch", parent_clinic_id=clinic.id)
         headers = admin_headers(auth_headers_for, user)
 
         response = client.get(
@@ -1049,6 +1075,8 @@ class TestListClinicBranchesRoute:
         assert len(data) == 1
         assert data[0]["id"] == branch.id
         assert data[0]["parent_clinic_id"] == clinic.id
+
+        assert all(row["id"] != ungranted.id for row in data)
 
     def test_non_admin_can_list_own_clinic_branches(
         self,
@@ -1068,6 +1096,8 @@ class TestListClinicBranchesRoute:
             role=Role.DOCTOR,
         )
 
+        _grant(doctor, branch)
+        ungranted = make_clinic(name="Other unassigned branch", parent_clinic_id=clinic.id)
         headers = user_headers(
             auth_headers_for,
             doctor,
@@ -1080,6 +1110,8 @@ class TestListClinicBranchesRoute:
 
         assert response.status_code == 200
         assert response.get_json()["data"][0]["id"] == branch.id
+
+        assert [row["id"] for row in response.get_json()["data"]] == [branch.id]
 
     def test_non_admin_cannot_list_other_clinic_branches(
         self,
@@ -1292,6 +1324,8 @@ class TestUpdateClinicBranchConfigurationRoute:
             name="New Parent",
         )
 
+        _grant(user, branch)
+        _grant(user, new_parent)
         headers = admin_headers(auth_headers_for, user)
 
         response = client.patch(
@@ -1321,6 +1355,7 @@ class TestUpdateClinicBranchConfigurationRoute:
             parent_clinic_id=clinic.id,
         )
 
+        _grant(user, branch)
         headers = admin_headers(auth_headers_for, user)
 
         response = client.patch(
@@ -1421,6 +1456,7 @@ class TestUpdateClinicBranchConfigurationRoute:
             parent_clinic_id=clinic.id,
         )
 
+        _grant(user, branch)
         headers = admin_headers(auth_headers_for, user)
 
         response = client.patch(
@@ -2032,7 +2068,7 @@ class TestClinicRouteExceptionMapping:
 
         monkeypatch.setattr(
             clinic_route,
-            "list_clinics",
+            "list_authorized_clinics_for_user",
             fake_list_clinics,
         )
 
@@ -2054,6 +2090,7 @@ class TestClinicRouteExceptionMapping:
         self,
         client,
         user,
+        clinic,
         auth_headers_for,
         monkeypatch,
     ):
@@ -2069,7 +2106,7 @@ class TestClinicRouteExceptionMapping:
         headers = admin_headers(auth_headers_for, user)
 
         response = client.get(
-            "/api/v1/clinics/123",
+            f"/api/v1/clinics/{clinic.id}",
             headers=headers,
         )
 
@@ -2084,6 +2121,7 @@ class TestClinicRouteExceptionMapping:
         self,
         client,
         user,
+        clinic,
         auth_headers_for,
         monkeypatch,
     ):
@@ -2099,7 +2137,7 @@ class TestClinicRouteExceptionMapping:
         headers = admin_headers(auth_headers_for, user)
 
         response = client.get(
-            "/api/v1/clinics/123/branches",
+            f"/api/v1/clinics/{clinic.id}/branches",
             headers=headers,
         )
 
@@ -2216,6 +2254,7 @@ class TestClinicRouteExceptionMapping:
         self,
         client,
         user,
+        clinic,
         auth_headers_for,
         monkeypatch,
     ):
@@ -2231,7 +2270,7 @@ class TestClinicRouteExceptionMapping:
         headers = admin_headers(auth_headers_for, user)
 
         response = client.patch(
-            "/api/v1/clinics/123/status",
+            f"/api/v1/clinics/{clinic.id}/status",
             json={
                 "status": ClinicStatus.ACTIVE.value,
             },
@@ -2283,6 +2322,7 @@ class TestClinicRouteExceptionMapping:
         self,
         client,
         user,
+        clinic,
         auth_headers_for,
         monkeypatch,
     ):
@@ -2298,7 +2338,7 @@ class TestClinicRouteExceptionMapping:
         headers = admin_headers(auth_headers_for, user)
 
         response = client.patch(
-            "/api/v1/clinics/123/ai-credits",
+            f"/api/v1/clinics/{clinic.id}/ai-credits",
             json={
                 "amount": 10,
             },
@@ -2350,6 +2390,7 @@ class TestClinicRouteExceptionMapping:
         self,
         client,
         user,
+        clinic,
         auth_headers_for,
         monkeypatch,
     ):
@@ -2365,7 +2406,7 @@ class TestClinicRouteExceptionMapping:
         headers = admin_headers(auth_headers_for, user)
 
         response = client.post(
-            "/api/v1/clinics/123/api-token/regenerate",
+            f"/api/v1/clinics/{clinic.id}/api-token/regenerate",
             headers=headers,
         )
 
@@ -2547,7 +2588,7 @@ class TestClinicTenantIsolation:
 
         assert response.status_code == 403
 
-    def test_admin_can_cross_tenant_read(
+    def test_admin_cannot_cross_tenant_read(
         self,
         client,
         clinic,
@@ -2555,7 +2596,10 @@ class TestClinicTenantIsolation:
         user,
         auth_headers_for,
     ):
+        owner = HospitalOrganization(name="Foreign tenant")
+        db.session.add(owner); db.session.flush()
         other = make_clinic(
+            organization_id=owner.id,
             name="Other Clinic",
         )
 
@@ -2569,5 +2613,36 @@ class TestClinicTenantIsolation:
             headers=headers,
         )
 
-        assert response.status_code == 200
-        assert response.get_json()["data"]["id"] == other.id
+        assert response.status_code == 403
+        assert "data" not in response.get_json()
+
+
+def test_reparent_requires_explicit_target_and_parent_grants(client, clinic, make_clinic, user, auth_headers_for):
+    branch = make_clinic(name="Granted reparent target", parent_clinic_id=clinic.id)
+    parent = make_clinic(name="Ungranted parent")
+    _grant(user, branch)
+    headers = admin_headers(auth_headers_for, user)
+    response = client.patch(f"/api/v1/clinics/{branch.id}/branch-configuration",
+                            headers=headers, json={"parent_clinic_id": parent.id})
+    assert response.status_code == 403
+    db.session.refresh(branch)
+    assert branch.parent_clinic_id == clinic.id
+    _grant(user, parent)
+    response = client.patch(f"/api/v1/clinics/{branch.id}/branch-configuration",
+                            headers=headers, json={"parent_clinic_id": parent.id})
+    assert response.status_code == 200
+    assert response.get_json()["data"]["parent_clinic_id"] == parent.id
+
+
+def test_suspended_clinic_management_does_not_authorize_clinical_session(client, clinic, user, auth_headers_for):
+    from app.modules.clinic.services.tenant_boundary import require_tenant_clinic_access, TenantAccessDenied
+    headers = admin_headers(auth_headers_for, user)
+    path = f"/api/v1/clinics/{clinic.id}/status"
+    assert client.patch(path, headers=headers, json={"status": "suspended"}).status_code == 200
+    with pytest.raises(TenantAccessDenied):
+        require_tenant_clinic_access(user_id=user.id, organization_id=clinic.organization_id, clinic_id=clinic.id)
+    assert client.get(f"/api/v1/clinics/{clinic.id}", headers=headers).status_code == 401
+    tenant = issue_auth_tokens(user, tenant_id=clinic.organization_id, auto_assign_clinic=False)
+    response = client.patch(path, headers={"Authorization": "Bearer " + tenant["access_token"]}, json={"status": "active"})
+    assert response.status_code == 200
+    assert response.get_json()["data"]["status"] == "active"

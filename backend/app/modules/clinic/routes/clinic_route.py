@@ -11,6 +11,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.auth.user.models.user_model import User
+from app.modules.clinic.models.clinic_model import Clinic
 from app.core.utils.decorators import role_required
 
 from app.modules.clinic.schemas.clinic_schema import (
@@ -23,6 +24,10 @@ from app.modules.clinic.schemas.clinic_schema import (
 )
 
 from app.modules.clinic.services.clinic_operating_modes import operating_status
+from app.modules.clinic.services.tenant_boundary import (
+    TenantAccessDenied, require_tenant_clinic_access, list_authorized_clinics_for_user,
+    require_tenant_clinic_management,
+)
 from app.modules.clinic.services.clinic_service import (
     add_ai_credits,
     change_status,
@@ -134,15 +139,6 @@ def _serialize_clinic(clinic):
 # AUTHORIZATION HELPERS
 # ============================================================================
 
-def _is_system_clinic_reader():
-    role = getattr(g, "current_user_role", None)
-
-    if isinstance(role, Role):
-        return role in (Role.ADMIN, Role.SUPER_ADMIN)
-
-    return role in (Role.ADMIN.value, Role.SUPER_ADMIN.value)
-
-
 def _get_current_user():
     identity = get_jwt_identity()
 
@@ -168,76 +164,39 @@ def _get_current_user():
     return user
 
 
-def _get_authorized_clinic(clinic_id: int):
-    """
-    Enforce clinic tenant isolation.
-
-    ADMIN and SUPER_ADMIN may read any clinic.
-    Other authorized roles may read only their assigned clinic.
-    """
-
-    if clinic_id <= 0:
-        return (
-            jsonify(
-                {
-                    "error": "Invalid clinic ID",
-                }
-            ),
-            400,
-        )
-
+def _get_authorized_clinic(clinic_id: int, *, parent=False):
+    """Platform registry authority is not a tenant clinical membership."""
+    if type(clinic_id) is not int or clinic_id <= 0:
+        return jsonify({'error': 'Invalid clinic ID'}), 400
     user = _get_current_user()
-
-    if _is_system_clinic_reader():
+    clinic = db.session.get(Clinic, clinic_id)
+    if clinic is None:
+        return jsonify({'error': f'{"Parent clinic" if parent else "Clinic"} {clinic_id} not found'}), 404
+    # The two root registry routes retain their existing platform role gate.
+    # Admin-only mutation routes independently exclude Super Admin.
+    if user.role is Role.SUPER_ADMIN:
         return None
-
-    user_clinic_id = getattr(user, "clinic_id", None)
-
-    if user_clinic_id is None:
-        return (
-            jsonify(
-                {
-                    "error": "User is not assigned to a clinic",
-                }
-            ),
-            403,
-        )
-
-    if user_clinic_id != clinic_id:
-        return (
-            jsonify(
-                {
-                    "error": "You do not have access to this clinic",
-                }
-            ),
-            403,
-        )
-
+    from flask_jwt_extended import get_jwt
+    claims = get_jwt()
+    if user.role is not Role.ADMIN and claims.get('clinic_context_id') != clinic_id:
+        return jsonify({'error': 'You do not have access to this clinic'}), 403
+    try:
+        if user.role is Role.ADMIN:
+            require_tenant_clinic_management(user_id=user.id,
+                organization_id=claims.get('tenant_id'), clinic_id=clinic_id)
+        else:
+            require_tenant_clinic_access(user_id=user.id,
+                organization_id=claims.get('tenant_id'), clinic_id=clinic_id)
+    except TenantAccessDenied:
+        return jsonify({'error': 'Tenant clinic access denied'}), 403
     return None
 
 
 def _get_authorized_user_clinic():
-    """
-    Return the authenticated user's clinic ID.
-
-    ADMIN users may not have a clinic_id because they operate
-    at the system level.
-    """
-
-    user = _get_current_user()
-
-    clinic_id = getattr(user, "clinic_id", None)
-
+    """Use the server-validated selected clinic, never the ambient assignment."""
+    clinic_id = g.current_clinic_id
     if clinic_id is None:
-        return (
-            jsonify(
-                {
-                    "error": "User is not assigned to a clinic",
-                }
-            ),
-            403,
-        )
-
+        return jsonify({'error': 'Clinic context is required'}), 403
     return clinic_id
 
 
@@ -336,6 +295,13 @@ def create_clinic_route():
     if error:
         return error
 
+    # Existing Super Admin-only root creation. A new root gets a server-owned
+    # organization atomically; no clinic grants or paid-plan claims are minted.
+    if payload.parent_clinic_id is not None:
+        denied = _get_authorized_clinic(payload.parent_clinic_id, parent=True)
+        if denied is not None:
+            return denied
+
     try:
         clinic = create_clinic(
             name=payload.name,
@@ -351,6 +317,7 @@ def create_clinic_route():
             opening_time=payload.opening_time,
             closing_time=payload.closing_time,
             operating_mode=payload.operating_mode,
+            platform_provisioner_id=_get_current_user().id,
         )
 
         return jsonify(
@@ -391,10 +358,16 @@ def list_clinics_route():
         return parsed_status
 
     try:
-        if _is_system_clinic_reader():
-            clinics = list_clinics(
+        if _get_current_user().role is Role.SUPER_ADMIN:
+            clinics = list_clinics(status=parsed_status)
+        elif _get_current_user().role is Role.ADMIN:
+            clinics = list_authorized_clinics_for_user(
+                user_id=_get_current_user().id,
                 status=parsed_status,
             )
+            from flask_jwt_extended import get_jwt
+            selected_org = get_jwt().get('tenant_id')
+            clinics = [c for c in clinics if str(c.organization_id) == selected_org]
 
         else:
             clinic_id = _get_authorized_user_clinic()
@@ -402,6 +375,9 @@ def list_clinics_route():
             if isinstance(clinic_id, tuple):
                 return clinic_id
 
+            denied = _get_authorized_clinic(clinic_id)
+            if denied is not None:
+                return denied
             clinic = get_clinic(clinic_id)
 
             if (
@@ -492,9 +468,12 @@ def list_clinic_branches_route(clinic_id: int):
         return authorization_error
 
     try:
-        branches = list_branches(
-            clinic_id=clinic_id,
-        )
+        branches = list_branches(clinic_id=clinic_id)
+        from flask_jwt_extended import get_jwt
+        selected_org = get_jwt().get('tenant_id')
+        allowed = {c.id for c in list_authorized_clinics_for_user(user_id=_get_current_user().id)
+                   if str(c.organization_id) == selected_org}
+        branches = [b for b in branches if b.id in allowed]
 
         return jsonify(
             {
@@ -529,6 +508,10 @@ def create_clinic_branch_route(clinic_id: int):
 
     if error:
         return error
+
+    denied = _get_authorized_clinic(clinic_id, parent=True)
+    if denied is not None:
+        return denied
 
     try:
         branch = create_branch(
@@ -596,6 +579,13 @@ def update_clinic_branch_configuration_route(
             exclude_unset=True,
         )
 
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
+        if fields.get('parent_clinic_id') is not None:
+            denied = _get_authorized_clinic(fields['parent_clinic_id'], parent=True)
+            if denied is not None:
+                return denied
         clinic = update_branch_configuration(
             clinic_id=clinic_id,
             **fields,
@@ -652,6 +642,9 @@ def update_clinic_route(clinic_id: int):
             exclude_unset=True,
         )
 
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
         clinic = update_clinic(
             clinic_id=clinic_id,
             **fields,
@@ -701,6 +694,9 @@ def update_clinic_status_route(clinic_id: int):
         return error
 
     try:
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
         clinic = change_status(
             clinic_id=clinic_id,
             new_status=payload.status,
@@ -750,6 +746,9 @@ def update_clinic_ai_credits_route(clinic_id: int):
         return error
 
     try:
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
         clinic = add_ai_credits(
             clinic_id=clinic_id,
             amount=payload.amount,
@@ -798,6 +797,9 @@ def regenerate_clinic_api_token_route(
     clinic_id: int,
 ):
     try:
+        denied = _get_authorized_clinic(clinic_id)
+        if denied is not None:
+            return denied
         token = regenerate_api_token(
             clinic_id=clinic_id,
         )

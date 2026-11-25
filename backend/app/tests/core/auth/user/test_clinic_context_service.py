@@ -10,6 +10,12 @@ from app.extensions import db
 from app.core.enums.clinic_enums import ClinicStatus
 from app.core.enums.role_enums import Role
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.auth.user.services.user_service import issue_auth_tokens
+from app.modules.clinic.services.session_authority import TenantContextDenied
+
+def _claims(user):
+    return decode_token(issue_auth_tokens(user)["access_token"])
+
 
 
 def test_get_user_preloads_staff_for_profile_hot_path(
@@ -40,7 +46,7 @@ def test_resolve_effective_clinic_id_returns_assigned_clinic_for_normal_user(
 ):
     result = clinic_context_service.resolve_effective_clinic_id(
         user_id=user.id,
-        jwt_payload={},
+        jwt_payload=_claims(user),
     )
 
     assert result == clinic.id
@@ -66,23 +72,25 @@ def test_resolve_effective_clinic_id_rejects_inactive_assigned_clinic(
     make_clinic,
 ):
     clinic = make_clinic(
-        status=ClinicStatus.INACTIVE,
+        status=ClinicStatus.ACTIVE,
     )
     user = make_user(
         clinic=clinic,
     )
 
-    with pytest.raises(
-        ValidationError,
-        match="Assigned clinic is not active",
-    ):
+    claims = _claims(user)
+    clinic.status = ClinicStatus.INACTIVE
+    db.session.flush()
+    with pytest.raises(TenantContextDenied):
         clinic_context_service.resolve_effective_clinic_id(
             user_id=user.id,
-            jwt_payload={},
+            jwt_payload=claims,
         )
 
+    assert clinic_context_service.resolve_effective_clinic_id(user.id, {}) is None
 
-def test_resolve_effective_clinic_id_returns_selected_active_clinic(
+
+def test_platform_selected_active_clinic_never_becomes_clinical_context(
     make_user,
     make_clinic,
 ):
@@ -94,11 +102,12 @@ def test_resolve_effective_clinic_id_returns_selected_active_clinic(
     result = clinic_context_service.resolve_effective_clinic_id(
         user_id=user.id,
         jwt_payload={
-            "clinic_context_id": clinic.id,
+            "platform_clinic_id": clinic.id, "role": "super_admin",
         },
     )
 
-    assert result == clinic.id
+    assert result is None
+    assert clinic_context_service.get_current_clinic_context(user.id, {"platform_clinic_id": clinic.id, "role": "super_admin"})["clinic_id"] == clinic.id
 
 
 @pytest.mark.parametrize(
@@ -122,13 +131,12 @@ def test_resolve_effective_clinic_id_rejects_invalid_context(
     )
 
     with pytest.raises(
-        ValidationError,
-        match="Invalid clinic context",
+        TenantContextDenied,
     ):
         clinic_context_service.resolve_effective_clinic_id(
             user_id=user.id,
             jwt_payload={
-                "clinic_context_id": clinic_context_id,
+                "platform_clinic_id": clinic_context_id, "role": "super_admin",
             },
         )
 
@@ -153,13 +161,12 @@ def test_resolve_effective_clinic_id_rejects_inactive_context(
     )
 
     with pytest.raises(
-        ValidationError,
-        match="Selected clinic is not active",
+        TenantContextDenied,
     ):
         clinic_context_service.resolve_effective_clinic_id(
             user_id=user.id,
             jwt_payload={
-                "clinic_context_id": clinic.id,
+                "platform_clinic_id": clinic.id, "role": "super_admin",
             },
         )
 
@@ -172,8 +179,7 @@ def test_resolve_effective_clinic_id_rejects_non_mapping_payload(
     )
 
     with pytest.raises(
-        ValidationError,
-        match="Invalid clinic context",
+        TenantContextDenied,
     ):
         clinic_context_service.resolve_effective_clinic_id(
             user_id=user.id,
@@ -200,7 +206,7 @@ def test_get_current_clinic_context_returns_assigned_for_normal_user(
 ):
     result = clinic_context_service.get_current_clinic_context(
         user_id=user.id,
-        jwt_payload={},
+        jwt_payload=_claims(user),
     )
 
     assert result == {
@@ -241,7 +247,7 @@ def test_get_current_clinic_context_returns_selected_for_super_admin(
     result = clinic_context_service.get_current_clinic_context(
         user_id=user.id,
         jwt_payload={
-            "clinic_context_id": clinic.id,
+            "platform_clinic_id": clinic.id, "role": "super_admin",
         },
     )
 
@@ -252,18 +258,19 @@ def test_get_current_clinic_context_returns_selected_for_super_admin(
     }
 
 
-def test_select_clinic_context_requires_super_admin(
+def test_select_clinical_context_requires_explicit_grant(
     user,
     clinic,
+    make_clinic,
 ):
-    with pytest.raises(
-        ValidationError,
-        match="Only a super administrator can select a clinic context",
-    ):
+    other = make_clinic()
+    with pytest.raises(TenantContextDenied):
         clinic_context_service.select_clinic_context(
             user_id=user.id,
-            clinic_id=clinic.id,
+            clinic_id=other.id,
         )
+
+    assert clinic_context_service.select_clinic_context(user.id, clinic.id).id == clinic.id
 
 
 def test_select_clinic_context_rejects_nonexistent_clinic(

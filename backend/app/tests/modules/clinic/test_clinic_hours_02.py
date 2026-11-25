@@ -22,11 +22,12 @@ def instant(hour, minute=0, day=24):
 
 
 @pytest.mark.parametrize('opening,closing', [(time(0), time(0)), (time(20), time(6))])
-def test_unrelated_updates_keep_extended_schedule(app, opening, closing):
+def test_unrelated_updates_keep_extended_schedule(app, opening, closing, make_clinic):
     app.config['CLINIC_EXTENDED_OPERATING_HOURS_ENABLED'] = True
     mode = 'always_open' if opening == closing else 'scheduled'
     fields = {} if mode == 'always_open' else dict(opening_time=opening, closing_time=closing)
-    clinic = create_clinic(name='Compatibility clinic', operating_mode=mode, **fields)
+    owner = make_clinic().organization_id
+    clinic = create_clinic(name='Compatibility clinic', organization_id=owner, operating_mode=mode, **fields)
     app.config['CLINIC_EXTENDED_OPERATING_HOURS_ENABLED'] = False
     updated = update_clinic(clinic.id, phone='08012345678', address='Updated address')
     assert updated.phone == '08012345678'
@@ -120,12 +121,12 @@ def test_private_profile_metadata_is_staged(app, client, make_clinic, make_user,
     assert new.get_json()['data']['clinic']['operating_mode'] == 'always_open'
     assert new.get_json()['data']['clinic']['is_open_now'] is True
 
-def test_creation_audit_records_actual_hours_for_root_and_branch(app):
+def test_creation_audit_records_actual_hours_for_root_and_branch(app, make_clinic):
     from app.core.audit.models.audit_model import AuditLog
     from app.core.enums.audit_enums import AuditAction
     from app.modules.clinic.services.clinic_service import create_branch
     app.config['CLINIC_EXTENDED_OPERATING_HOURS_ENABLED'] = True
-    root = create_clinic(name='Hours audit root', timezone='Africa/Lagos',
+    root = create_clinic(name='Hours audit root', organization_id=make_clinic().organization_id, timezone='Africa/Lagos',
                          operating_mode='always_open')
     branch = create_branch(root.id, name='Hours audit branch', timezone='Africa/Lagos',
                            operating_mode='scheduled', opening_time=time(20), closing_time=time(6))

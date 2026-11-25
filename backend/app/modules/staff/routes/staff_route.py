@@ -14,7 +14,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.utils.decorators import (
-    get_current_clinic_id,
+    get_administrative_clinic_id,
     role_required,
 )
 
@@ -162,7 +162,7 @@ def _current_user() -> User:
 def _current_clinic_id(
     user: User | None = None,
 ) -> int:
-    return get_current_clinic_id(
+    return get_administrative_clinic_id(
         required=True
     )
 

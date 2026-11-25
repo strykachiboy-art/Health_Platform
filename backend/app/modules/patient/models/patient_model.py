@@ -22,6 +22,7 @@ class Patient(db.Model):
     __tablename__ = "patients"
 
     __table_args__ = (
+        db.UniqueConstraint("id", "clinic_id", name="uq_patients_id_clinic"),
         Index(
             "ix_patients_clinic_active_name",
             "clinic_id",
