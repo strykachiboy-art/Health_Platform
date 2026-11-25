@@ -26,6 +26,20 @@ import 'package:clinic_system_pro/features/patients/presentation/patient_prescri
 import 'package:clinic_system_pro/features/patients/presentation/patient_clinical_alerts_card.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_profile_edit_screen.dart';
 
+enum _WorkspaceSection {
+  all('All records'),
+  overview('Overview and safety'),
+  timeline('Clinical timeline'),
+  vitals('Vitals'),
+  problems('Problems and consultations'),
+  medications('Medications'),
+  orders('Orders and clinical actions'),
+  care('Admission and care');
+
+  const _WorkspaceSection(this.label);
+  final String label;
+}
+
 class PatientDetailScreen extends StatefulWidget {
   const PatientDetailScreen({
     super.key,
@@ -72,6 +86,7 @@ class PatientDetailScreen extends StatefulWidget {
 
 class _PatientDetailScreenState extends State<PatientDetailScreen> {
   Patient? _patient;
+  _WorkspaceSection _sectionSelection = _WorkspaceSection.all;
   Object? _lastError;
   String? _errorMessage;
   bool _loading = true;
@@ -90,6 +105,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   void initState() {
     super.initState();
     widget.emergencyAccessContext?.addListener(_onEmergencyAccessChanged);
+    widget.dataSource.sessionNavigationGuard?.addListener(_onWorkspaceSessionChanged);
     unawaited(_loadPatient());
   }
 
@@ -114,6 +130,9 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
     }
 
     if (patientSourceChanged) {
+      oldWidget.dataSource.sessionNavigationGuard?.removeListener(_onWorkspaceSessionChanged);
+      widget.dataSource.sessionNavigationGuard?.addListener(_onWorkspaceSessionChanged);
+      _sectionSelection = _WorkspaceSection.all;
       // A reused State object must never retain another patient's PHI.
       _requestGeneration++;
       _emergencyBoundGrantId = null;
@@ -145,8 +164,35 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   void dispose() {
     _requestGeneration++;
     widget.emergencyAccessContext?.removeListener(_onEmergencyAccessChanged);
+    widget.dataSource.sessionNavigationGuard?.removeListener(_onWorkspaceSessionChanged);
     super.dispose();
   }
+
+  void _onWorkspaceSessionChanged() {
+    if (!mounted) return;
+    setState(() {
+      _discardEmergencyPatient();
+      _errorMessage = 'Session or clinic changed. Patient details were cleared. Revalidate access before returning.';
+    });
+  }
+
+  bool _shows(_WorkspaceSection section) =>
+      _sectionSelection == _WorkspaceSection.all || _sectionSelection == section;
+
+  List<_WorkspaceSection> get _sections => [
+    _WorkspaceSection.all,
+    _WorkspaceSection.overview,
+    if (widget.timelineSource != null) _WorkspaceSection.timeline,
+    if (widget.vitalsDataSource != null) _WorkspaceSection.vitals,
+    if (widget.problemSource != null || widget.consultationDataSource != null)
+      _WorkspaceSection.problems,
+    if (widget.prescriptionDataSource != null || widget.onEmarRequested != null ||
+        widget.onMedicationReconciliationRequested != null || widget.onPharmacyStockRequested != null)
+      _WorkspaceSection.medications,
+    if (widget.onLabOrdersRequested != null || widget.onClinicalActionsRequested != null)
+      _WorkspaceSection.orders,
+    if (widget.admissionDataSource != null) _WorkspaceSection.care,
+  ];
 
   void _onEmergencyAccessChanged() {
     if (!mounted) return;
@@ -166,6 +212,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
     // This helper may run during didUpdateWidget, where build follows
     // automatically; do not call setState from the helper itself.
     _requestGeneration++;
+    _sectionSelection = _WorkspaceSection.all;
     _emergencyBoundGrantId = null;
     _patient = null;
     _loading = false;
@@ -191,6 +238,9 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
     final emergencyAccessId = widget.emergencyAccessContext
         ?.emergencyAccessIdForPatient(widget.patientId);
     _emergencyBoundGrantId = emergencyAccessId;
+    if (emergencyAccessId != null) {
+      _sectionSelection = _WorkspaceSection.all;
+    }
 
     try {
       final patient = await widget.dataSource.fetchPatient(
@@ -229,6 +279,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       }
 
       setState(() {
+        _sectionSelection = _WorkspaceSection.all;
         _lastError = error;
         _errorMessage = _messageFor(error);
         _loading = false;
@@ -334,6 +385,19 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
       appBar: AppBar(
         title: const Text('Patient details'),
         actions: [
+          if (_patient != null && !_loading && !_patientSnapshotStale &&
+              _emergencyBoundGrantId == null && _sections.length > 2)
+            PopupMenuButton<_WorkspaceSection>(
+              key: const ValueKey('clinical-workspace-sections'),
+              tooltip: 'Patient workspace sections',
+              icon: const Icon(Icons.view_list_outlined),
+              initialValue: _sectionSelection,
+              onSelected: (section) => setState(() => _sectionSelection = section),
+              itemBuilder: (_) => [
+                for (final section in _sections)
+                  PopupMenuItem(value: section, child: Text(section.label)),
+              ],
+            ),
           if (_patient != null && !_loading && !_statusOutcomeUnknown)
             IconButton(
               key: const ValueKey('patient-detail-refresh-button'),
@@ -401,9 +465,21 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
     }
 
     return ListView(
+      key: ValueKey(_sectionSelection),
       padding: const EdgeInsets.all(16),
       children: [
         if (_patientSnapshotStale) _buildStalePatientNotice(),
+        if (_sectionSelection != _WorkspaceSection.all && !_patientSnapshotStale) ...[
+          Text(_sectionSelection.label, key: const ValueKey('clinical-workspace-current-section'),
+            style: Theme.of(context).textTheme.titleMedium),
+          if (_sectionSelection != _WorkspaceSection.overview)
+            TextButton.icon(
+              key: const ValueKey('clinical-workspace-safety-overview'),
+              onPressed: () => setState(() => _sectionSelection = _WorkspaceSection.overview),
+              icon: const Icon(Icons.health_and_safety_outlined),
+              label: const Text('Review allergies and clinical safety'),
+            ),
+        ],
         Card(
           child: Padding(
             padding: const EdgeInsets.all(20),
@@ -451,21 +527,22 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        _statusManagementCard(patient),
+        if (_shows(_WorkspaceSection.overview)) _statusManagementCard(patient),
         const SizedBox(height: 12),
-        _section('Patient information', [
+        if (_shows(_WorkspaceSection.overview)) _section('Patient information', [
           _detail('Date of birth', _dateOnly(patient.dateOfBirth)),
           _detail('Gender', patient.gender),
           _detail('Blood type', patient.bloodType),
           _detail('Phone', patient.phone),
           _detail('Email', patient.email),
           _detail('Address', patient.address),
+          _detail('Age (years)', _age(patient.dateOfBirth)),
         ]),
-        _section('Clinical information', [
+        if (_shows(_WorkspaceSection.overview)) _section('Clinical information', [
           _detail('Legacy allergy notes (not verified)', patient.allergies),
           _detail('Legacy chronic condition notes (not confirmed coded problems)', patient.chronicConditions),
         ]),
-        if (widget.timelineSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
+        if (_shows(_WorkspaceSection.timeline) && widget.timelineSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
           TimelineEntry(
             key: ValueKey('clinical-timeline-entry-${patient.id}'),
             source: widget.timelineSource!,
@@ -473,13 +550,13 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             patientId: patient.id,
             clinicId: patient.clinicId,
           ),
-        if (widget.problemSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
+        if (_shows(_WorkspaceSection.problems) && widget.problemSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
           ProblemWorkspaceEntry(
             key: ValueKey('problem-entry-patient-${patient.id}'),
             source: widget.problemSource!, patientId: patient.id,
             allowWrite: patient.isActive,
           ),
-        if (widget.allergyDataSource != null && !_patientSnapshotStale) ...[
+        if (_shows(_WorkspaceSection.overview) && widget.allergyDataSource != null && !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientStructuredAllergiesCard(
             key: ValueKey('patient-structured-allergies-for-${patient.id}'),
@@ -489,7 +566,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         ],
         // Clinical history is mounted only after the patient ID has
         // been verified and the patient snapshot is current.
-        if (widget.vitalsDataSource != null && !_patientSnapshotStale) ...[
+        if (_shows(_WorkspaceSection.vitals) && widget.vitalsDataSource != null && !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientVitalsHistoryCard(
             key: ValueKey('patient-vitals-for-${patient.id}'),
@@ -497,7 +574,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             dataSource: widget.vitalsDataSource!,
           ),
         ],
-        if (widget.admissionDataSource != null && !_patientSnapshotStale) ...[
+        if (_shows(_WorkspaceSection.care) && widget.admissionDataSource != null && !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientAdmissionHistoryCard(
             key: ValueKey('patient-admissions-for-${patient.id}'),
@@ -505,6 +582,8 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             patientId: patient.id,
             dataSource: widget.admissionDataSource!,
           ),
+        ],
+        if (_shows(_WorkspaceSection.medications) && widget.admissionDataSource != null && !_patientSnapshotStale) ...[
           if (widget.onEmarRequested != null)
             ListTile(
               key: ValueKey('p23f-s03c-patient-emar-${patient.id}'),
@@ -528,21 +607,21 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         ],
         // Only present these entry points after the patient profile is fresh.
         // Backend role and clinic checks remain authoritative.
-        if (!_patientSnapshotStale && widget.onLabOrdersRequested != null)
+        if (_shows(_WorkspaceSection.orders) && !_patientSnapshotStale && widget.onLabOrdersRequested != null)
           ListTile(
             key: ValueKey('p23h-patient-lab-orders-${patient.id}'),
             leading: const Icon(Icons.science_outlined),
             title: const Text('Laboratory orders and results'),
             onTap: widget.onLabOrdersRequested,
           ),
-        if (!_patientSnapshotStale && widget.onPharmacyStockRequested != null)
+        if (_shows(_WorkspaceSection.medications) && !_patientSnapshotStale && widget.onPharmacyStockRequested != null)
           ListTile(
             key: ValueKey('p23h-pharmacy-stock-${patient.id}'),
             leading: const Icon(Icons.inventory_2_outlined),
             title: const Text('Pharmacy stock (authorized staff)'),
             onTap: widget.onPharmacyStockRequested,
           ),
-        if (!_patientSnapshotStale && widget.onClinicalActionsRequested != null)
+        if (_shows(_WorkspaceSection.orders) && !_patientSnapshotStale && widget.onClinicalActionsRequested != null)
           ListTile(
             key: ValueKey('p23h-clinical-actions-${patient.id}'),
             leading: const Icon(Icons.fact_check_outlined),
@@ -552,7 +631,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             ),
             onTap: widget.onClinicalActionsRequested,
           ),
-        if (widget.consultationDataSource != null &&
+        if (_shows(_WorkspaceSection.problems) && widget.consultationDataSource != null &&
             !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientConsultationHistoryCard(
@@ -563,7 +642,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         ],
         // These read-only panels require the verified current patient
         // snapshot. Backend authorization remains authoritative.
-        if (widget.prescriptionDataSource != null &&
+        if (_shows(_WorkspaceSection.medications) && widget.prescriptionDataSource != null &&
             !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientPrescriptionHistoryCard(
@@ -573,7 +652,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             onPrescriptionDetailRequested: widget.onPrescriptionDetailRequested,
           ),
         ],
-        if (widget.clinicalAlertDataSource != null &&
+        if (_shows(_WorkspaceSection.overview) && widget.clinicalAlertDataSource != null &&
             !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientClinicalAlertsCard(
@@ -582,7 +661,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             dataSource: widget.clinicalAlertDataSource!,
           ),
         ],
-        _section('Identifiers', [
+        if (_shows(_WorkspaceSection.overview)) _section('Identifiers', [
           _detail('Emirates ID', patient.emiratesId),
           _detail('UMRN', patient.umrn),
         ]),
@@ -946,6 +1025,17 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
   Widget? _detail(String label, String? value) {
     if (value == null || value.trim().isEmpty) return null;
     return ListTile(dense: true, title: Text(label), subtitle: Text(value));
+  }
+
+  String? _age(DateTime? birth) {
+    if (birth == null) return null;
+    final today = DateTime.now();
+    var years = today.year - birth.year;
+    if (today.month < birth.month ||
+        (today.month == birth.month && today.day < birth.day)) {
+      years--;
+    }
+    return years < 0 ? null : '$years';
   }
 
   String? _dateOnly(DateTime? value) {

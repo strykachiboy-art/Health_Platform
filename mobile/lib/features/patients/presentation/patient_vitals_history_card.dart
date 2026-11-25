@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient_vitals.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
+import 'patient_vitals_trend.dart';
 
 /// Read-only vitals display, using only backend-owned observations.
 ///
@@ -347,6 +348,7 @@ class _PatientVitalsHistoryCardState extends State<PatientVitalsHistoryCard> {
                   'This is not proof that measurements were never recorded.',
                   key: ValueKey('patient-vitals-history-empty'),
                 ),
+              if (_history.isNotEmpty) PatientVitalsTrend(observations: _history),
               for (final item in _history) _observation(item, isLatest: false),
               if (_loading)
                 const Center(child: CircularProgressIndicator())

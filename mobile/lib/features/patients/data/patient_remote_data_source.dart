@@ -43,6 +43,9 @@ class PatientRemoteDataSource {
   final Future<AuthSessionState> Function()? _loadSession;
   final SessionNavigationGuard? _sessionNavigationGuard;
 
+  /// The same guard used to scope patient reads. The chart clears on revision changes.
+  SessionNavigationGuard? get sessionNavigationGuard => _sessionNavigationGuard;
+
   static bool _sameSession(AuthTokenResponse before, AuthTokenResponse after) =>
       before.userId == after.userId &&
       before.clinicContextId == after.clinicContextId &&
