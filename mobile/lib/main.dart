@@ -52,6 +52,7 @@ import 'package:clinic_system_pro/features/patients/data/patient_admission_remot
 import 'package:clinic_system_pro/features/patients/data/patient_consultation_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_prescription_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_clinical_alert_remote_data_source.dart';
+import 'package:clinic_system_pro/features/hie/data/hie_remote_data_source.dart';
 
 void main() {
   final backendConfig = BackendConfig.fromEnvironment();
@@ -94,6 +95,7 @@ void main() {
       '/account',
       '/emergency-access',
       '/clinical-safety',
+      '/hie',
     ],
   );
   final appointmentDataSource = AppointmentRemoteDataSource(
@@ -161,6 +163,11 @@ void main() {
     loadAccessToken: authenticatedSessionAccess.requireAccessToken,
     loadSessionStamp: clinicalSafetySessionScope.snapshot,
     deviceConnectivitySource: connectivitySource,
+  );
+  final hieDataSource = HieRemoteDataSource(
+    apiClient: apiClient,
+    loadSession: sessionCoordinator.restoreSession,
+    sessionNavigationGuard: sessionNavigationGuard,
   );
   final emergencyAccessContext = EmergencyAccessContext(
     sessionNavigationGuard: sessionNavigationGuard,
@@ -313,6 +320,7 @@ void main() {
         patientClinicalAlertDataSource: patientClinicalAlertDataSource,
         emergencyAccessDataSource: emergencyAccessDataSource,
         clinicalSafetyDataSource: clinicalSafetyDataSource,
+        hieDataSource: hieDataSource,
         emergencyAccessContext: emergencyAccessContext,
         loginScreen: loginScreen,
         loadHomeSession: sessionCoordinator.restoreSession,
@@ -373,6 +381,7 @@ class ClinicSystemProApp extends StatefulWidget {
     this.patientClinicalAlertDataSource,
     this.emergencyAccessDataSource,
     this.clinicalSafetyDataSource,
+    this.hieDataSource,
     this.emergencyAccessContext,
     this.sessionNavigationGuard,
     this.deviceConnectivitySource,
@@ -402,6 +411,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final PatientClinicalAlertRemoteDataSource? patientClinicalAlertDataSource;
   final EmergencyAccessRemoteDataSource? emergencyAccessDataSource;
   final ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource;
+  final HieRemoteDataSource? hieDataSource;
   final EmergencyAccessContext? emergencyAccessContext;
   final SessionNavigationGuard? sessionNavigationGuard;
   final DeviceConnectivitySource? deviceConnectivitySource;
@@ -441,6 +451,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       patientClinicalAlertDataSource: widget.patientClinicalAlertDataSource,
       emergencyAccessDataSource: widget.emergencyAccessDataSource,
       clinicalSafetyDataSource: widget.clinicalSafetyDataSource,
+      hieDataSource: widget.hieDataSource,
       emergencyAccessContext: widget.emergencyAccessContext,
       sessionNavigationGuard: widget.sessionNavigationGuard,
       appointmentCreateSyncPageLoader: widget.appointmentCreateSyncPageLoader,

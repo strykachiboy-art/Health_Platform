@@ -116,6 +116,24 @@ List<HomeDestination> homeDestinationsFor({
       ),
     );
   }
+  if (clinicContextId != null &&
+      clinicContextId > 0 &&
+      const <String>{
+        'admin',
+        'doctor',
+        'nurse',
+        'lab_technician',
+        'pharmacist',
+      }.contains(normalizedRole)) {
+    destinations.add(
+      const HomeDestination(
+        'hie',
+        'HIE / FHIR',
+        '/hie',
+        Icons.hub_outlined,
+      ),
+    );
+  }
   if (_patientDirectoryRoles.contains(normalizedRole)) {
     destinations.insert(
       0,

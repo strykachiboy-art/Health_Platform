@@ -50,6 +50,8 @@ import 'package:clinic_system_pro/features/patients/data/patient_clinical_alert_
 import 'package:clinic_system_pro/features/patients/presentation/patient_detail_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_directory_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_registration_screen.dart';
+import 'package:clinic_system_pro/features/hie/data/hie_remote_data_source.dart';
+import 'package:clinic_system_pro/features/hie/presentation/hie_fhir_workspace_screen.dart';
 
 GoRouter createAppRouter({
   required BackendHealthRemoteDataSource healthDataSource,
@@ -74,6 +76,7 @@ GoRouter createAppRouter({
   PatientClinicalAlertRemoteDataSource? patientClinicalAlertDataSource,
   EmergencyAccessRemoteDataSource? emergencyAccessDataSource,
   ClinicalSafetyRemoteDataSource? clinicalSafetyDataSource,
+  HieRemoteDataSource? hieDataSource,
   EmergencyAccessContext? emergencyAccessContext,
   SessionNavigationGuard? sessionNavigationGuard,
 }) {
@@ -805,6 +808,49 @@ GoRouter createAppRouter({
               );
             },
           ),
+          GoRoute(
+            path: '/hie',
+            name: 'hie-fhir',
+            builder: (context, state) {
+              final source = hieDataSource;
+              final guard = sessionNavigationGuard;
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes) {
+                return const _HieRouteUnavailableScreen();
+              }
+              return HieFhirWorkspaceScreen(
+                key: const ValueKey('hie-fhir-route'),
+                dataSource: source,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/hie/patient/:patientId',
+            name: 'hie-fhir-patient',
+            builder: (context, state) {
+              final source = hieDataSource;
+              final guard = sessionNavigationGuard;
+              final patientId = int.tryParse(
+                state.pathParameters['patientId'] ?? '',
+              );
+              if (source == null ||
+                  guard == null ||
+                  !identical(source.sessionNavigationGuard, guard) ||
+                  !guard.canAccessProtectedRoutes ||
+                  patientId == null ||
+                  patientId <= 0 ||
+                  patientId > 2147483647) {
+                return const _HieRouteUnavailableScreen();
+              }
+              return HieFhirWorkspaceScreen(
+                key: ValueKey('hie-fhir-patient-route-$patientId'),
+                dataSource: source,
+                initialPatientId: patientId,
+              );
+            },
+          ),
         ],
       ),
       GoRoute(
@@ -868,6 +914,16 @@ class _AppointmentRouteUnavailableScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => const Scaffold(
     body: Center(child: Text('Appointment route is unavailable.')),
+  );
+}
+
+class _HieRouteUnavailableScreen extends StatelessWidget {
+  const _HieRouteUnavailableScreen();
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('HIE / FHIR')),
+    body: const Center(child: Text('HIE / FHIR route is unavailable.')),
   );
 }
 
