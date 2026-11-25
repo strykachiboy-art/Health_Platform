@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import re
 from itsdangerous import URLSafeTimedSerializer, BadData
 
-CATEGORIES = frozenset({'appointments', 'consultations', 'vitals', 'problems', 'laboratory', 'prescriptions', 'medication_administration', 'imaging', 'admissions', 'nursing', 'procedures', 'surgery'})
+CATEGORIES = frozenset({'appointments', 'consultations', 'vitals', 'problems', 'laboratory', 'prescriptions', 'medication_administration', 'imaging', 'admissions', 'nursing', 'procedures', 'surgery', 'blood_transfusion'})
 MAX_LIMIT = 100
 
 

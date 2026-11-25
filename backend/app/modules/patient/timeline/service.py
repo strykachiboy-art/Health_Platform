@@ -52,7 +52,8 @@ def list_events(user_id, claims, patient_id, filters):
         categories=filters.categories, dialect=db.engine.dialect.name,
         problem_enabled=current_app.config.get('PATIENT_PROBLEM_LIST_ENABLED') is True,
         lab_release_enabled=current_app.config.get('PATIENT_LAB_RELEASE_ENABLED') is True,
-        surgery_case_scope=allowed_cases)
+        surgery_case_scope=allowed_cases,
+        blood_enabled=current_app.testing and current_app.config.get("BLOOD_BANK_INVENTORY_ENABLED") is True)
     q = page_statement(selects, start=filters.start, end=filters.end, after=after, limit=filters.limit, tables=tables, clinic_id=clinic.id)
     rows = list(db.session.execute(q).mappings()) if q is not None else []
     items = []
@@ -65,6 +66,8 @@ def list_events(user_id, claims, patient_id, filters):
         last = rows[filters.limit - 1]
         continuation = encode_cursor(secret, binding, last['occurred_at'], last['event_type'], last['event_row_id'])
     available = set(CATEGORIES)
+    if not current_app.testing or current_app.config.get('BLOOD_BANK_INVENTORY_ENABLED') is not True or user.clinic_id!=clinic.id:
+        available.discard('blood_transfusion')
     if user.role is not Role.DOCTOR:
         available.discard('prescriptions')
     if user.clinic_id != clinic.id:

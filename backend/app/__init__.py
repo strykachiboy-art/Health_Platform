@@ -462,7 +462,10 @@ def register_blueprints(app):
         metrics_bp
     )
 
+    from app.modules.blood_bank.routes.blood_bank_routes import blood_bank_bp
+
     api_blueprints = (
+        blood_bank_bp,
         auth_bp,
         password_security_bp,
         vehicle_bp,

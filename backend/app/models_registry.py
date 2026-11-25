@@ -282,7 +282,34 @@ from app.modules.feedback.models.feedback_reaction_model import FeedbackReaction
 # Department
 from app.modules.department.models.department_model import Department
 
+from app.modules.clinical_orders.models.blood_product_issued_unit_model import BloodProductIssuedUnit
+from app.modules.clinical_orders.models.blood_product_lab_followup_model import BloodProductLabFollowup
+from app.modules.blood_bank.models.blood_bank_model import BloodDonor, BloodDonation, BloodUnit, BloodStockThreshold, BloodTransfusionBarcodeEvent, BloodTransfusion
+from app.modules.blood_bank.models_extra import BloodSupplier, BloodReleaseEvidence, BloodCompatibilityEvidence, BloodReactionEvidence, BloodRecallEvidence, BloodReturnEvidence
+
+from app.modules.blood_bank.models_acceptance import BloodLabArtifact, BloodLabVerification, BloodInvestigationEvent, BloodSafetyInbox, BloodPatientRelease
+
 __all__ = [
+    "BloodLabArtifact",
+    "BloodLabVerification",
+    "BloodInvestigationEvent",
+    "BloodSafetyInbox",
+    "BloodPatientRelease",
+    'BloodDonor',
+    'BloodDonation',
+    'BloodUnit',
+    'BloodStockThreshold',
+    'BloodTransfusionBarcodeEvent',
+    'BloodTransfusion',
+    'BloodSupplier',
+    'BloodReleaseEvidence',
+    'BloodCompatibilityEvidence',
+    'BloodReactionEvidence',
+    'BloodRecallEvidence',
+    'BloodReturnEvidence',
+    'BloodProductIssuedUnit',
+    'BloodProductLabFollowup',
+
     # Core
     "User",
     "AuditLog",

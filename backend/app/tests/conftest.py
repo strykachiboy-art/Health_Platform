@@ -165,6 +165,25 @@ _GAP05_BOUND_READ_CASES = {
 }
 
 
+# BB01 R01: four pre-SaaS route contracts require real synthetic
+# organization/clinic memberships and the actual token issuer.
+# No adversarial or other service tests opt in.
+_BB01_BOUND_ROUTE_CASES = {
+    '/modules/clinical_orders/test_blood_product_orders.py': frozenset({
+        'test_route_doctor_orders_lab_verifies_and_fulfills_nurse_views',
+    }),
+    '/modules/clinical_orders/test_emergency_blood_request_security.py': frozenset({
+        'test_route_emergency_create_and_verify_role_split',
+    }),
+    '/modules/clinical_orders/test_emergency_blood_unit_traceability.py': frozenset({
+        'test_route_role_split_and_readback_includes_identified_issued_units',
+    }),
+    '/modules/clinical_orders/test_emergency_blood_lab_followup.py': frozenset({
+        'test_route_role_split_and_followup_readback',
+    }),
+}
+
+
 def _gapb_legacy_auth_target(request):
     path = str(request.node.path).replace('\\', '/')
     if any(path.endswith(tail) for tail in _GAPB_LEGACY_AUTH_MODULES):
@@ -172,7 +191,7 @@ def _gapb_legacy_auth_target(request):
     name = request.node.name.split('[', 1)[0]
     return any(
         path.endswith(tail) and name in names
-        for tail, names in _GAP05_BOUND_READ_CASES.items()
+        for tail, names in (*_GAP05_BOUND_READ_CASES.items(), *_BB01_BOUND_ROUTE_CASES.items())
     )
 
 

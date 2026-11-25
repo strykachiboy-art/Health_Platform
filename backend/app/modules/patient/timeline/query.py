@@ -15,7 +15,7 @@ def _ts(column, dialect):
     return type_coerce(column, DateTime())
 
 
-def event_selects(tables, *, clinic_id, patient_id, organization_id, staff_id, role, assigned_clinic, categories, dialect, problem_enabled, lab_release_enabled, surgery_case_scope=None):
+def event_selects(tables, *, clinic_id, patient_id, organization_id, staff_id, role, assigned_clinic, categories, dialect, problem_enabled, lab_release_enabled, surgery_case_scope=None, blood_enabled=False):
     t = tables
     result = []
     C = t['consultations']
@@ -146,6 +146,19 @@ def event_selects(tables, *, clinic_id, patient_id, organization_id, staff_id, r
         add('surgery', 'surgical_procedure_performance_recorded', 'completed', 'procedure_order', po, po.c.performed_at, and_(order_scope(po), po.c.status == 'completed', po.c.procedure_type == 'surgical', select(sc.c.id).where(sscope, sc.c.procedure_order_id == po.c.id).correlate(po).exists()), actor=po.c.completed_by_staff_id)
         sr = t['surgical_operative_reports']; ss = t['surgical_operative_signatures']
         add('surgery', 'operative_document_signature_recorded', 'recorded', 'surgical_report', ss, ss.c.signed_at, and_(ss.c.clinic_id == clinic, scoped(sr), sscope, sr.c.admission_id == sc.c.admission_id, or_(sr.c.status == 'dual_signed', and_(sr.c.status == 'surgeon_signed', ss.c.signer_kind == 'surgeon')), ss.c.document_sha256 == sr.c.content_sha256), source_id=sr.c.id, actor=ss.c.signed_by_staff_id, from_=ss.join(sr, ss.c.report_id == sr.c.id).join(sc, sr.c.surgical_case_id == sc.c.id), version=sr.c.version)
+
+    # Only documentary issue/administration events, never donor identifiers.
+    if blood_enabled and role in ('doctor','nurse') and assigned_clinic == clinic:
+        bo=t['blood_product_orders']; bu=t['blood_product_issued_units']; bt=t['blood_transfusions']; br=t['blood_reaction_evidence']
+        ass=t['admission_care_assignments']
+        own=select(ass.c.id).where(ass.c.clinic_id==clinic,ass.c.patient_id==patient,ass.c.admission_id==bo.c.admission_id,ass.c.staff_id==staff_id,ass.c.ended_at.is_(None)).exists()
+        bs=and_(order_scope(bo),own)
+        add('blood_transfusion','blood_component_issued','recorded','blood_product_order',bu,bu.c.issued_at,and_(bs,scoped(bu),bu.c.admission_id==bo.c.admission_id,bu.c.blood_unit_id.is_not(None)),source_id=bo.c.id,actor=bu.c.issued_by_staff_id,from_=bu.join(bo,bu.c.order_id==bo.c.id))
+        ts=and_(bs,scoped(bt),bt.c.admission_id==bo.c.admission_id)
+        add('blood_transfusion','blood_transfusion_started','recorded','blood_transfusion',bt,bt.c.started_at,ts,actor=bt.c.administered_by_staff_id,from_=bt.join(bo,bt.c.blood_product_order_id==bo.c.id))
+        add('blood_transfusion','blood_transfusion_completed','completed','blood_transfusion',bt,bt.c.ended_at,and_(ts,bt.c.status=='completed'),actor=bt.c.administered_by_staff_id,from_=bt.join(bo,bt.c.blood_product_order_id==bo.c.id))
+        add('blood_transfusion','blood_transfusion_stopped','recorded','blood_transfusion',bt,bt.c.ended_at,and_(ts,bt.c.status.in_(['stopped_reaction','stopped_other'])),from_=bt.join(bo,bt.c.blood_product_order_id==bo.c.id))
+        add('blood_transfusion','blood_reaction_documented','recorded','blood_transfusion',br,br.c.created_at,and_(ts,br.c.clinic_id==clinic),source_id=bt.c.id,actor=br.c.actor_staff_id,from_=br.join(bt,br.c.transfusion_id==bt.c.id).join(bo,bt.c.blood_product_order_id==bo.c.id))
 
     # Historical amendment metadata: no snapshots, amendment reasons, notes,
     # or current values are copied into the timeline. Source ownership is joined.

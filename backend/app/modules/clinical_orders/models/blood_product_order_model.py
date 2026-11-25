@@ -58,6 +58,13 @@ class BloodProductOrder(db.Model):
             name="ck_blood_product_orders_emergency_evidence",
         ),
         db.CheckConstraint(
+            "emergency_release_requested = false OR "
+            "(emergency_request_reason IS NOT NULL AND "
+            "emergency_requested_by_staff_id IS NOT NULL AND "
+            "emergency_requested_at IS NOT NULL AND priority = 'stat')",
+            name="ck_blood_product_orders_emergency_request_evidence",
+        ),
+        db.CheckConstraint(
             "status != 'completed' "
             "OR (completed_at IS NOT NULL "
             "AND fulfilled_by_staff_id IS NOT NULL "
@@ -66,6 +73,16 @@ class BloodProductOrder(db.Model):
             "AND compatibility_status IN "
             "('compatible', 'emergency_release'))",
             name="ck_blood_product_orders_completed_evidence",
+        ),
+        db.CheckConstraint(
+            "emergency_review_outcome IS NULL OR "
+            "(emergency_review_outcome IN ('reviewed', 'escalated') AND "
+            "compatibility_status = 'emergency_release' AND "
+            "status = 'completed' AND "
+            "emergency_reviewed_by_staff_id IS NOT NULL AND "
+            "emergency_reviewed_at IS NOT NULL AND "
+            "emergency_review_note IS NOT NULL)",
+            name="ck_blood_product_orders_emergency_review_evidence",
         ),
         db.CheckConstraint(
             "status != 'cancelled' "
@@ -157,6 +174,8 @@ class BloodProductOrder(db.Model):
         default=0,
     )
 
+    inventory_required = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text("false"))
+
     indication = db.Column(
         db.Text,
         nullable=False,
@@ -203,6 +222,32 @@ class BloodProductOrder(db.Model):
         db.Text,
         nullable=True,
     )
+    # Doctor-authenticated emergency intent, distinct from lab verification.
+    emergency_release_requested = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=db.text("false"),
+    )
+    emergency_request_reason = db.Column(db.Text, nullable=True)
+    emergency_requested_by_staff_id = db.Column(
+        db.Integer,
+        db.ForeignKey("staff.id"),
+        nullable=True,
+    )
+    emergency_requested_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=True,
+    )
+    # Post-release review does not replace compatibility or serologic testing.
+    emergency_review_outcome = db.Column(db.String(20), nullable=True)
+    emergency_review_note = db.Column(db.Text, nullable=True)
+    emergency_reviewed_by_staff_id = db.Column(
+        db.Integer,
+        db.ForeignKey("staff.id"),
+        nullable=True,
+    )
+    emergency_reviewed_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     priority = db.Column(
         db.String(16),
@@ -284,4 +329,18 @@ class BloodProductOrder(db.Model):
     cancelled_by = db.relationship(
         "Staff",
         foreign_keys=[cancelled_by_staff_id],
+    )
+    emergency_reviewed_by = db.relationship(
+        "Staff",
+        foreign_keys=[emergency_reviewed_by_staff_id],
+    )
+    issued_units = db.relationship(
+        "BloodProductIssuedUnit",
+        back_populates="order",
+        order_by="BloodProductIssuedUnit.id",
+    )
+    lab_followups = db.relationship(
+        "BloodProductLabFollowup",
+        back_populates="order",
+        order_by="BloodProductLabFollowup.id",
     )
