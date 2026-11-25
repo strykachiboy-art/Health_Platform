@@ -43,6 +43,11 @@ class Config:
         os.environ.get("PATIENT_PROBLEM_LIST_ENABLED", "false").lower() == "true"
     )
 
+    # Staged, read-only patient journey. The route also requires TestingConfig.
+    PATIENT_CLINICAL_TIMELINE_ENABLED = (
+        os.environ.get("PATIENT_CLINICAL_TIMELINE_ENABLED", "false").lower() == "true"
+    )
+
     # Patient result release is a separate, disabled-by-default feature.
     PATIENT_LAB_RELEASE_ENABLED = (
         os.environ.get("PATIENT_LAB_RELEASE_ENABLED", "false").lower() == "true"

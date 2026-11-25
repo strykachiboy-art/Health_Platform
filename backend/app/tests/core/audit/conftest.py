@@ -6,16 +6,16 @@ from app.modules.clinic.models.clinic_model import Clinic
 
 
 @pytest.fixture(autouse=True)
-def audit_fk_reference_rows(db_session):
+def audit_fk_reference_rows(db_session, make_clinic):
     for clinic_id in (1, 2):
         clinic = db_session.get(Clinic, clinic_id)
 
         if clinic is None:
-            db_session.add(
-                Clinic(
-                    id=clinic_id,
-                    name=f"Audit Test Clinic {clinic_id}",
-                )
+            # Preserve the historical fixed IDs, but use the existing
+            # organization-owning clinic factory required by GAP-A/B.
+            make_clinic(
+                id=clinic_id,
+                name=f"Audit Test Clinic {clinic_id}",
             )
 
     db_session.flush()

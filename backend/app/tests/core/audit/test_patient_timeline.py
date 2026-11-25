@@ -121,13 +121,19 @@ def test_patient_timeline_is_tenant_scoped(
     assert result[0].clinic_id == clinic_a.id
 
 
-def test_super_admin_can_read_patient_timeline_across_clinics(
+def test_super_admin_patient_timeline_requires_explicit_clinic_scope(
     db_session,
     make_clinic,
     make_patient,
 ):
+    from app.modules.clinic.models.organization_model import HospitalOrganization
+
     clinic_a = make_clinic()
-    clinic_b = make_clinic()
+    other_owner = HospitalOrganization(name="Other audit test organization")
+    db_session.add(other_owner)
+    db_session.flush()
+    clinic_b = make_clinic(organization_id=other_owner.id)
+    assert clinic_a.organization_id != clinic_b.organization_id
     patient = make_patient(clinic_a)
 
     db_session.add(
@@ -145,13 +151,62 @@ def test_super_admin_can_read_patient_timeline_across_clinics(
 
     db_session.flush()
 
+    # The consolidated audit query has no ambient global scope, even for
+    # Super Admin. This tests the internal query, not a platform HTTP grant.
+    with pytest.raises(PermissionError, match="An authorized clinic context is required"):
+        get_patient_timeline(
+            actor_role=Role.SUPER_ADMIN,
+            actor_clinic_id=None,
+            patient_id=patient.id,
+        )
+    with pytest.raises(PermissionError, match="Audit clinic scope is not permitted"):
+        get_patient_timeline(
+            actor_role=Role.SUPER_ADMIN,
+            actor_clinic_id=clinic_a.id,
+            target_clinic_id=clinic_b.id,
+            patient_id=patient.id,
+        )
+
     result = get_patient_timeline(
         actor_role=Role.SUPER_ADMIN,
-        actor_clinic_id=None,
+        actor_clinic_id=clinic_a.id,
         patient_id=patient.id,
     )
+    assert len(result) == 1
+    assert result[0].clinic_id == clinic_a.id
+    assert result[0].patient_id == patient.id
+    assert count_patient_timeline(
+        actor_role=Role.SUPER_ADMIN,
+        actor_clinic_id=clinic_a.id,
+        patient_id=patient.id,
+    ) == 1
+    with pytest.raises(PermissionError, match="An authorized clinic context is required"):
+        count_patient_timeline(
+            actor_role=Role.SUPER_ADMIN,
+            actor_clinic_id=None,
+            patient_id=patient.id,
+        )
+    with pytest.raises(PermissionError, match="An authorized clinic context is required"):
+        get_patient_timeline_page(
+            actor_role=Role.SUPER_ADMIN,
+            actor_clinic_id=None,
+            patient_id=patient.id,
+        )
 
-    assert len(result) == 2
+
+def test_audit_reference_rows_preserve_owned_clinics_and_user_links(db_session):
+    from app.core.auth.user.models.user_model import User
+    from app.modules.clinic.models.clinic_model import Clinic
+    from app.modules.clinic.models.organization_model import HospitalOrganization
+
+    for clinic_id in (1, 2):
+        clinic = db_session.get(Clinic, clinic_id)
+        assert clinic is not None
+        assert clinic.organization_id is not None
+        assert db_session.get(HospitalOrganization, clinic.organization_id) is not None
+    for user_id in (1, 10, 20):
+        user = db_session.get(User, user_id)
+        assert user is not None and user.clinic_id == 1
 
 
 def test_patient_timeline_supports_action_filter(

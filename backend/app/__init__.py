@@ -342,6 +342,7 @@ def register_blueprints(app):
         patient_bp,
     )
     from app.modules.patient.problems.routes import problem_bp
+    from app.modules.patient.timeline.routes import clinical_timeline_bp
     from app.modules.patient.routes.patient_portal_route import patient_portal_bp
     from app.modules.patient.routes.patient_portal_services_route import patient_portal_services_bp
 
@@ -476,6 +477,7 @@ def register_blueprints(app):
         lab_bp,
         patient_bp,
         problem_bp,
+        clinical_timeline_bp,
         patient_portal_bp,
         patient_portal_services_bp,
         prescription_bp,
