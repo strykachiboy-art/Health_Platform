@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/features/hie/data/hie_remote_data_source.dart';
+import 'package:clinic_system_pro/features/hie/presentation/fhir_export_panel.dart';
 
 /// Staged HIE workspace. Navigation is wired in Run B with one shared source.
 class HieWorkspaceScreen extends StatefulWidget {
@@ -300,6 +301,8 @@ class _HieWorkspaceScreenState extends State<HieWorkspaceScreen> {
               onPressed: null,
               child: Text('Query external clinical data (held)'),
             ),
+            if (_role == 'doctor')
+              FhirExportPanel(source: widget.source),
             if (_admin) ...[
               const Divider(),
               const Text(

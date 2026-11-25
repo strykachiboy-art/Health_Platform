@@ -3,6 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
 import 'package:clinic_system_pro/features/clinical_timeline/data/timeline_source.dart';
+import 'package:clinic_system_pro/features/hie/data/hie_remote_data_source.dart';
+import 'package:clinic_system_pro/features/lab/data/lab_order_read_remote_data_source.dart';
+import 'package:clinic_system_pro/features/clinical_orders/data/clinical_orders_remote_data_source.dart';
+import 'package:clinic_system_pro/features/hie/presentation/fhir_export_panel.dart';
+import 'package:clinic_system_pro/features/patients/presentation/patient_clinical_highlights.dart';
 import 'package:clinic_system_pro/features/clinical_timeline/presentation/timeline_workspace.dart';
 import 'package:clinic_system_pro/features/problems/presentation/problem_workspace.dart';
 import 'package:go_router/go_router.dart';
@@ -49,6 +54,9 @@ class PatientDetailScreen extends StatefulWidget {
     this.allergyDataSource,
     this.problemSource,
     this.timelineSource,
+    this.hieSource,
+    this.labSummarySource,
+    this.orderSummarySource,
     this.vitalsDataSource,
     this.admissionDataSource,
     this.onEmarRequested,
@@ -68,6 +76,9 @@ class PatientDetailScreen extends StatefulWidget {
   final PatientAllergyRemoteDataSource? allergyDataSource;
   final ProblemSource? problemSource;
   final TimelineSource? timelineSource;
+  final HieRemoteDataSource? hieSource;
+  final LabOrderReadRemoteDataSource? labSummarySource;
+  final ClinicalOrdersRemoteDataSource? orderSummarySource;
   final PatientVitalsRemoteDataSource? vitalsDataSource;
   final PatientAdmissionRemoteDataSource? admissionDataSource;
   final VoidCallback? onEmarRequested;
@@ -542,6 +553,15 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
           _detail('Legacy allergy notes (not verified)', patient.allergies),
           _detail('Legacy chronic condition notes (not confirmed coded problems)', patient.chronicConditions),
         ]),
+        if (_sectionSelection == _WorkspaceSection.overview && !_patientSnapshotStale && _emergencyBoundGrantId == null) ...[
+          if (widget.timelineSource != null && identical(widget.timelineSource!.guard, widget.dataSource.sessionNavigationGuard))
+            PatientClinicalHighlights(key: ValueKey('clinical-highlights-${patient.id}'),
+              source: widget.timelineSource!, patientId: patient.id, clinicId: patient.clinicId,
+              labSource: widget.labSummarySource, ordersSource: widget.orderSummarySource),
+          if (widget.hieSource != null && identical(widget.hieSource!.guard, widget.dataSource.sessionNavigationGuard))
+            FhirExportPanel(key: ValueKey('fhir-patient-preview-${patient.id}'),
+              source: widget.hieSource!, patientId: patient.id, clinicId: patient.clinicId),
+        ],
         if (_shows(_WorkspaceSection.timeline) && widget.timelineSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
           TimelineEntry(
             key: ValueKey('clinical-timeline-entry-${patient.id}'),
@@ -550,7 +570,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             patientId: patient.id,
             clinicId: patient.clinicId,
           ),
-        if (_shows(_WorkspaceSection.problems) && widget.problemSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
+        if ((_shows(_WorkspaceSection.problems) || _sectionSelection == _WorkspaceSection.overview) && widget.problemSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
           ProblemWorkspaceEntry(
             key: ValueKey('problem-entry-patient-${patient.id}'),
             source: widget.problemSource!, patientId: patient.id,
@@ -566,7 +586,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         ],
         // Clinical history is mounted only after the patient ID has
         // been verified and the patient snapshot is current.
-        if (_shows(_WorkspaceSection.vitals) && widget.vitalsDataSource != null && !_patientSnapshotStale) ...[
+        if ((_shows(_WorkspaceSection.vitals) || _sectionSelection == _WorkspaceSection.overview) && widget.vitalsDataSource != null && !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientVitalsHistoryCard(
             key: ValueKey('patient-vitals-for-${patient.id}'),
@@ -574,7 +594,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             dataSource: widget.vitalsDataSource!,
           ),
         ],
-        if (_shows(_WorkspaceSection.care) && widget.admissionDataSource != null && !_patientSnapshotStale) ...[
+        if ((_shows(_WorkspaceSection.care) || _sectionSelection == _WorkspaceSection.overview) && widget.admissionDataSource != null && !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientAdmissionHistoryCard(
             key: ValueKey('patient-admissions-for-${patient.id}'),
@@ -631,7 +651,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             ),
             onTap: widget.onClinicalActionsRequested,
           ),
-        if (_shows(_WorkspaceSection.problems) && widget.consultationDataSource != null &&
+        if ((_shows(_WorkspaceSection.problems) || _sectionSelection == _WorkspaceSection.overview) && widget.consultationDataSource != null &&
             !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientConsultationHistoryCard(
@@ -642,7 +662,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         ],
         // These read-only panels require the verified current patient
         // snapshot. Backend authorization remains authoritative.
-        if (_shows(_WorkspaceSection.medications) && widget.prescriptionDataSource != null &&
+        if ((_shows(_WorkspaceSection.medications) || _sectionSelection == _WorkspaceSection.overview) && widget.prescriptionDataSource != null &&
             !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientPrescriptionHistoryCard(

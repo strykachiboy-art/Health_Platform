@@ -4,6 +4,7 @@ import 'package:clinic_system_pro/core/networking/api_client.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
+import 'package:clinic_system_pro/features/hie/data/fhir_export_preview.dart';
 
 const hieViewRoles = <String>{
   'admin',
@@ -368,6 +369,45 @@ class HieRemoteDataSource {
       items.add(item);
     }
     return HieSubmissionPage(List.unmodifiable(items), total, page, perPage);
+  }
+
+  Future<bool> exportSessionReady({int? expectedClinicId}) async {
+    final revision = guard.revision;
+    final actor = await _session(revision);
+    final tenant = actor.tenantId;
+    return actor.role.toLowerCase() == 'doctor' && tenant != null &&
+        RegExp(r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$').hasMatch(tenant) &&
+        (expectedClinicId == null || actor.clinicContextId == expectedClinicId);
+  }
+
+  /// Staged local projection only. Server-side explicit patient approval is
+  /// mandatory; this client never enables partner exchange or queues exports.
+  Future<FhirExportPreview> exportPatient({
+    required int patientId,
+    String section = 'all',
+    int? expectedClinicId,
+  }) async {
+    _id(patientId);
+    if (!fhirExportSections.contains(section)) {
+      throw const HieUnavailable();
+    }
+    final rev = guard.revision;
+    final actor = await _session(rev);
+    final tenant = actor.tenantId;
+    final clinic = actor.clinicContextId!;
+    if (actor.role.toLowerCase() != 'doctor' || tenant == null ||
+        !RegExp(r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$').hasMatch(tenant) ||
+        (expectedClinicId != null && clinic != expectedClinicId)) {
+      throw const HieUnavailable();
+    }
+    final suffix = section == 'all' ? '' : '/$section';
+    final raw = await apiClient.getFhirJson(
+      'api/v1/hie/fhir/export/patient/$patientId$suffix',
+      bearerToken: actor.accessToken,
+    );
+    await _check(actor, rev);
+    return FhirExportPreview.parse(raw, patientId: patientId, clinicId: clinic,
+        tenantId: tenant, section: section);
   }
 
   Future<HieIntegration> create(HieDraft draft) async {

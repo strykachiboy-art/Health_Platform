@@ -74,6 +74,13 @@ class ApiClient {
     );
   }
 
+  /// FHIR-R02 local read-only projection. Require the FHIR JSON media type
+  /// and UTF-8 rather than the HTTP client's legacy text encoding fallback.
+  Future<Map<String, dynamic>> getFhirJson(String path, {
+    required String bearerToken,
+  }) => _requestJson(method: 'GET', path: path, bearerToken: bearerToken,
+    fhirJson: true);
+
   /// Performs a JSON POST request and requires a JSON object response.
   ///
   /// If [bearerToken] is supplied, it is sent as an Authorization Bearer
@@ -205,6 +212,7 @@ class ApiClient {
     String? bearerToken,
     String? idempotencyKey,
     Map<String, String>? additionalHeaders,
+    bool fhirJson = false,
   }) async {
     if (bearerToken != null && bearerToken.trim().isEmpty) {
       throw ArgumentError.value(
@@ -227,7 +235,7 @@ class ApiClient {
     }
 
     final uri = config.endpoint(path);
-    final headers = <String, String>{'Accept': 'application/json'};
+    final headers = <String, String>{'Accept': fhirJson ? 'application/fhir+json' : 'application/json'};
 
     if (body != null) {
       headers['Content-Type'] = 'application/json';
@@ -318,7 +326,13 @@ class ApiClient {
     final Object? decoded;
 
     try {
-      decoded = jsonDecode(response.body);
+      if (fhirJson) {
+        final mediaType = response.headers['content-type']?.split(';').first.trim().toLowerCase();
+        if (mediaType != 'application/fhir+json' || response.bodyBytes.length > 5 * 1024 * 1024) {
+          throw const FormatException('Invalid FHIR response media type or size.');
+        }
+      }
+      decoded = jsonDecode(fhirJson ? utf8.decode(response.bodyBytes) : response.body);
     } on FormatException catch (error) {
       throw ApiException(
         kind: ApiFailureKind.invalidResponse,
