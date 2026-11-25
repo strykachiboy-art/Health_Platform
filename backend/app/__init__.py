@@ -205,6 +205,10 @@ def create_app(config_name=None):
         from app import models_registry  # noqa: F401
         from app.modules.chat.realtime import chat_socket  # noqa: F401
 
+    # Register HIE providers so get_provider() resolves "fhir-r4" at runtime.
+    from app.modules.hie.providers.fhir_r4_provider import register_fhir_r4_provider
+    register_fhir_r4_provider()
+
     register_error_handlers(app)
     register_api_version_boundary(app)
     register_blueprints(app)
@@ -291,6 +295,10 @@ def register_blueprints(app):
 
     from app.modules.hie.routes.hie_route import (
         hie_bp,
+    )
+
+    from app.modules.hie.routes.fhir_export_route import (
+        fhir_export_bp,
     )
 
     from app.modules.inventory.routes.inventory_route import (
@@ -411,6 +419,7 @@ def register_blueprints(app):
         vehicle_bp,
         trip_bp,
         hie_bp,
+        fhir_export_bp,
         pharmacy_bp,
         appointment_bp,
         offline_operation_bp,
