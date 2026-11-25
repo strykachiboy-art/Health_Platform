@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/clinical_timeline/data/timeline_source.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
@@ -163,6 +164,12 @@ GoRouter createAppRouter({
   DeviceTokenProvider? deviceTokenProvider,
   DeviceConnectivitySource? deviceRegistrationConnectivitySource,
 }) {
+  final TimelineSource? timelineSource = dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
+      ? TimelineSource(apiClient: dashboardDataSource.apiClient,
+          loadSession: dashboardDataSource.loadSession, guard: sessionNavigationGuard)
+      : null;
   // One online problem writer for the router lifetime. Backend remains authoritative.
   final ProblemSource? problemSource = dashboardDataSource != null &&
           sessionNavigationGuard != null &&
@@ -2333,6 +2340,7 @@ GoRouter createAppRouter({
               return PatientDetailScreen(
                 key: ValueKey('patient-detail-route-$patientId'),
                 problemSource: problemSource,
+                timelineSource: timelineSource,
                 dataSource: source,
                 patientId: patientId,
                 allergyDataSource: patientAllergyDataSource,

@@ -206,12 +206,14 @@ class ProblemWorkspaceScreen extends StatefulWidget {
     required this.patientId,
     this.consultationId,
     this.allowWrite = true,
+    this.initialProblemId,
   });
   final ProblemSource source;
   final ProblemSession session;
   final int patientId;
   final int? consultationId;
   final bool allowWrite;
+  final int? initialProblemId;
   @override
   State<ProblemWorkspaceScreen> createState() => _ProblemWorkspaceScreenState();
 }
@@ -237,7 +239,12 @@ class _ProblemWorkspaceScreenState extends State<ProblemWorkspaceScreen> {
   void initState() {
     super.initState();
     widget.source.guard.addListener(_invalidate);
-    unawaited(_load());
+    final id = widget.initialProblemId;
+    if (id == null) {
+      unawaited(_load());
+    } else {
+      unawaited(_detail(id));
+    }
   }
 
   @override
@@ -304,7 +311,7 @@ class _ProblemWorkspaceScreenState extends State<ProblemWorkspaceScreen> {
     }
   }
 
-  Future<void> _detail(ProblemRecord row) async {
+  Future<void> _detail(int id) async {
     if (_busy || !_active) {
       return;
     }
@@ -317,7 +324,7 @@ class _ProblemWorkspaceScreenState extends State<ProblemWorkspaceScreen> {
       _message = null;
     });
     try {
-      final detail = await widget.session.detail(widget.patientId, row.id);
+      final detail = await widget.session.detail(widget.patientId, id);
       if (_current(g)) {
         setState(() {
           _selected = detail;
@@ -539,7 +546,7 @@ class _ProblemWorkspaceScreenState extends State<ProblemWorkspaceScreen> {
                         ),
                         onTap: _busy || action != null
                             ? null
-                            : () => unawaited(_detail(row)),
+                            : () => unawaited(_detail(row.id)),
                       ),
                     ),
                   Wrap(

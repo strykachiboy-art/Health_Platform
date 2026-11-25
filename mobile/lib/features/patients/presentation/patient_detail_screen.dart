@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/clinical_timeline/data/timeline_source.dart';
+import 'package:clinic_system_pro/features/clinical_timeline/presentation/timeline_workspace.dart';
 import 'package:clinic_system_pro/features/problems/presentation/problem_workspace.dart';
 import 'package:go_router/go_router.dart';
 
@@ -32,6 +34,7 @@ class PatientDetailScreen extends StatefulWidget {
     this.emergencyAccessContext,
     this.allergyDataSource,
     this.problemSource,
+    this.timelineSource,
     this.vitalsDataSource,
     this.admissionDataSource,
     this.onEmarRequested,
@@ -50,6 +53,7 @@ class PatientDetailScreen extends StatefulWidget {
   final EmergencyAccessContext? emergencyAccessContext;
   final PatientAllergyRemoteDataSource? allergyDataSource;
   final ProblemSource? problemSource;
+  final TimelineSource? timelineSource;
   final PatientVitalsRemoteDataSource? vitalsDataSource;
   final PatientAdmissionRemoteDataSource? admissionDataSource;
   final VoidCallback? onEmarRequested;
@@ -461,6 +465,14 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
           _detail('Legacy allergy notes (not verified)', patient.allergies),
           _detail('Legacy chronic condition notes (not confirmed coded problems)', patient.chronicConditions),
         ]),
+        if (widget.timelineSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
+          TimelineEntry(
+            key: ValueKey('clinical-timeline-entry-${patient.id}'),
+            source: widget.timelineSource!,
+            problemSource: widget.problemSource,
+            patientId: patient.id,
+            clinicId: patient.clinicId,
+          ),
         if (widget.problemSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
           ProblemWorkspaceEntry(
             key: ValueKey('problem-entry-patient-${patient.id}'),
