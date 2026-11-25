@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/problems/presentation/problem_context_card.dart';
 
 import 'package:clinic_system_pro/features/nursing/data/models/ward_admission_workflow.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_admission_workflow_remote_data_source.dart';
@@ -6,9 +8,10 @@ import 'package:clinic_system_pro/features/nursing/data/ward_admission_workflow_
 /// Staff-reviewed online admission and transfer. One clinical POST per screen.
 /// Requires fresh server preflight and explicit user confirmation.
 class WardAdmissionsTransfersScreen extends StatefulWidget {
-  const WardAdmissionsTransfersScreen({super.key, required this.dataSource});
+  const WardAdmissionsTransfersScreen({super.key, required this.dataSource, this.problemSource});
 
   final WardAdmissionWorkflowRemoteDataSource dataSource;
+  final ProblemSource? problemSource;
 
   @override
   State<WardAdmissionsTransfersScreen> createState() =>
@@ -281,6 +284,10 @@ class _WardAdmissionsTransfersScreenState
                   Text(
                     'Active reservation: ${review.activeReservation?.id ?? 'none'}',
                   ),
+                  if (widget.problemSource != null && review.activeAdmission != null)
+                    ProblemContextCard(key: ValueKey('problem-ward-${review.activeAdmission!.id}'),
+                      source: widget.problemSource!, patientId: review.patientId,
+                      resourceId: review.activeAdmission!.id, medication: false),
                   if (!review.mayWrite)
                     const Text(
                       'Viewing only: an authorized clinician is required.',

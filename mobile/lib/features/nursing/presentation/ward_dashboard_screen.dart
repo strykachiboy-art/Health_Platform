@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
 
 import 'package:clinic_system_pro/features/nursing/data/models/ward_overview.dart';
 import 'package:clinic_system_pro/features/nursing/data/ward_dashboard_remote_data_source.dart';
@@ -16,9 +17,10 @@ import 'package:clinic_system_pro/features/nursing/presentation/nursing_handoffs
 /// P23E.B: online, read-only ward and bed status from the authoritative API.
 /// No automatic retries, PHI cache, offline writes, or local bed decisions.
 class WardDashboardScreen extends StatefulWidget {
-  const WardDashboardScreen({super.key, required this.dataSource});
+  const WardDashboardScreen({super.key, required this.dataSource, this.problemSource});
 
   final WardDashboardRemoteDataSource dataSource;
+  final ProblemSource? problemSource;
 
   @override
   State<WardDashboardScreen> createState() => _WardDashboardScreenState();
@@ -279,6 +281,7 @@ class _WardDashboardScreenState extends State<WardDashboardScreen> {
                   onTap: () => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
                       builder: (_) => NursingCarePlansTasksScreen(
+                        problemSource: widget.problemSource,
                         dataSource: NursingCarePlanTaskRemoteDataSource(
                           apiClient: widget.dataSource.apiClient,
                           loadSession: widget.dataSource.loadSession,
@@ -299,6 +302,7 @@ class _WardDashboardScreenState extends State<WardDashboardScreen> {
                   onTap: () => Navigator.of(context).push<void>(
                     MaterialPageRoute<void>(
                       builder: (_) => WardAdmissionsTransfersScreen(
+                        problemSource: widget.problemSource,
                         dataSource: _clinicalSource,
                       ),
                     ),

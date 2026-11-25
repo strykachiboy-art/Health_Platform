@@ -4,6 +4,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/problems/presentation/problem_context_card.dart';
 
 import 'package:clinic_system_pro/features/medication_reconciliation/data/medication_reconciliation_read_remote_data_source.dart';
 import 'package:clinic_system_pro/features/medication_reconciliation/data/models/medication_reconciliation.dart';
@@ -43,6 +45,7 @@ class MedicationReconciliationReviewScreen extends StatefulWidget {
     required this.patientId,
     required this.admissionId,
     this.onEditDraftRequested,
+    this.problemSource,
     this.onFinalizationRequested,
   }) : assert(patientId > 0),
        assert(admissionId > 0);
@@ -50,6 +53,7 @@ class MedicationReconciliationReviewScreen extends StatefulWidget {
   final MedicationReconciliationReadRemoteDataSource dataSource;
   final int patientId;
   final int admissionId;
+  final ProblemSource? problemSource;
   final void Function(MedicationReconciliationRecord)? onEditDraftRequested;
   final void Function(MedicationReconciliationRecord)? onFinalizationRequested;
 
@@ -285,6 +289,10 @@ class _MedicationReconciliationReviewScreenState
               Text('Ward transfer #${record.wardTransferId}'),
             Text('Record status: ${_recordStatus(record.status)}'),
             Text('Server version: ${record.version}'),
+            if (widget.problemSource != null)
+              ProblemContextCard(key: ValueKey('problem-medrec-${record.id}'),
+                source: widget.problemSource!, patientId: widget.patientId,
+                resourceId: record.id, medication: true),
             Text('Last updated: ${_timestamp(record.updatedAt)}'),
             Text('Finalized at: ${_timestamp(record.finalizedAt)}'),
             if (widget.onEditDraftRequested != null &&

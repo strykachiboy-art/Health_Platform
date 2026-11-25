@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/problems/presentation/problem_workspace.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
@@ -29,6 +31,7 @@ class PatientDetailScreen extends StatefulWidget {
     required this.patientId,
     this.emergencyAccessContext,
     this.allergyDataSource,
+    this.problemSource,
     this.vitalsDataSource,
     this.admissionDataSource,
     this.onEmarRequested,
@@ -46,6 +49,7 @@ class PatientDetailScreen extends StatefulWidget {
   final int patientId;
   final EmergencyAccessContext? emergencyAccessContext;
   final PatientAllergyRemoteDataSource? allergyDataSource;
+  final ProblemSource? problemSource;
   final PatientVitalsRemoteDataSource? vitalsDataSource;
   final PatientAdmissionRemoteDataSource? admissionDataSource;
   final VoidCallback? onEmarRequested;
@@ -455,8 +459,14 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
         ]),
         _section('Clinical information', [
           _detail('Legacy allergy notes (not verified)', patient.allergies),
-          _detail('Chronic conditions', patient.chronicConditions),
+          _detail('Legacy chronic condition notes (not confirmed coded problems)', patient.chronicConditions),
         ]),
+        if (widget.problemSource != null && !_patientSnapshotStale && _emergencyBoundGrantId == null)
+          ProblemWorkspaceEntry(
+            key: ValueKey('problem-entry-patient-${patient.id}'),
+            source: widget.problemSource!, patientId: patient.id,
+            allowWrite: patient.isActive,
+          ),
         if (widget.allergyDataSource != null && !_patientSnapshotStale) ...[
           const SizedBox(height: 12),
           PatientStructuredAllergiesCard(
@@ -479,6 +489,7 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
           const SizedBox(height: 12),
           PatientAdmissionHistoryCard(
             key: ValueKey('patient-admissions-for-${patient.id}'),
+            problemSource: _emergencyBoundGrantId == null ? widget.problemSource : null,
             patientId: patient.id,
             dataSource: widget.admissionDataSource!,
           ),

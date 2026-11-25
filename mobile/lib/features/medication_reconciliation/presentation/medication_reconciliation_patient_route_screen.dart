@@ -4,6 +4,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
 
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
@@ -22,10 +23,12 @@ class MedicationReconciliationPatientRouteScreen extends StatefulWidget {
     super.key,
     required this.admissions,
     required this.patientId,
+    this.problemSource,
   }) : assert(patientId > 0);
 
   final PatientAdmissionRemoteDataSource admissions;
   final int patientId;
+  final ProblemSource? problemSource;
 
   @override
   State<MedicationReconciliationPatientRouteScreen> createState() =>
@@ -215,6 +218,7 @@ class _MedicationReconciliationPatientRouteScreenState
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => MedicationReconciliationReviewScreen(
+          problemSource: widget.problemSource,
           dataSource: _read,
           patientId: widget.patientId,
           admissionId: admission.id,
@@ -240,6 +244,7 @@ class _MedicationReconciliationPatientRouteScreenState
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => MedicationReconciliationDecisionScreen(
+          problemSource: widget.problemSource,
           readSource: _read,
           mutationSource: MedicationReconciliationMutationRemoteDataSource(
             apiClient: widget.admissions.apiClient,
@@ -269,6 +274,7 @@ class _MedicationReconciliationPatientRouteScreenState
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => MedicationReconciliationFinalizationScreen(
+          problemSource: widget.problemSource,
           source: MedRecS04FinalizationRemoteDataSource(
             transport: MedRecS04ApiTransport(widget.admissions.apiClient),
             loadSession: widget.admissions.loadSession,

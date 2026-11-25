@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/problems/presentation/problem_workspace.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/consultations/data/consultation_remote_data_source.dart';
@@ -14,12 +16,14 @@ class ConsultationDetailScreen extends StatefulWidget {
     required this.patientId,
     required this.consultationId,
     this.onClinicalActionsRequested,
+    this.problemSource,
   });
 
   final ConsultationRemoteDataSource dataSource;
   final int patientId;
   final int consultationId;
   final VoidCallback? onClinicalActionsRequested;
+  final ProblemSource? problemSource;
 
   @override
   State<ConsultationDetailScreen> createState() =>
@@ -127,6 +131,10 @@ class _ConsultationDetailScreenState extends State<ConsultationDetailScreen> {
                 Text('Consultation #${record.id}'),
                 Text('Patient #${record.patientId} · Staff #${record.staffId}'),
                 Text('Status: ${record.status.name}'),
+                if (widget.problemSource != null)
+                  ProblemWorkspaceEntry(key: ValueKey('problem-consult-${record.id}'),
+                    source: widget.problemSource!, patientId: record.patientId,
+                    consultationId: record.id),
                 Text(
                   'Record: ${record.recordStatus.name} · v${record.recordVersion}',
                 ),

@@ -1,6 +1,8 @@
 // P23G.S04: deliberately entered, online-only finalization/amendment screen.
 // Route integration is deferred; no existing S01-S03.D screen is modified.
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/problems/presentation/problem_context_card.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:clinic_system_pro/features/medication_reconciliation/data/medication_reconciliation_finalization_remote_data_source.dart';
@@ -13,6 +15,7 @@ class MedicationReconciliationFinalizationScreen extends StatefulWidget {
     required this.clinicId,
     required this.patientId,
     required this.admissionId,
+    this.problemSource,
   });
 
   final MedRecS04FinalizationRemoteDataSource source;
@@ -20,6 +23,7 @@ class MedicationReconciliationFinalizationScreen extends StatefulWidget {
   final int clinicId;
   final int patientId;
   final int admissionId;
+  final ProblemSource? problemSource;
 
   @override
   State<MedicationReconciliationFinalizationScreen> createState() =>
@@ -267,6 +271,10 @@ class _MedicationReconciliationFinalizationScreenState
                 ),
                 if (record != null) ...<Widget>[
                   Text('Event: ${record.eventType}'),
+                  if (widget.problemSource != null)
+                    ProblemContextCard(key: ValueKey('problem-medrec-final-${widget.reconciliationId}'),
+                      source: widget.problemSource!, patientId: widget.patientId,
+                      resourceId: widget.reconciliationId, medication: true),
                   Text('Status: ${record.status} • Version ${record.version}'),
                   Text('Original author staff: ${record.authorStaffId}'),
                   if (record.noMedicationsReported)

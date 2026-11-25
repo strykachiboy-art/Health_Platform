@@ -3,6 +3,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/problems/presentation/problem_context_card.dart';
 
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/medication_reconciliation/data/medication_reconciliation_mutation_remote_data_source.dart';
@@ -19,6 +21,7 @@ class MedicationReconciliationDecisionScreen extends StatefulWidget {
     required this.event,
     this.wardTransferId,
     this.reconciliationId,
+    this.problemSource,
   }) : assert(patientId > 0),
        assert(admissionId > 0),
        assert(reconciliationId == null || reconciliationId > 0),
@@ -41,6 +44,7 @@ class MedicationReconciliationDecisionScreen extends StatefulWidget {
   final MedicationReconciliationEvent event;
   final int? wardTransferId;
   final int? reconciliationId;
+  final ProblemSource? problemSource;
 
   @override
   State<MedicationReconciliationDecisionScreen> createState() =>
@@ -630,6 +634,10 @@ class _MedicationReconciliationDecisionScreenState
                     'This reconciliation is finalized or amended and cannot be edited as a draft.',
                     key: ValueKey('p23g-s03d-non-draft'),
                   ),
+                if (widget.problemSource != null && _currentDraft != null && !_loading && !_requiresRecheck)
+                  ProblemContextCard(key: ValueKey('problem-medrec-draft-${_currentDraft!.id}'),
+                    source: widget.problemSource!, patientId: widget.patientId,
+                    resourceId: _currentDraft!.id, medication: true),
                 if (_editable) ...[
                   if (_saved)
                     const Text(

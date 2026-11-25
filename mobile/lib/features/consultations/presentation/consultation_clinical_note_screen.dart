@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/problems/presentation/problem_workspace.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/consultations/data/consultation_remote_data_source.dart';
@@ -16,11 +18,13 @@ class ConsultationClinicalNoteScreen extends StatefulWidget {
     required this.consultationDataSource,
     required this.patientId,
     required this.consultationId,
+    this.problemSource,
   });
 
   final ConsultationRemoteDataSource consultationDataSource;
   final int patientId;
   final int consultationId;
+  final ProblemSource? problemSource;
 
   @override
   State<ConsultationClinicalNoteScreen> createState() =>
@@ -426,6 +430,10 @@ class _ConsultationClinicalNoteScreenState
                 const Text(
                   'Online-only. Writes are never queued or automatically retried.',
                 ),
+                if (widget.problemSource != null)
+                  ProblemWorkspaceEntry(key: ValueKey('problem-note-${record.id}'),
+                    source: widget.problemSource!, patientId: record.patientId,
+                    consultationId: record.id),
                 for (final field
                     in <
                       ({String name, TextEditingController controller, int max})

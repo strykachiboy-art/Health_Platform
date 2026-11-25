@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
@@ -162,6 +163,13 @@ GoRouter createAppRouter({
   DeviceTokenProvider? deviceTokenProvider,
   DeviceConnectivitySource? deviceRegistrationConnectivitySource,
 }) {
+  // One online problem writer for the router lifetime. Backend remains authoritative.
+  final ProblemSource? problemSource = dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
+      ? ProblemSource(apiClient: dashboardDataSource.apiClient,
+          loadSession: dashboardDataSource.loadSession, guard: sessionNavigationGuard,
+          connectivity: ConnectivityPlusDeviceConnectivitySource()) : null;
   // Keep one source per router lifetime, preserving uncertain-write protection.
   final HieRemoteDataSource? hieSource = dashboardDataSource != null &&
           sessionNavigationGuard != null &&
@@ -1421,6 +1429,7 @@ GoRouter createAppRouter({
                 );
               }
               return WardDashboardScreen(
+                problemSource: problemSource,
                 dataSource: WardDashboardRemoteDataSource(
                   apiClient: admissions.apiClient,
                   loadSession: admissions.loadSession,
@@ -1729,6 +1738,7 @@ GoRouter createAppRouter({
               }
               return ConsultationClinicalNoteScreen(
                 key: ValueKey('p23c-note-route-$patientId-$consultationId'),
+                problemSource: problemSource,
                 consultationDataSource: source,
                 patientId: patientId,
                 consultationId: consultationId,
@@ -1760,6 +1770,7 @@ GoRouter createAppRouter({
               }
               return ConsultationDetailScreen(
                 key: ValueKey('p23c-consultation-$patientId-$consultationId'),
+                problemSource: problemSource,
                 dataSource: source,
                 patientId: patientId,
                 consultationId: consultationId,
@@ -2008,6 +2019,7 @@ GoRouter createAppRouter({
               }
               return MedicationReconciliationPatientRouteScreen(
                 key: ValueKey('p23g-route-patient-$patientId'),
+                problemSource: problemSource,
                 admissions: admissions,
                 patientId: patientId,
               );
@@ -2320,6 +2332,7 @@ GoRouter createAppRouter({
                   int.tryParse(state.pathParameters['patientId'] ?? '') ?? 0;
               return PatientDetailScreen(
                 key: ValueKey('patient-detail-route-$patientId'),
+                problemSource: problemSource,
                 dataSource: source,
                 patientId: patientId,
                 allergyDataSource: patientAllergyDataSource,

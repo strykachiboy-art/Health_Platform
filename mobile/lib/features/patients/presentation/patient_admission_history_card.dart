@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/problems/presentation/problem_context_card.dart';
 
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/features/patients/data/models/patient_admission.dart';
@@ -16,12 +18,14 @@ class PatientAdmissionHistoryCard extends StatefulWidget {
     required this.patientId,
     required this.dataSource,
     this.pageSize = 20,
+    this.problemSource,
   }) : assert(patientId > 0),
        assert(pageSize > 0 && pageSize <= 500);
 
   final int patientId;
   final PatientAdmissionRemoteDataSource dataSource;
   final int pageSize;
+  final ProblemSource? problemSource;
 
   @override
   State<PatientAdmissionHistoryCard> createState() =>
@@ -316,9 +320,13 @@ class _PatientAdmissionHistoryCardState
                 'Current admission',
                 style: Theme.of(context).textTheme.titleSmall,
               ),
-              if (_current != null)
-                _admission(_current!, isCurrent: true)
-              else
+              if (_current != null) ...[
+                _admission(_current!, isCurrent: true),
+                if (widget.problemSource != null && !_loading)
+                  ProblemContextCard(key: ValueKey('problem-discharge-${_current!.id}'),
+                    source: widget.problemSource!, patientId: widget.patientId,
+                    resourceId: _current!.id, medication: false),
+              ] else
                 const Text(
                   'No active admission reported by the backend.',
                   key: ValueKey('patient-admissions-current-empty'),

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
+import 'package:clinic_system_pro/features/problems/presentation/problem_context_card.dart';
 
 import 'package:clinic_system_pro/features/nursing/data/models/nursing_care_plan_task.dart';
 import 'package:clinic_system_pro/features/nursing/data/nursing_care_plan_task_remote_data_source.dart';
@@ -6,8 +8,9 @@ import 'package:clinic_system_pro/features/nursing/data/nursing_care_plan_task_r
 /// P23E.D: online nursing care plans/tasks with confirmed single clinical POST.
 /// An attempted write locks further writes until the entire screen is left.
 class NursingCarePlansTasksScreen extends StatefulWidget {
-  const NursingCarePlansTasksScreen({super.key, required this.dataSource});
+  const NursingCarePlansTasksScreen({super.key, required this.dataSource, this.problemSource});
   final NursingCarePlanTaskRemoteDataSource dataSource;
+  final ProblemSource? problemSource;
 
   @override
   State<NursingCarePlansTasksScreen> createState() =>
@@ -287,6 +290,10 @@ class _NursingCarePlansTasksScreenState
                     'Patient ${review.admission.patientId} · '
                     'Admission ${review.admission.id}',
                   ),
+                  if (widget.problemSource != null)
+                    ProblemContextCard(key: ValueKey('problem-nursing-${review.admission.id}'),
+                      source: widget.problemSource!, patientId: review.admission.patientId,
+                      resourceId: review.admission.id, medication: false),
                   if (!review.mayWrite)
                     const Text(
                       'Read only: nursing mutations require nurse role.',
