@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
 import 'package:clinic_system_pro/features/clinical_timeline/data/timeline_source.dart';
+import 'package:clinic_system_pro/features/unified_search/data/search_source.dart';
+import 'package:clinic_system_pro/features/unified_search/presentation/search_screen.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
@@ -164,6 +166,12 @@ GoRouter createAppRouter({
   DeviceTokenProvider? deviceTokenProvider,
   DeviceConnectivitySource? deviceRegistrationConnectivitySource,
 }) {
+  final SearchSource? searchSource = dashboardDataSource != null &&
+          sessionNavigationGuard != null &&
+          identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
+      ? SearchSource(apiClient: dashboardDataSource.apiClient,
+          loadSession: dashboardDataSource.loadSession, guard: sessionNavigationGuard)
+      : null;
   final TimelineSource? timelineSource = dashboardDataSource != null &&
           sessionNavigationGuard != null &&
           identical(dashboardDataSource.sessionNavigationGuard, sessionNavigationGuard)
@@ -452,6 +460,10 @@ GoRouter createAppRouter({
         state.matchedLocation,
       );
       if (authRedirect != null) return authRedirect;
+      if (state.uri.path == '/unified-search' &&
+          sessionNavigationGuard?.canAccessProtectedRoutes != true) {
+        return '/login';
+      }
       // This project's default guard protects /patients only. Do not let
       // /pharmacy/stock bypass session redirection on direct/deep links.
       if (state.matchedLocation == '/pharmacy/stock' &&
@@ -609,6 +621,7 @@ GoRouter createAppRouter({
             statusStripBuilder: statusStripBuilder,
             sessionNavigationGuard: sessionNavigationGuard,
             deviceRegistrationConfigured: registrationCoordinator != null,
+            unifiedSearchConfigured: searchSource != null,
           );
         },
       ),
@@ -627,6 +640,17 @@ GoRouter createAppRouter({
           );
         },
         routes: [
+          GoRoute(
+            path: '/unified-search',
+            name: 'gap05-unified-search',
+            builder: (context, state) {
+              final source = searchSource;
+              if (source == null || !source.guard.canAccessProtectedRoutes) {
+                return const Scaffold(body: Center(child: Text('Unified search unavailable.')));
+              }
+              return UnifiedSearchScreen(source: source);
+            },
+          ),
           GoRoute(
             path: '/patient-portal',
             name: 'wd07b-s12-patient-portal',

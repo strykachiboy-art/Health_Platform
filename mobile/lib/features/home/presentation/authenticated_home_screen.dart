@@ -12,6 +12,7 @@ import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workf
 import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_hub.dart';
 import 'package:clinic_system_pro/features/coordination/presentation/wd06_coordination_hub.dart';
 import 'package:clinic_system_pro/features/hie/data/hie_remote_data_source.dart';
+import 'package:clinic_system_pro/features/unified_search/data/search_source.dart';
 
 /// Navigation suggestions, never authorization grants. The backend enforces
 /// identity, clinic and role for every requested resource.
@@ -551,6 +552,7 @@ class AuthenticatedHomeScreen extends StatefulWidget {
     this.statusStripBuilder,
     this.sessionNavigationGuard,
     this.deviceRegistrationConfigured = false,
+    this.unifiedSearchConfigured = false,
   });
 
   final Future<AuthSessionState> Function() loadSession;
@@ -558,6 +560,7 @@ class AuthenticatedHomeScreen extends StatefulWidget {
   final Widget Function()? statusStripBuilder;
   final SessionNavigationGuard? sessionNavigationGuard;
   final bool deviceRegistrationConfigured;
+  final bool unifiedSearchConfigured;
 
   @override
   State<AuthenticatedHomeScreen> createState() =>
@@ -567,6 +570,7 @@ class AuthenticatedHomeScreen extends StatefulWidget {
 class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
   String? _role;
   int? _clinicId;
+  bool _tenantBound = false;
   bool _loading = true;
   int _generation = 0;
 
@@ -602,6 +606,7 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
     _generation++;
     _role = null;
     _clinicId = null;
+    _tenantBound = false;
     super.dispose();
   }
 
@@ -616,6 +621,7 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
     setState(() {
       _role = null;
       _clinicId = null;
+      _tenantBound = false;
       _loading = false;
     });
   }
@@ -628,6 +634,7 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
     setState(() {
       _role = null;
       _clinicId = null;
+      _tenantBound = false;
       _loading = true;
     });
 
@@ -654,6 +661,7 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
       setState(() {
         _role = state.session!.role;
         _clinicId = state.session!.clinicContextId;
+        _tenantBound = state.session!.tenantId?.isNotEmpty == true;
         _loading = false;
       });
     } on Object {
@@ -698,6 +706,16 @@ class _AuthenticatedHomeScreenState extends State<AuthenticatedHomeScreen> {
         appBar: AppBar(
           title: const Text('Clinic System Pro'),
           actions: [
+            if (widget.unifiedSearchConfigured && !_loading &&
+                _tenantBound && (_clinicId ?? 0) > 0 && role != null &&
+                searchRoles.contains(role.trim().toLowerCase()) &&
+                widget.sessionNavigationGuard?.canAccessProtectedRoutes == true)
+              IconButton(
+                key: const ValueKey('gap05-open-unified-search'),
+                tooltip: 'Unified search',
+                onPressed: () => context.push<void>('/unified-search'),
+                icon: const Icon(Icons.search),
+              ),
             IconButton(
               key: const ValueKey('p22-s05-open-account-home'),
               tooltip: 'Profile and clinic',

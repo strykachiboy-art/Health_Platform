@@ -129,7 +129,19 @@ void main() {
       find.byKey(const ValueKey('p22-home-emergency_request')),
       findsNothing,
     );
-    expect(find.byKey(const ValueKey('p22-home-health')), findsOneWidget);
+    final healthTile = find.byKey(const ValueKey('p22-home-health'));
+    if (healthTile.evaluate().isEmpty) {
+      await tester.scrollUntilVisible(
+        healthTile,
+        200,
+        scrollable: find.descendant(
+          of: find.byKey(const ValueKey('p22-home-overview')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+    expect(healthTile, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
