@@ -973,7 +973,6 @@ def get_latest_vitals_route(
 
 @patient_bp.post("/<int:patient_id>/vitals")
 @role_required(
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
 )
@@ -1127,7 +1126,6 @@ def get_patient_allergy_route(
     "/<int:patient_id>/allergies"
 )
 @role_required(
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
     Role.PHARMACIST,
@@ -1183,7 +1181,6 @@ def create_patient_allergy_route(
     "<int:allergy_id>"
 )
 @role_required(
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
     Role.PHARMACIST,
@@ -1239,7 +1236,6 @@ def update_patient_allergy_route(
     "<int:allergy_id>/status"
 )
 @role_required(
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
     Role.PHARMACIST,

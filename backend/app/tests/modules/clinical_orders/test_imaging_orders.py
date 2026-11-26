@@ -498,13 +498,53 @@ def test_imaging_order_tenant_isolation(
         )
 
 
+def _bound_imaging_headers(app, user):
+    """Real synthetic tenant and clinic grants for the two positive route tests."""
+    from flask_jwt_extended import decode_token
+    from app.core.auth.user.services.user_service import issue_auth_tokens
+    from app.modules.clinic.models.clinic_model import Clinic
+    from app.modules.clinic.models.organization_model import (
+        TenantMembership, ClinicMembership,
+    )
+
+    assert user.role in (Role.DOCTOR, Role.NURSE)
+    clinic = db.session.get(Clinic, user.clinic_id)
+    assert clinic is not None and clinic.organization_id is not None
+    tenant = db.session.execute(db.select(TenantMembership).where(
+        TenantMembership.user_id == user.id,
+        TenantMembership.organization_id == clinic.organization_id,
+    )).scalar_one_or_none()
+    if tenant is None:
+        db.session.add(TenantMembership(
+            user_id=user.id, organization_id=clinic.organization_id,
+            role='member', status='active', is_active=True,
+        ))
+        db.session.flush()
+    grant = db.session.execute(db.select(ClinicMembership).where(
+        ClinicMembership.user_id == user.id,
+        ClinicMembership.clinic_id == clinic.id,
+    )).scalar_one_or_none()
+    if grant is None:
+        db.session.add(ClinicMembership(
+            user_id=user.id, organization_id=clinic.organization_id,
+            clinic_id=clinic.id, role=user.role.value, is_active=True,
+        ))
+    db.session.commit()
+    with app.test_request_context():
+        token = issue_auth_tokens(user, clinic_context_id=clinic.id)['access_token']
+        claims = decode_token(token)
+    assert claims['role'] == user.role.value
+    assert claims['clinic_context_id'] == clinic.id
+    assert claims['tenant_id'] == str(clinic.organization_id)
+    return {'Authorization': 'Bearer ' + token}
+
+
 def test_doctor_route_can_create_and_nurse_can_view(
     monkeypatch,
     client,
     clinic,
     make_patient,
     make_staff,
-    auth_headers_for,
 ):
     ctx = _context(
         monkeypatch=monkeypatch,
@@ -515,9 +555,8 @@ def test_doctor_route_can_create_and_nurse_can_view(
 
     create_response = client.post(
         "/api/v1/clinical-orders/imaging",
-        headers=auth_headers_for(
-            ctx["doctor"].user,
-            role=Role.DOCTOR,
+        headers=_bound_imaging_headers(
+            client.application, ctx["doctor"].user,
         ),
         json={
             "admission_id": ctx["admission"].id,
@@ -541,9 +580,8 @@ def test_doctor_route_can_create_and_nurse_can_view(
             "/api/v1/clinical-orders/imaging/"
             f"{order_id}"
         ),
-        headers=auth_headers_for(
-            ctx["nurse"].user,
-            role=Role.NURSE,
+        headers=_bound_imaging_headers(
+            client.application, ctx["nurse"].user,
         ),
     )
 
@@ -593,7 +631,6 @@ def test_route_complete_and_cancel_are_terminal(
     clinic,
     make_patient,
     make_staff,
-    auth_headers_for,
 ):
     ctx = _context(
         monkeypatch=monkeypatch,
@@ -612,9 +649,8 @@ def test_route_complete_and_cancel_are_terminal(
             "/api/v1/clinical-orders/imaging/"
             f"{order.id}/complete"
         ),
-        headers=auth_headers_for(
-            ctx["doctor"].user,
-            role=Role.DOCTOR,
+        headers=_bound_imaging_headers(
+            client.application, ctx["doctor"].user,
         ),
         json={
             "report_text": "Normal chest radiograph.",
@@ -633,9 +669,8 @@ def test_route_complete_and_cancel_are_terminal(
             "/api/v1/clinical-orders/imaging/"
             f"{order.id}/cancel"
         ),
-        headers=auth_headers_for(
-            ctx["doctor"].user,
-            role=Role.DOCTOR,
+        headers=_bound_imaging_headers(
+            client.application, ctx["doctor"].user,
         ),
         json={
             "reason": "Cannot cancel terminal order",

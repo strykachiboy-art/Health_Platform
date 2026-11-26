@@ -14,6 +14,33 @@ from app.core.exceptions import ValidationError
 from app.modules.consultation.routes import consultation_route
 
 
+def _doctor_policy_headers(app, user):
+    """Use a real authorized Doctor actor for former Admin-positive tests."""
+    from app.extensions import db
+    from app.core.auth.user.services.user_service import issue_auth_tokens
+    from app.modules.clinic.models.clinic_model import Clinic
+    from app.modules.clinic.models.organization_model import (
+        TenantMembership, ClinicMembership,
+    )
+    clinic = db.session.get(Clinic, user.clinic_id)
+    assert clinic is not None and clinic.organization_id is not None
+    user.role = Role.DOCTOR
+    db.session.flush()
+    db.session.add(TenantMembership(
+        user_id=user.id, organization_id=clinic.organization_id,
+        role='member', status='active', is_active=True,
+    ))
+    db.session.flush()
+    db.session.add(ClinicMembership(
+        user_id=user.id, organization_id=clinic.organization_id,
+        clinic_id=clinic.id, role=Role.DOCTOR.value, is_active=True,
+    ))
+    db.session.commit()
+    with app.test_request_context():
+        token = issue_auth_tokens(user, clinic_context_id=clinic.id)['access_token']
+    return {'Authorization': 'Bearer ' + token}
+
+
 def make_consultation(
     *,
     clinic_id=1,
@@ -146,7 +173,7 @@ def test_start_consultation_success(
     auth_headers_for,
     monkeypatch,
 ):
-    headers = auth_headers_for(staff.user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, staff.user)
 
     consultation = make_consultation(
         clinic_id=clinic.id,
@@ -254,7 +281,7 @@ def test_start_consultation_ignores_client_clinic_id(
     auth_headers_for,
     monkeypatch,
 ):
-    headers = auth_headers_for(staff.user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, staff.user)
 
     consultation = make_consultation(
         clinic_id=clinic.id,
@@ -294,7 +321,7 @@ def test_start_consultation_invalid_payload_returns_422(
     auth_headers_for,
     user,
 ):
-    headers = auth_headers_for(user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, user)
 
     response = app.test_client().post(
         "/api/v1/consultations/",
@@ -318,7 +345,7 @@ def test_start_consultation_rejects_blank_chief_complaint(
     auth_headers_for,
     user,
 ):
-    headers = auth_headers_for(user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, user)
 
     response = app.test_client().post(
         "/api/v1/consultations/",
@@ -343,7 +370,7 @@ def test_start_consultation_rejects_unknown_field(
     auth_headers_for,
     user,
 ):
-    headers = auth_headers_for(user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, user)
 
     response = app.test_client().post(
         "/api/v1/consultations/",
@@ -446,7 +473,7 @@ def test_update_consultation_success(
     user,
     monkeypatch,
 ):
-    headers = auth_headers_for(user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, user)
 
     consultation = make_consultation(
         clinic_id=clinic.id,
@@ -495,7 +522,7 @@ def test_update_consultation_rejects_blank_notes(
     auth_headers_for,
     user,
 ):
-    headers = auth_headers_for(user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, user)
 
     response = app.test_client().patch(
         "/api/v1/consultations/1",
@@ -518,7 +545,7 @@ def test_update_consultation_rejects_unknown_field(
     auth_headers_for,
     user,
 ):
-    headers = auth_headers_for(user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, user)
 
     response = app.test_client().patch(
         "/api/v1/consultations/1",
@@ -686,7 +713,7 @@ def test_cancel_consultation_allows_missing_reason(
     user,
     monkeypatch,
 ):
-    headers = auth_headers_for(user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, user)
 
     consultation = make_consultation(
         clinic_id=clinic.id,
@@ -723,7 +750,7 @@ def test_cancel_consultation_rejects_blank_reason(
     auth_headers_for,
     user,
 ):
-    headers = auth_headers_for(user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, user)
 
     response = app.test_client().post(
         "/api/v1/consultations/31/cancel",
@@ -2309,14 +2336,14 @@ def test_create_template_admin_without_clinic_is_denied(
     assert called["value"] is False
 
 
-def test_template_create_allowed_for_admin(
+def test_template_create_allowed_for_doctor(
     app,
     clinic,
     auth_headers_for,
     user,
     monkeypatch,
 ):
-    headers = auth_headers_for(user, role=Role.ADMIN)
+    headers = _doctor_policy_headers(app, user)
 
     template = make_template(
         clinic_id=clinic.id,
@@ -2331,7 +2358,7 @@ def test_template_create_allowed_for_admin(
     response = app.test_client().post(
         "/api/v1/consultations/templates",
         json={
-            "name": "Admin Template",
+            "name": "Doctor Template",
             "structure": {
                 "sections": ["history"]
             },

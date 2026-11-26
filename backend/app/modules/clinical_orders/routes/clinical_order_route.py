@@ -114,7 +114,6 @@ IMAGING_WRITE_ROLES = (
 )
 
 IMAGING_VIEW_ROLES = (
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
 )
@@ -124,7 +123,6 @@ PROCEDURE_WRITE_ROLES = (
 )
 
 PROCEDURE_VIEW_ROLES = (
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
 )
@@ -138,7 +136,6 @@ BLOOD_PRODUCT_VERIFY_ROLES = (
 )
 
 BLOOD_PRODUCT_VIEW_ROLES = (
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
     Role.LAB_TECHNICIAN,
@@ -149,7 +146,6 @@ DIET_WRITE_ROLES = (
 )
 
 DIET_VIEW_ROLES = (
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
 )
@@ -163,13 +159,11 @@ NURSING_ORDER_EXECUTION_ROLES = (
 )
 
 NURSING_ORDER_VIEW_ROLES = (
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
 )
 
 UNIFIED_CPOE_VIEW_ROLES = (
-    Role.ADMIN,
     Role.DOCTOR,
     Role.NURSE,
 )
