@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
 import 'package:clinic_system_pro/features/lab/data/lab_release_remote_data_source.dart';
+import 'package:clinic_system_pro/features/printing/data/clinic_print_service.dart';
+import 'package:clinic_system_pro/features/printing/presentation/clinic_print_action.dart';
 
 /// Standalone staged workspace; router and notification integration belong to Run B.
 class LabReleaseWorkspaceScreen extends StatefulWidget {
@@ -630,10 +632,20 @@ class _LabReleaseWorkspaceScreenState extends State<LabReleaseWorkspaceScreen> {
       ],
       if (_detail case final detail?) ...[
         _report(detail),
-        const OutlinedButton(
-          onPressed: null,
-          child: Text('Released PDF copy (held)'),
-        ),
+        if (clinicPrintStaged)
+          ClinicPrintAction(
+            api: widget.source.apiClient,
+            loadSession: widget.source.loadSession,
+            guard: widget.source.guard,
+            source: ClinicPrintSource.releasedLab,
+            recordId: detail.orderId,
+            enabled: !_busy,
+          )
+        else
+          const OutlinedButton(
+            onPressed: null,
+            child: Text('Released PDF copy (held)'),
+          ),
       ],
     ],
   );

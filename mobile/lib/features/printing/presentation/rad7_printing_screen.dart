@@ -1,14 +1,16 @@
 import 'dart:async';
 
+import 'package:clinic_system_pro/features/printing/data/clinic_print_service.dart';
+import 'package:clinic_system_pro/features/printing/presentation/clinic_print_action.dart';
+
 import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/dashboard/data/dashboard_remote_data_source.dart';
 import 'package:clinic_system_pro/features/printing/data/rad7_print_contract.dart';
 
-/// The shared hospital print workspace is visible, but RAD6 backend downloads
-/// are currently disabled. No URL launching, file writes, PDF caching, or
-/// raw Orthanc access can be triggered by this screen.
+/// Shared staff workspace. The staged device action never bypasses Flask.
+/// Default and release builds retain the existing print hold.
 class Rad7PrintingScreen extends StatefulWidget {
   const Rad7PrintingScreen({
     super.key,
@@ -110,7 +112,7 @@ class _Rad7PrintingScreenState extends State<Rad7PrintingScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text(
+          if (!clinicPrintStaged) const Text(
             'Printing integration is protected until the backend release gate is approved.',
             key: ValueKey('rad7-print-release-locked'),
           ),
@@ -129,16 +131,33 @@ class _Rad7PrintingScreenState extends State<Rad7PrintingScreen> {
             controller: _recordId,
             key: const ValueKey('rad7-print-record-id'),
             keyboardType: TextInputType.number,
+            onChanged: (_) {
+              if (clinicPrintStaged) setState(() {});
+            },
             decoration: const InputDecoration(labelText: 'Source record ID'),
           ),
           const SizedBox(height: 12),
-          const FilledButton(
-            onPressed: null,
-            child: Text('Download / print (pending approval)'),
-          ),
-          const Text(
-            'A PDF will only be available after server authorization, audit, and a separate device printing release. No automatic print or offline replay.',
-          ),
+          if (clinicPrintStaged && _selected != null)
+            ClinicPrintAction(
+              api: widget.dashboard.apiClient,
+              loadSession: widget.dashboard.loadSession,
+              guard: widget.guard,
+              source: switch (_selected!) {
+                Rad7PrintKind.invoice => ClinicPrintSource.invoice,
+                Rad7PrintKind.appointment => ClinicPrintSource.appointment,
+                Rad7PrintKind.labOrder => ClinicPrintSource.labOrder,
+                Rad7PrintKind.radiologyDraft => ClinicPrintSource.radiologyDraft,
+              },
+              recordId: int.tryParse(_recordId.text) ?? 0,
+            )
+          else
+            const FilledButton(
+              onPressed: null,
+              child: Text('Download / print (pending approval)'),
+            ),
+          Text(clinicPrintStaged
+            ? 'Staged test only. Server authorization and audit are required for every copy. No automatic print or offline replay.'
+            : 'A PDF will only be available after server authorization, audit, and a separate device printing release. No automatic print or offline replay.'),
           if (_notice != null) Text(_notice!),
         ],
       ),

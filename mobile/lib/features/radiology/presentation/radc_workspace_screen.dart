@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:clinic_system_pro/features/printing/data/clinic_print_service.dart';
+import 'package:clinic_system_pro/features/printing/presentation/clinic_print_action.dart';
 import '../data/radc_staged_remote_data_source.dart';
 
 class RadcWorkspaceScreen extends StatefulWidget {
@@ -472,9 +474,19 @@ class _RadcWorkspaceScreenState extends State<RadcWorkspaceScreen> {
                 Text(r.text, key: const ValueKey('radc-report-text')),
                 Text('Released: ${r.releasedAt ?? "Unavailable"}'),
               ],
-              const Text(
-                'Controlled PDF endpoint exists; native download and printing remain held.',
-              ),
+              if (clinicPrintStaged && r != null && r.released)
+                ClinicPrintAction(
+                  api: widget.source.apiClient,
+                  loadSession: widget.source.loadSession,
+                  guard: widget.source.guard,
+                  source: ClinicPrintSource.stagedRadiology,
+                  recordId: r.examId,
+                  enabled: ready,
+                )
+              else
+                const Text(
+                  'Controlled PDF endpoint exists; native download and printing remain held.',
+                ),
             ],
             if (_session != null && !widget.patientOnly) ...[
               _field(_examField, 'Examination ID', number: true),

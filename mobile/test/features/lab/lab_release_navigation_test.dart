@@ -134,7 +134,7 @@ void viewport(WidgetTester tester) {
 }
 
 void main() {
-  test('exact role and clinic navigation; added link is last', () {
+  test('exact role and clinic navigation; lab precedes Blood Bank', () {
     for (final role in roles) {
       for (final clinic in <int?>[null, 0, 4]) {
         final all = homeDestinationsFor(role: role, clinicContextId: clinic);
@@ -144,7 +144,13 @@ void main() {
             const {'doctor', 'lab_technician', 'patient'}.contains(role);
         expect(links.length, allowed ? 1 : 0, reason: '$role $clinic');
         if (allowed) {
-          expect(all.last.id, 'lab_release');
+          // BB integration subsequently appended one authorized destination.
+          // Preserve the old lab position relative to all earlier entries,
+          // and verify the exact new tail rather than relaxing the ordering.
+          expect(all.map((d) => d.id).toList().sublist(all.length - 2), [
+            'lab_release',
+            role == 'patient' ? 'my_transfusions' : 'blood_bank',
+          ]);
           expect(
             links.single.path,
             role == 'patient' ? '/patient-lab-results' : '/lab-release',

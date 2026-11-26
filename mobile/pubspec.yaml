@@ -35,6 +35,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   http: ^1.6.0
+  printing: 5.15.1
   connectivity_plus: ^7.3.2
 
   # State management and dependency injection
