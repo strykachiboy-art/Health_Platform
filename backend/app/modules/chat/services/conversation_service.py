@@ -28,6 +28,7 @@ from app.core.exceptions import (
 from app.core.utils.decorators import transactional
 
 from app.modules.appointment.models.appointment_model import Appointment
+from app.modules.clinic.models.clinic_model import Clinic
 from app.modules.clinic.services.clinic_service import (
     ensure_clinic_active,
 )
@@ -736,6 +737,12 @@ def create_conversation(
             patient_id=patient_id,
         )
 
+    for user_id in sorted(participant_ids):
+        participant_user = _get_user(user_id, clinic_id=clinic_id, active_only=True)
+        ChatSecurityService.ensure_staff_clinic_consistency(participant_user)
+        if patient_id is not None:
+            _validate_staff_patient_relationship(user_id=user_id, clinic_id=clinic_id, patient_id=patient_id)
+
     if conversation_type == ConversationType.DIRECT:
         ChatPolicyService.ensure_direct_conversation_allowed(
             clinic_id,
@@ -752,12 +759,27 @@ def create_conversation(
             list(participant_ids),
         )
 
+        # Serialize direct-key lookup and insertion across concurrent creators.
+        # Existing partial unique index remains the database backstop.
+        db.session.execute(db.select(Clinic.id).where(Clinic.id == clinic_id).with_for_update()).scalar_one()
         existing = _get_active_direct_conversation(
             clinic_id,
             direct_key,
         )
 
         if existing is not None:
+            # Do not return a context-linked chat for an unrelated request,
+            # or resurrect a departed/removed participant by guessing IDs.
+            if (existing.patient_id, existing.appointment_id, existing.consultation_id) != (patient_id, appointment_id, consultation_id):
+                raise ConflictError("Existing direct conversation has a different context")
+            member = db.session.execute(db.select(ConversationParticipant).where(
+                ConversationParticipant.conversation_id == existing.id,
+                ConversationParticipant.clinic_id == clinic_id,
+                ConversationParticipant.user_id == creator.id,
+                ConversationParticipant.status.in_((ParticipantStatus.ACCEPTED, ParticipantStatus.PENDING)),
+            )).scalar_one_or_none()
+            if member is None:
+                raise NotFoundError("Conversation not found")
             return existing
 
     else:
@@ -766,13 +788,6 @@ def create_conversation(
         ChatPolicyService.ensure_group_conversation_allowed(
             clinic_id,
             len(participant_ids),
-        )
-
-    for user_id in participant_ids:
-        _get_user(
-            user_id,
-            clinic_id=clinic_id,
-            active_only=True,
         )
 
     conversation = Conversation(
@@ -1003,6 +1018,26 @@ def list_conversations(
         count_query = count_query.where(condition)
 
     if user_id is not None:
+        # An accepted membership row can outlive an admission assignment.
+        # Check live case eligibility before both counts and pagination.
+        from app.modules.chat.models.admission_case_conversation_model import AdmissionCaseConversation
+        from app.modules.chat.services.case_chat_access_guard import ensure_case_chat_user_allowed
+        linked = db.session.scalars(db.select(AdmissionCaseConversation.conversation_id).join(
+            ConversationParticipant,
+            ConversationParticipant.conversation_id == AdmissionCaseConversation.conversation_id,
+        ).where(AdmissionCaseConversation.clinic_id == clinic_id,
+                ConversationParticipant.clinic_id == clinic_id,
+                ConversationParticipant.user_id == user_id,
+                ConversationParticipant.status == ParticipantStatus.ACCEPTED)).all()
+        denied = []
+        for cid in linked:
+            try:
+                ensure_case_chat_user_allowed(clinic_id=clinic_id, conversation_id=cid, user_id=user_id)
+            except NotFoundError:
+                denied.append(cid)
+        if denied:
+            query = query.where(Conversation.id.notin_(denied))
+            count_query = count_query.where(Conversation.id.notin_(denied))
         query = query.distinct()
 
     total = db.session.execute(
@@ -1502,17 +1537,18 @@ def update_participant(
 
     ensure_clinic_active(clinic_id)
 
-    participant = _get_participant(
-        participant_id,
-        clinic_id=clinic_id,
-        lock=True,
-    )
-
-    conversation = _get_conversation(
-        participant.conversation_id,
-        clinic_id=clinic_id,
-        lock=True,
-    )
+    # Match add/leave/invitation lock order: conversation, then participant.
+    participant = _get_participant(participant_id, clinic_id=clinic_id)
+    conversation = _get_conversation(participant.conversation_id, clinic_id=clinic_id, lock=True)
+    participant = _get_participant(participant_id, clinic_id=clinic_id, conversation_id=conversation.id, lock=True)
+    db.session.refresh(participant)
+    db.session.refresh(conversation)
+    final_role = participant.role if role is None else _normalize_enum(role, ParticipantRole, "participant role")
+    final_status = participant.status if status is None else _normalize_enum(status, ParticipantStatus, "participant status")
+    if (participant.role == ParticipantRole.ADMIN and participant.status == ParticipantStatus.ACCEPTED
+            and (final_role != ParticipantRole.ADMIN or final_status != ParticipantStatus.ACCEPTED)
+            and _active_admin_count(conversation.id) <= 1):
+        raise ConflictError("The last active conversation administrator cannot be removed or demoted")
 
     if conversation.status == ConversationStatus.CLOSED:
         raise ConflictError(

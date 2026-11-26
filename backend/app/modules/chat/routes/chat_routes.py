@@ -43,6 +43,7 @@ from app.modules.chat.schemas.message_schema import (
     MessageResponse,
     MessageUpdate,
 )
+from app.modules.chat.services import chat_management_service as management
 from app.modules.chat.services.chat_security_service import (
     ChatSecurityService,
 )
@@ -359,6 +360,7 @@ def _ensure_conversation_admin(
     clinic_id: int,
     user_id: int,
 ):
+    management.lock_management(clinic_id, conversation_id)
     conversation = (
         ChatSecurityService
         .ensure_user_can_access_conversation(
@@ -409,6 +411,7 @@ def _ensure_participant_update_allowed(
     role,
     status,
 ):
+    management.lock_management(clinic_id, conversation_id)
     participant = db.session.execute(
         db.select(
             ConversationParticipant
@@ -648,6 +651,56 @@ def _parse_message_search():
     }
 
 
+@chat_bp.get("/management/contacts")
+@login_required
+def list_chat_management_contacts():
+    try:
+        page, per_page = _management_page()
+        result = management.contacts(_current_clinic_id(), _current_user_id(), page, per_page)
+        response = jsonify({"success": True, "data": result})
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        return response, 200
+    except DomainError as exc:
+        return _domain_error(exc)
+
+
+@chat_bp.get("/management/invitations")
+@login_required
+def list_chat_management_invitations():
+    try:
+        page, per_page = _management_page()
+        result = management.invitations(_current_clinic_id(), _current_user_id(), page, per_page)
+        response = jsonify({"success": True, "data": result})
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        return response, 200
+    except DomainError as exc:
+        return _domain_error(exc)
+
+
+def _management_page():
+    if set(request.args) - {"page", "per_page"} or any(len(request.args.getlist(k)) != 1 for k in request.args):
+        raise ValidationError("Invalid chat management query")
+    try:
+        return int(request.args.get("page", "1")), int(request.args.get("per_page", "50"))
+    except ValueError as exc:
+        raise ValidationError("Invalid chat management pagination") from exc
+
+
+@chat_bp.post("/management/invitations/<int:invitation_id>/respond")
+@login_required
+def respond_chat_management_invitation(invitation_id):
+    try:
+        body = request.get_json(silent=True)
+        if request.args or not isinstance(body, dict) or set(body) != {"status"} or body["status"] not in ("accepted", "declined"):
+            raise ValidationError("Invalid invitation decision")
+        result = management.respond(_current_clinic_id(), _current_user_id(), invitation_id, body["status"])
+        response = jsonify({"success": True, "data": result})
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        return response, 200
+    except DomainError as exc:
+        return _domain_error(exc)
+
+
 @chat_bp.post("/conversations")
 @login_required
 def create_chat_conversation():
@@ -667,6 +720,12 @@ def create_chat_conversation():
                 "Conversation avatars are not supported by the current conversation service"
             )
 
+        actor = _current_user()
+        if (actor.staff is not None and payload.conversation_type in ("direct", "group")
+                and payload.patient_id is None and payload.appointment_id is None and payload.consultation_id is None):
+            management.require_eligible_staff(clinic_id, actor.id)
+            for target_id in payload.participant_user_ids:
+                management.require_eligible_staff(clinic_id, target_id)
         conversation = create_conversation(
             clinic_id=clinic_id,
             created_by_id=user_id,
@@ -679,6 +738,9 @@ def create_chat_conversation():
             participant_user_ids=payload.participant_user_ids,
         )
 
+        # A deduplicated direct conversation may belong to a pending invitee.
+        # The create endpoint must not become a second route to its metadata.
+        ChatSecurityService.ensure_user_can_access_conversation(user_id, conversation.id)
         return jsonify(
             {
                 "success": True,
@@ -887,6 +949,11 @@ def add_chat_participant(
         clinic_id = _current_clinic_id()
         actor_id = _current_user_id()
 
+        conversation = management.lock_management(clinic_id, conversation_id)
+        _ensure_conversation_admin(conversation_id, clinic_id, actor_id)
+        if management.ordinary(conversation) and _current_user().staff is not None:
+            management.require_eligible_staff(clinic_id, actor_id)
+            management.require_eligible_staff(clinic_id, payload.user_id)
         participant = add_participant(
             conversation_id=conversation_id,
             clinic_id=clinic_id,
@@ -971,6 +1038,15 @@ def update_chat_participant(
         clinic_id = _current_clinic_id()
         user_id = _current_user_id()
 
+        conversation = management.lock_management(clinic_id, conversation_id)
+        ChatSecurityService.ensure_user_can_access_conversation(user_id, conversation_id)
+        if management.ordinary(conversation) and payload.status == ParticipantStatus.ACCEPTED:
+            target = db.session.execute(db.select(ConversationParticipant).where(
+                ConversationParticipant.id == participant_id, ConversationParticipant.conversation_id == conversation_id,
+                ConversationParticipant.clinic_id == clinic_id)).scalar_one_or_none()
+            target_user = db.session.get(User, target.user_id) if target is not None else None
+            if _current_user().staff is not None or (target_user is not None and target_user.staff is not None):
+                raise ValidationError("Staff invitations must be accepted by the invited user")
         _ensure_participant_update_allowed(
             conversation_id=conversation_id,
             participant_id=participant_id,
@@ -1011,6 +1087,7 @@ def leave_chat_conversation(
         clinic_id = _current_clinic_id()
         user_id = _current_user_id()
 
+        management.lock_management(clinic_id, conversation_id)
         participant = leave_conversation(
             conversation_id=conversation_id,
             clinic_id=clinic_id,
