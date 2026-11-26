@@ -23,8 +23,8 @@ from app.modules.patient.schemas.patient_allergy_schema import (
     PatientAllergyListQuerySchema,
     PatientAllergyListResponseSchema,
     PatientAllergyResponseSchema,
-    PatientAllergyStatusTransitionSchema,
-    PatientAllergyUpdateSchema,
+    PatientAllergyConditionalStatusSchema,
+    PatientAllergyConditionalUpdateSchema,
 )
 
 from app.modules.patient.schemas.patient_schema import (
@@ -207,7 +207,8 @@ def _validation_error_response(
         {
             "success": False,
             "error": "Validation failed",
-            "details": exc.errors(),
+            # Pydantic custom validators may carry exception objects in ctx.
+            "details": exc.errors(include_context=False),
         }
     ), 422
 
@@ -1196,7 +1197,7 @@ def update_patient_allergy_route(
         )
 
         data = _validate_payload(
-            PatientAllergyUpdateSchema
+            PatientAllergyConditionalUpdateSchema
         )
 
         user = _get_current_user()
@@ -1206,9 +1207,10 @@ def update_patient_allergy_route(
             patient_id=patient.id,
             allergy_id=allergy_id,
             data=data.model_dump(
-                exclude_unset=True
+                exclude_unset=True, exclude={"expected_updated_at"}
             ),
             actor_id=user.id,
+            expected_updated_at=data.expected_updated_at,
         )
 
         return jsonify(
@@ -1251,7 +1253,7 @@ def transition_patient_allergy_status_route(
         )
 
         data = _validate_payload(
-            PatientAllergyStatusTransitionSchema
+            PatientAllergyConditionalStatusSchema
         )
 
         user = _get_current_user()
@@ -1266,6 +1268,7 @@ def transition_patient_allergy_status_route(
             ),
             reason=data.reason,
             actor_id=user.id,
+            expected_updated_at=data.expected_updated_at,
         )
 
         return jsonify(

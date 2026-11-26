@@ -5,6 +5,25 @@ from app.core.enums.clinic_enums import (
 )
 from app.core.enums.role_enums import Role
 
+import pytest
+from app.core.auth.user.services.user_service import issue_auth_tokens
+from app.modules.clinic.models.organization_model import TenantMembership, ClinicMembership
+
+
+@pytest.fixture
+def make_authenticated_staff(app, db, make_staff):
+    # This module uses actual tenant grants and the real token issuer.
+    def make(clinic, role):
+        staff = make_staff(clinic, role=role)
+        db.session.add(TenantMembership(user_id=staff.user_id, organization_id=clinic.organization_id, role="member", is_active=True, status="active"))
+        db.session.flush()
+        db.session.add(ClinicMembership(user_id=staff.user_id, organization_id=clinic.organization_id, clinic_id=clinic.id, role=role.value, is_active=True))
+        db.session.flush()
+        with app.test_request_context():
+            pair = issue_auth_tokens(staff.user, clinic_context_id=clinic.id)
+        return staff, {"Authorization": "Bearer " + pair["access_token"]}
+    return make
+
 
 def _headers(
     make_authenticated_staff,
@@ -246,6 +265,7 @@ def test_update_allergy_route(
             f"{allergy_id}"
         ),
         json={
+            "expected_updated_at": created.get_json()["data"]["updated_at"],
             "reaction": "Anaphylaxis",
             "severity": "life_threatening",
         },
@@ -301,6 +321,7 @@ def test_refute_status_route_forces_inactive(
             f"{allergy_id}/status"
         ),
         json={
+            "expected_updated_at": created.get_json()["data"]["updated_at"],
             "verification_status": "refuted",
             "reason": "Negative challenge",
         },
@@ -384,6 +405,7 @@ def test_list_filters_active_non_refuted(
             f"{resolved_id}/status"
         ),
         json={
+            "expected_updated_at": resolved.get_json()["data"]["updated_at"],
             "clinical_status": "resolved",
             "reason": "Resolved",
         },
@@ -396,6 +418,7 @@ def test_list_filters_active_non_refuted(
             f"{refuted_id}/status"
         ),
         json={
+            "expected_updated_at": refuted.get_json()["data"]["updated_at"],
             "verification_status": "refuted",
             "reason": "Negative challenge",
         },
@@ -495,7 +518,9 @@ def test_allergy_route_rejects_cross_clinic_patient(
         headers=headers,
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 404
+    missing = client.get(f"/api/v1/patients/{patient.id + 999999}/allergies", headers=headers)
+    assert missing.status_code == 404
 
 
 def test_allergy_delete_route_is_absent(
@@ -541,3 +566,74 @@ def test_allergy_delete_route_is_absent(
         404,
         405,
     }
+
+
+@pytest.fixture
+def revision_case(client, clinic, patient, make_authenticated_staff):
+    _activate(clinic, patient)
+    _, headers = make_authenticated_staff(clinic, Role.DOCTOR)
+    root = f"/api/v1/patients/{patient.id}/allergies"
+    created = client.post(root, headers=headers, json={"allergen_name": "Synthetic allergen"})
+    assert created.status_code == 201, created.get_json()
+    row = created.get_json()["data"]
+    return f"{root}/{row['id']}", headers, row
+
+
+@pytest.mark.parametrize("suffix,body", [("", {"reaction": "new"}), ("/status", {"clinical_status": "resolved", "reason": "review"})])
+@pytest.mark.parametrize("bad_token", [None, "2026-01-01T00:00:00", 123, "invalid"])
+def test_review_token_is_mandatory_and_timezone_aware(client, revision_case, suffix, body, bad_token):
+    path, headers, row = revision_case
+    request_body = dict(body)
+    if bad_token is not None:
+        request_body["expected_updated_at"] = bad_token
+    denied = client.patch(path + suffix, headers=headers, json=request_body)
+    assert denied.status_code == 422, denied.get_json()
+    assert client.get(path, headers=headers).get_json()["data"] == row
+
+
+def test_reviewed_edit_then_stale_edit_and_status_rejected(client, revision_case):
+    path, headers, row = revision_case
+    token = row["updated_at"]
+    changed = client.patch(path, headers=headers, json={"reaction": "new", "expected_updated_at": token})
+    assert changed.status_code == 200, changed.get_json()
+    latest = changed.get_json()["data"]
+    assert latest["updated_at"] != token
+    for suffix, body in [("", {"reaction": "stale"}), ("/status", {"clinical_status": "resolved", "reason": "stale"})]:
+        denied = client.patch(path + suffix, headers=headers, json={**body, "expected_updated_at": token})
+        assert denied.status_code == 409, denied.get_json()
+    assert client.get(path, headers=headers).get_json()["data"] == latest
+    accepted = client.patch(path + "/status", headers=headers, json={"verification_status": "refuted", "reason": "review", "expected_updated_at": latest["updated_at"]})
+    assert accepted.status_code == 200, accepted.get_json()
+    assert accepted.get_json()["data"]["clinical_status"] == "inactive"
+    assert accepted.get_json()["data"]["updated_at"] != latest["updated_at"]
+
+
+def test_token_only_is_not_an_edit(client, revision_case):
+    path, headers, row = revision_case
+    assert client.patch(path, headers=headers, json={"expected_updated_at": row["updated_at"]}).status_code == 422
+
+
+def test_status_then_stale_edit_rejected(client, revision_case):
+    path, headers, row = revision_case
+    token = row["updated_at"]
+    changed = client.patch(path + "/status", headers=headers, json={"clinical_status": "resolved", "reason": "review", "expected_updated_at": token})
+    assert changed.status_code == 200, changed.get_json()
+    denied = client.patch(path, headers=headers, json={"severity": "mild", "expected_updated_at": token})
+    assert denied.status_code == 409, denied.get_json()
+    assert client.get(path, headers=headers).get_json()["data"] == changed.get_json()["data"]
+
+
+def test_explicit_null_review_token_rejected(client, revision_case):
+    path, headers, row = revision_case
+    assert client.patch(path, headers=headers, json={"reaction": "new", "expected_updated_at": None}).status_code == 422
+    assert client.get(path, headers=headers).get_json()["data"] == row
+
+
+def test_foreign_clinic_cannot_use_valid_token(client, revision_case, make_clinic, make_authenticated_staff):
+    path, headers, row = revision_case
+    other = make_clinic()
+    _, foreign = make_authenticated_staff(other, Role.DOCTOR)
+    for suffix, body in [("", {"reaction": "foreign"}), ("/status", {"clinical_status": "resolved", "reason": "foreign"})]:
+        response = client.patch(path + suffix, headers=foreign, json={**body, "expected_updated_at": row["updated_at"]})
+        assert response.status_code == 404, response.get_json()
+    assert client.get(path, headers=headers).get_json()["data"] == row

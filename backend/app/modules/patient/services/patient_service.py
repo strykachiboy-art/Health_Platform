@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
 
@@ -1630,6 +1630,57 @@ def _get_patient_for_clinic_or_404(
     return patient
 
 
+def _lock_allergy_patient(patient: Patient) -> None:
+    """Serialize the entire allergy registry for a patient, including new rows.
+
+    PostgreSQL READ COMMITTED sees the committed registry after the lock wait.
+    All registry mutation entry points take the same parent lock first.
+    SQLite is supported for sequential tests; it is not a concurrency proof.
+    """
+    bind = db.session.get_bind()
+    if bind.dialect.name != "postgresql":
+        from flask import current_app
+        if bind.dialect.name != "sqlite" or not current_app.testing:
+            raise ConflictError("Allergy writes require PostgreSQL outside tests")
+    if bind.dialect.name == "postgresql":
+        # Guard the isolation assumption rather than silently accepting a
+        # repeatable-read snapshot that could miss a concurrent insert.
+        if db.session.connection().get_isolation_level() != "READ COMMITTED":
+            raise ConflictError("Allergy writes require read committed isolation")
+    locked = db.session.execute(
+        select(Patient.id).where(
+            Patient.id == patient.id,
+            Patient.clinic_id == patient.clinic_id,
+        ).with_for_update()
+    ).scalar_one_or_none()
+    if locked is None:
+        raise NotFoundError("Patient not found for allergy mutation")
+
+
+def _allergy_utc(value: datetime) -> datetime:
+    # SQLite discards timezone metadata for DateTime(timezone=True).
+    # Stored timestamps in this model are UTC by construction.
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _check_allergy_revision(record: PatientAllergy, expected: datetime | None) -> None:
+    # Trusted internal callers may express a fresh, serialized intent without
+    # a review token. HTTP mutations always require the token at validation.
+    if expected is None:
+        return
+    if not isinstance(expected, datetime) or expected.tzinfo is None or expected.utcoffset() is None:
+        raise ValidationError("expected_updated_at must include timezone information")
+    if _allergy_utc(record.updated_at) != _allergy_utc(expected):
+        raise ConflictError("Allergy record changed; reload and review before editing")
+
+
+def _next_allergy_revision(record: PatientAllergy) -> datetime:
+    # Ensure the token strictly advances even if the clock repeats or goes back.
+    return max(_utcnow(), _allergy_utc(record.updated_at) + timedelta(microseconds=1))
+
+
 def _get_allergy_or_404(
     *,
     clinic_id: int,
@@ -1864,6 +1915,7 @@ def create_patient_allergy(
         patient_id,
     )
 
+    _lock_allergy_patient(patient)
     ensure_clinic_active(
         patient.clinic_id
     )
@@ -2016,12 +2068,14 @@ def update_patient_allergy(
     allergy_id: int,
     data: dict,
     actor_id: Optional[int] = None,
+    expected_updated_at: datetime | None = None,
 ) -> PatientAllergy:
     patient = _get_patient_for_clinic_or_404(
         clinic_id,
         patient_id,
     )
 
+    _lock_allergy_patient(patient)
     ensure_clinic_active(
         patient.clinic_id
     )
@@ -2031,6 +2085,9 @@ def update_patient_allergy(
         patient_id=patient.id,
         allergy_id=allergy_id,
     )
+    # Refresh after the parent lock, even if the identity map held an old row.
+    db.session.refresh(record)
+    _check_allergy_revision(record, expected_updated_at)
 
     if not isinstance(
         data,
@@ -2159,7 +2216,7 @@ def update_patient_allergy(
             )
 
     if changed_fields:
-        record.updated_at = _utcnow()
+        record.updated_at = _next_allergy_revision(record)
 
         _audit(
             actor_id=actor_id,
@@ -2191,12 +2248,14 @@ def transition_patient_allergy_status(
     verification_status: Optional[str] = None,
     reason: str,
     actor_id: Optional[int] = None,
+    expected_updated_at: datetime | None = None,
 ) -> PatientAllergy:
     patient = _get_patient_for_clinic_or_404(
         clinic_id,
         patient_id,
     )
 
+    _lock_allergy_patient(patient)
     ensure_clinic_active(
         patient.clinic_id
     )
@@ -2206,6 +2265,9 @@ def transition_patient_allergy_status(
         patient_id=patient.id,
         allergy_id=allergy_id,
     )
+    # Refresh after the parent lock, even if the identity map held an old row.
+    db.session.refresh(record)
+    _check_allergy_revision(record, expected_updated_at)
 
     normalized_reason = (
         _normalize_allergy_text(
@@ -2287,7 +2349,7 @@ def transition_patient_allergy_status(
     record.verification_status = (
         next_verification_status
     )
-    record.updated_at = _utcnow()
+    record.updated_at = _next_allergy_revision(record)
 
     _audit(
         actor_id=actor_id,

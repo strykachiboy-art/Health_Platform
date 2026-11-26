@@ -315,6 +315,44 @@ class PatientAllergyStatusTransitionSchema(
     model_config = REQUEST_CONFIG
 
 
+def _reviewed_allergy_timestamp(value):
+    import re
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})", value
+    ):
+        raise ValueError("expected_updated_at must be an ISO timestamp with timezone")
+    # Reject numeric epochs and datetime strings without an explicit offset.
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Invalid expected_updated_at") from exc
+    return _normalize_timezone_aware(parsed, field_name="expected_updated_at")
+
+
+class PatientAllergyConditionalUpdateSchema(PatientAllergyUpdateSchema):
+    expected_updated_at: datetime
+
+    @field_validator("expected_updated_at", mode="before")
+    @classmethod
+    def validate_review_timestamp(cls, value):
+        return _reviewed_allergy_timestamp(value)
+
+    @model_validator(mode="after")
+    def require_edit_field(self) -> Self:
+        if not self.model_fields_set - {"expected_updated_at"}:
+            raise ValueError("At least one allergy field must be supplied")
+        return self
+
+
+class PatientAllergyConditionalStatusSchema(PatientAllergyStatusTransitionSchema):
+    expected_updated_at: datetime
+
+    @field_validator("expected_updated_at", mode="before")
+    @classmethod
+    def validate_review_timestamp(cls, value):
+        return _reviewed_allergy_timestamp(value)
+
+
 class PatientAllergyResponseSchema(
     BaseModel
 ):
@@ -368,6 +406,15 @@ class PatientAllergyResponseSchema(
 
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("recorded_at", "created_at", "updated_at", "onset_at")
+    @classmethod
+    def serialize_stored_utc(cls, value):
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     model_config = ConfigDict(
         from_attributes=True,
