@@ -96,7 +96,7 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
       if (!mounted || g != _generation || !widget.source.current(s)) return;
       setState(() {
         _session = s;
-        _operation = widget.source.adminMode
+        _operation = (widget.source.adminMode || widget.source.doctorMode)
             ? SaOperation.staffMemberships
             : SaOperation.operations;
         _busy = false;
@@ -105,7 +105,9 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
       if (mounted && g == _generation) {
         setState(() {
           _busy = false;
-          _error = widget.source.adminMode
+          _error = widget.source.doctorMode
+              ? 'An authorized Doctor session is required.'
+              : widget.source.adminMode
               ? 'An authorized clinic Admin session is required.'
               : 'An authorized Super Admin session is required.';
         });
@@ -123,8 +125,31 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
     });
   }
 
+  String get _workspaceTitle => widget.source.doctorMode
+      ? 'Doctor clinic resources and personal records'
+      : widget.source.adminMode
+      ? 'Clinic administration workspace'
+      : 'Super Admin workspace';
+
+  String _title(SaOperation op) {
+    if (!widget.source.doctorMode) return op.title;
+    return switch (op) {
+      SaOperation.excuses => 'My filtered excuses',
+      SaOperation.excuseDetail => 'My excuse details',
+      SaOperation.excuseCreate => 'Submit my excuse',
+      SaOperation.leaves => 'My leave requests',
+      SaOperation.leaveDetail => 'My leave details',
+      _ => op.title,
+    };
+  }
+
+  Iterable<SaField> get _visibleFields => _operation.fields.where((f) =>
+      !(widget.source.doctorMode &&
+          (_operation == SaOperation.excuses || _operation == SaOperation.leaves) &&
+          f.key == 'staff_id'));
+
   Map<String, String> _values() => {
-    for (final f in _operation.fields)
+    for (final f in _visibleFields)
       f.key: f.kind == SaKind.choice
           ? _choices[f.key] ?? ''
           : _fields[f.key]?.text ?? '',
@@ -262,9 +287,7 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
     if (s == null || !widget.source.current(s)) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(widget.source.adminMode
-              ? 'Clinic administration workspace'
-              : 'Super Admin workspace'),
+          title: Text(_workspaceTitle),
         ),
         body: Center(
           child: _busy
@@ -292,9 +315,7 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
     final result = _result;
     return Scaffold(
       appBar: AppBar(
-          title: Text(widget.source.adminMode
-              ? 'Clinic administration workspace'
-              : 'Super Admin workspace'),
+          title: Text(_workspaceTitle),
         ),
       body: ListView(
         key: const ValueKey('sa-workspace'),
@@ -309,7 +330,11 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
           const Text(
             'Online only. Flask authorizes every request. Use existing directories and list operations for identifiers; confirm server records before changes.',
           ),
-          if (!widget.source.staging)
+          if (widget.source.doctorMode)
+            const Text(
+              'Only authorized clinic records, personal staff records and ward resources are offered. HIE management, payroll, staff approvals, inventory and integration configuration remain unavailable here.',
+            ),
+          if (!widget.source.staging && !widget.source.doctorMode)
             const Text(
               'Release-held changes are available only in an explicitly approved staging build. Transfers are same-organization only. Secrets and clinical governance controls are not offered in this workspace.',
             ),
@@ -326,7 +351,7 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
               for (final op in available)
                 DropdownMenuItem(
                   value: op,
-                  child: Text(op.title, overflow: TextOverflow.ellipsis),
+                  child: Text(_title(op), overflow: TextOverflow.ellipsis),
                 ),
             ],
             onChanged: _busy || review != null ? null : _select,
@@ -353,7 +378,7 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
             const Text(
               'Staging only. Enter approved exact salary amounts. Existing records may be skipped; this does not send payments.',
             ),
-          for (final f in _operation.fields)
+          for (final f in _visibleFields)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: _field(f),
@@ -371,7 +396,7 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
               'Review before sending',
               style: Theme.of(context).textTheme.titleLarge,
             ),
-            Text(review.request.operation.title),
+            Text(_title(review.request.operation)),
             _record(review.request.values),
             for (final row in review.preview) _record(row),
             const Text(

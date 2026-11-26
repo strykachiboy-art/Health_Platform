@@ -36,6 +36,7 @@ SaWorkspaceRemote _source(
   Future<AuthSessionState> Function()? load,
   bool staging = true,
   bool adminMode = false,
+  bool doctorMode = false,
   Wd09cfOneShotGate? gate,
 }) => SaWorkspaceRemote(
   apiClient: ApiClient(
@@ -50,6 +51,7 @@ SaWorkspaceRemote _source(
   gate: gate ?? Wd09cfOneShotGate(),
   staging: staging,
   adminMode: adminMode,
+  doctorMode: doctorMode,
 );
 http.Response _reply(Object data, [int status = 200]) => http.Response(
   jsonEncode(data),
@@ -384,6 +386,166 @@ Object _preread(SaOperation op, String path) => switch (path) {
   _ => throw StateError('Unexpected pre-read: $path'),
 };
 void main() {
+  const doctorTenant = '12345678-1234-1234-1234-123456789abc';
+  const sharedDoctor = <SaOperation>{
+    SaOperation.staffMemberships,
+    SaOperation.departmentMembers,
+    SaOperation.myExcuses,
+    SaOperation.excuses,
+    SaOperation.excuseDetail,
+    SaOperation.leaves,
+    SaOperation.leaveDetail,
+    SaOperation.excuseCreate,
+  };
+  const expectedDoctor = <SaOperation>{
+    SaOperation.staffMemberships,
+    SaOperation.departmentMembers,
+    SaOperation.myExcuses,
+    SaOperation.excuses,
+    SaOperation.excuseDetail,
+    SaOperation.leaves,
+    SaOperation.leaveDetail,
+    SaOperation.excuseCreate,
+    SaOperation.adminClinics,
+    SaOperation.adminClinicDetail,
+    SaOperation.adminClinicBranches,
+    SaOperation.adminFamilyList,
+    SaOperation.adminInsuranceList,
+    SaOperation.adminIntegrations,
+    SaOperation.adminIntegrationById,
+    SaOperation.adminIntegrationDetail,
+    SaOperation.adminReservations,
+    SaOperation.adminReservationDetail,
+    SaOperation.adminBedReservation,
+    SaOperation.adminWardCreate,
+    SaOperation.adminWardUpdate,
+    SaOperation.adminBedCreate,
+    SaOperation.adminBedMaintenance,
+    SaOperation.adminReservationCancel,
+  };
+  for (final op in sharedDoctor) {
+    test('doctor shared contract ${op.name}', () async {
+      final c = _cases[op]!;
+      final fields = Map<String, String>.of(c.fields)..remove('staff_id');
+      // staff membership lookup is explicitly allowed and requires its staff ID.
+      if (op == SaOperation.staffMemberships) fields['staff_id'] = '8';
+      final path = c.path.replaceFirst('&staff_id=8', '');
+      var calls = 0;
+      final client = MockClient((r) async {
+        calls++;
+        expect(r.headers['authorization'], 'Bearer test-access');
+        expect(r.method, c.verb);
+        expect(r.url.path + (r.url.hasQuery ? '?${r.url.query}' : ''), path);
+        if (op.writes) {
+          expect(jsonDecode(r.body), c.body);
+        } else {
+          expect(r.body, isEmpty);
+        }
+        return _reply(_final(op));
+      });
+      addTearDown(client.close);
+      final guard = SessionNavigationGuard()..markSessionAvailable();
+      addTearDown(guard.dispose);
+      final source = _source(client, guard, doctorMode: true, staging: false,
+          load: () async => _actor(role: 'doctor', tenant: doctorTenant));
+      final actor = await source.session();
+      expect(source.allows(actor, op), isTrue);
+      final SaResult result;
+      if (op.writes) {
+        final review = await source.review(actor, op, fields);
+        expect(calls, 0);
+        result = await source.submit(review);
+        await expectLater(source.submit(review), throwsA(isA<Wd09cfAlreadyAttempted>()));
+      } else {
+        result = await source.read(actor, op, fields);
+      }
+      expect(result.rows, isNotEmpty);
+      expect(calls, 1);
+    });
+  }
+  test('doctor exact operation allowlist denies every other action before HTTP', () async {
+    var calls = 0;
+    final client = MockClient((_) async {calls++; throw StateError('Unexpected HTTP');});
+    addTearDown(client.close);
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    for (final staging in [false, true]) {
+      final source = _source(client, guard, doctorMode: true, staging: staging,
+          load: () async => _actor(role: 'doctor', tenant: doctorTenant));
+      final actor = await source.session();
+      expect(SaOperation.values.where((op) => source.allows(actor, op)).toSet(), expectedDoctor);
+      for (final op in SaOperation.values.where((op) => !expectedDoctor.contains(op))) {
+        if (op.writes) {
+          await expectLater(source.review(actor, op, {}), throwsA(isA<SaUnavailable>()));
+        } else {
+          await expectLater(source.read(actor, op, {}), throwsA(isA<SaUnavailable>()));
+        }
+      }
+    }
+    expect(calls, 0);
+  });
+  test('doctor workspace rejects foreign roles, absent clinic and absent tenant', () async {
+    final client = MockClient((_) async => throw StateError('Unexpected HTTP'));
+    addTearDown(client.close);
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    for (final state in [
+      for (final role in ['super_admin','admin','nurse','pharmacist','lab_technician','receptionist','accountant','patient','paramedic','emt','ambulance_dispatcher','ambulance_coordinator','driver','other'])
+        _actor(role: role, tenant: doctorTenant),
+      _actor(role: 'doctor', clinic: null, tenant: doctorTenant),
+      _actor(role: 'doctor'),
+    ]) {
+      final source = _source(client, guard, doctorMode: true, load: () async => state);
+      await expectLater(source.session(), throwsA(isA<SaUnavailable>()));
+    }
+    final ambiguous = _source(client, guard, doctorMode: true, adminMode: true,
+        load: () async => _actor(role: 'doctor', tenant: doctorTenant));
+    await expectLater(ambiguous.session(), throwsA(isA<SaUnavailable>()));
+  });
+  test('doctor personal HR reads cannot send another staff filter', () async {
+    var calls = 0;
+    final client = MockClient((_) async {calls++; throw StateError('Unexpected HTTP');});
+    addTearDown(client.close);
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    final source = _source(client, guard, doctorMode: true,
+        load: () async => _actor(role: 'doctor', tenant: doctorTenant));
+    final actor = await source.session();
+    for (final op in [SaOperation.excuses, SaOperation.leaves]) {
+      await expectLater(source.read(actor, op, {'staff_id':'99'}), throwsA(isA<SaUnavailable>()));
+    }
+    expect(calls, 0);
+  });
+  test('doctor stale shared response is discarded', () async {
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    final client = MockClient((_) async {
+      guard.invalidate();
+      return _reply({'data':[_membership()]});
+    });
+    addTearDown(client.close);
+    final source = _source(client, guard, doctorMode: true,
+        load: () async => _actor(role: 'doctor', tenant: doctorTenant));
+    final actor = await source.session();
+    await expectLater(source.read(actor, SaOperation.departmentMembers, {'department_id':'9'}), throwsA(isA<SaUnavailable>()));
+  });
+  testWidgets('doctor workspace only renders its explicit operation set', (tester) async {
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    final client = MockClient((_) async => throw StateError('Unexpected HTTP'));
+    addTearDown(client.close);
+    final source = _source(client, guard, doctorMode: true, staging: false,
+        load: () async => _actor(role: 'doctor', tenant: doctorTenant));
+    await tester.pumpWidget(MaterialApp(home: SaWorkspaceScreen(source: source)));
+    await tester.pumpAndSettle();
+    expect(find.text('Doctor clinic resources and personal records'), findsOneWidget);
+    final menu = tester.widget<DropdownButton<SaOperation>>(find.byKey(const ValueKey('sa-operation')));
+    expect(menu.items!.map((item) => item.value).toSet(), expectedDoctor);
+    menu.onChanged!(SaOperation.leaves);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('sa-field-staff_id')), findsNothing);
+  });
+
   const tenant = '12345678-1234-1234-1234-123456789abc';
   for (final op in SaWorkspaceRemote.adminOperations.where((op) => !op.isExtendedAdmin)) {
     test('admin contract ${op.name}: exact verb path body and response', () async {

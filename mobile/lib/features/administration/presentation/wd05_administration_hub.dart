@@ -140,6 +140,17 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
       icon: Icons.manage_accounts_outlined,
     ),
   ];
+  if (normalized == 'doctor') {
+    links.add(
+      const Wd05AdministrationLink(
+        id: 'doctor_workspace',
+        title: 'Clinic resources and personal records',
+        path: '/administration/doctor-workspace',
+        description: 'Authorized shared clinic resources, patient contacts, personal leave and ward workflows',
+        icon: Icons.fact_check_outlined,
+      ),
+    );
+  }
   if (normalized == 'admin') {
     links.add(
       const Wd05AdministrationLink(

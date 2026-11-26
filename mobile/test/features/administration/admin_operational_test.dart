@@ -1904,6 +1904,7 @@ SaWorkspaceRemote _source(
   SessionNavigationGuard guard, {
   bool admin = true,
   bool staging = true,
+  bool doctor = false,
   String role = 'admin',
 }) => SaWorkspaceRemote(
   apiClient: ApiClient(
@@ -1926,6 +1927,7 @@ SaWorkspaceRemote _source(
   guard: guard,
   gate: Wd09cfOneShotGate(),
   adminMode: admin,
+  doctorMode: doctor,
   staging: staging,
 );
 http.Response _reply(Map<String, dynamic> raw) => http.Response(
@@ -1935,6 +1937,91 @@ http.Response _reply(Map<String, dynamic> raw) => http.Response(
 );
 
 void main() {
+  const doctorExtended = <SaOperation>{
+    SaOperation.adminClinics,
+    SaOperation.adminClinicDetail,
+    SaOperation.adminClinicBranches,
+    SaOperation.adminFamilyList,
+    SaOperation.adminInsuranceList,
+    SaOperation.adminIntegrations,
+    SaOperation.adminIntegrationById,
+    SaOperation.adminIntegrationDetail,
+    SaOperation.adminReservations,
+    SaOperation.adminReservationDetail,
+    SaOperation.adminBedReservation,
+    SaOperation.adminWardCreate,
+    SaOperation.adminWardUpdate,
+    SaOperation.adminBedCreate,
+    SaOperation.adminBedMaintenance,
+    SaOperation.adminReservationCancel,
+  };
+  for (final op in doctorExtended) {
+    test('doctor reused resource contract ${op.name}', () async {
+      final c = _cases[op]!;
+      var finalCalls = 0;
+      var preReads = 0;
+      final client = MockClient((r) async {
+        expect(r.headers['authorization'], 'Bearer token');
+        final path = r.url.path + (r.url.hasQuery ? '?${r.url.query}' : '');
+        if (r.method == c.verb && path == c.path) {
+          finalCalls++;
+          if (c.verb == 'GET') {
+            expect(r.body, isEmpty);
+          } else {
+            expect(jsonDecode(r.body), c.body);
+          }
+          return _reply(c.response);
+        }
+        expect(r.method, 'GET');
+        expect(c.reads.containsKey(path), isTrue, reason: path);
+        preReads++;
+        return _reply(c.reads[path]!);
+      });
+      addTearDown(client.close);
+      final guard = SessionNavigationGuard()..markSessionAvailable();
+      addTearDown(guard.dispose);
+      final source = _source(client, guard, admin: false, doctor: true, role: 'doctor', staging: false);
+      final actor = await source.session();
+      expect(source.allows(actor, op), isTrue);
+      final SaResult result;
+      if (op.writes) {
+        final review = await source.review(actor, op, c.fields);
+        expect(finalCalls, 0);
+        expect(preReads, c.reads.length);
+        result = await source.submit(review);
+        expect(preReads, 2*c.reads.length);
+        await expectLater(source.submit(review), throwsA(isA<Wd09cfAlreadyAttempted>()));
+      } else {
+        result = await source.read(actor, op, c.fields);
+        expect(preReads, 0);
+      }
+      expect(result.rows, isNotEmpty);
+      expect(finalCalls, 1);
+    });
+  }
+  test('doctor integration metadata excludes configuration and secrets', () async {
+    final client = MockClient((_) async => _reply({'success':true,'data':{
+      'id':11,'clinic_id':7,'provider':'synthetic','is_enabled':false,
+      'configuration':{'credential':'never-render'},'secret':'never-render',
+    }}));
+    addTearDown(client.close);
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    final source = _source(client, guard, admin:false, doctor:true, role:'doctor', staging:false);
+    final result = await source.read(await source.session(), SaOperation.adminIntegrationById, {'id':'11'});
+    expect(jsonEncode(result.rows), isNot(contains('never-render')));
+  });
+  test('doctor patient contact response rejects mismatched patient', () async {
+    final client = MockClient((_) async => _reply({'success':true,'data':{
+      'items':[{'id':11,'patient_id':99}], 'page':1,'per_page':20,'total':1,
+    }}));
+    addTearDown(client.close);
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    final source = _source(client, guard, admin:false, doctor:true, role:'doctor', staging:false);
+    await expectLater(source.read(await source.session(), SaOperation.adminFamilyList, {'patient_id':'31','page':'1','per_page':'20'}), throwsFormatException);
+  });
+
   for (final e in _cases.entries) {
     test('expanded admin contract ${e.key.name}', () async {
       final op = e.key;

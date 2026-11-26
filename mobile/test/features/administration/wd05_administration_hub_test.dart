@@ -31,6 +31,19 @@ List<String> _ids(String role, {int? clinic = 7}) => wd05AdministrationLinks(
 ).map((item) => item.id).toList();
 
 void main() {
+  test('Doctor-only shared workspace navigation requires a clinic', () {
+    const roles = <String>['super_admin', 'admin', 'doctor', 'nurse',
+      'pharmacist', 'lab_technician', 'receptionist', 'accountant', 'patient',
+      'paramedic', 'emt', 'ambulance_dispatcher', 'ambulance_coordinator',
+      'driver', 'other'];
+    for (final role in roles) {
+      final links = wd05AdministrationLinks(role: role, clinicContextId: 7);
+      expect(links.where((link) => link.path == '/administration/doctor-workspace'),
+          hasLength(role == 'doctor' ? 1 : 0), reason: role);
+    }
+    expect(_ids('doctor', clinic: null), isNot(contains('doctor_workspace')));
+    expect(_ids('doctor'), isNot(contains('clinic_workspace')));
+  });
   test('WD09C-F role matrix preserves clinic authority and 15 roles', () {
     const staffRoles = <String>[
       'admin',

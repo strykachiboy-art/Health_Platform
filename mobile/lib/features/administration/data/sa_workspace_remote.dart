@@ -44,6 +44,7 @@ class SaWorkspaceRemote {
     required this.gate,
     this.staging = false,
     this.adminMode = false,
+    this.doctorMode = false,
   });
   final ApiClient apiClient;
   final Future<AuthSessionState> Function() loadSession;
@@ -51,6 +52,7 @@ class SaWorkspaceRemote {
   final Wd09cfOneShotGate gate;
   final bool staging;
   final bool adminMode;
+  final bool doctorMode;
 
   static const adminOperations = <SaOperation>{
     SaOperation.staffMemberships,
@@ -136,11 +138,48 @@ class SaWorkspaceRemote {
     SaOperation.adminLabCatalogPrice,
   };
 
-  String get requiredRole => adminMode ? 'admin' : 'super_admin';
+  // Explicit shared Doctor operations only; never inherit the Admin allowlist.
+  static const doctorOperations = <SaOperation>{
+    SaOperation.staffMemberships,
+    SaOperation.departmentMembers,
+    SaOperation.myExcuses,
+    SaOperation.excuses,
+    SaOperation.excuseDetail,
+    SaOperation.leaves,
+    SaOperation.leaveDetail,
+    SaOperation.excuseCreate,
+    SaOperation.adminClinics,
+    SaOperation.adminClinicDetail,
+    SaOperation.adminClinicBranches,
+    SaOperation.adminFamilyList,
+    SaOperation.adminInsuranceList,
+    SaOperation.adminIntegrations,
+    SaOperation.adminIntegrationById,
+    SaOperation.adminIntegrationDetail,
+    SaOperation.adminReservations,
+    SaOperation.adminReservationDetail,
+    SaOperation.adminBedReservation,
+    SaOperation.adminWardCreate,
+    SaOperation.adminWardUpdate,
+    SaOperation.adminBedCreate,
+    SaOperation.adminBedMaintenance,
+    SaOperation.adminReservationCancel,
+  };
+
+  String get requiredRole => doctorMode
+      ? 'doctor'
+      : adminMode
+      ? 'admin'
+      : 'super_admin';
 
   bool allows(SaSession s, SaOperation op) =>
+      !(adminMode && doctorMode) &&
       s.actor.role.trim().toLowerCase() == requiredRole &&
-      (adminMode ? adminOperations.contains(op) : !op.isExtendedAdmin) &&
+      (doctorMode
+          ? doctorOperations.contains(op) && !op.releaseHeld
+          : adminMode
+          ? adminOperations.contains(op)
+          : !op.isExtendedAdmin) &&
       op.allowed(s.clinic, staging);
 
   bool current(SaSession s) =>
@@ -153,7 +192,8 @@ class SaWorkspaceRemote {
     if (state.disposition != AuthSessionDisposition.ready ||
         a == null ||
         a.role.trim().toLowerCase() != requiredRole ||
-        (adminMode &&
+        (adminMode && doctorMode) ||
+        ((adminMode || doctorMode) &&
             ((a.clinicContextId ?? 0) <= 0 ||
                 !RegExp(r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$')
                     .hasMatch(a.tenantId ?? ''))) ||
@@ -448,6 +488,13 @@ class SaWorkspaceRemote {
     Map<String, String> fields,
   ) async {
     if (op.writes) throw const SaUnavailable();
+    if (doctorMode) {
+      await _check(s, op);
+      if ((op == SaOperation.excuses || op == SaOperation.leaves) &&
+          (fields['staff_id'] ?? '').trim().isNotEmpty) {
+        throw const SaUnavailable();
+      }
+    }
     final q = op.prepare(fields);
     if (op.isExtendedAdmin) {
       _adminTarget(s, q);
@@ -684,6 +731,7 @@ class SaWorkspaceRemote {
     Map<String, String> fields,
   ) async {
     if (!op.writes) throw const SaUnavailable();
+    if (doctorMode) await _check(s, op);
     final q = op.prepare(fields);
     return SaReview._(
       s,

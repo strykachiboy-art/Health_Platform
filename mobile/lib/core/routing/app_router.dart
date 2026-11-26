@@ -1374,6 +1374,32 @@ GoRouter createAppRouter({
               );
             },
           ),
+          // Doctor-specific allowlist; never open the Admin workspace.
+          GoRoute(
+            path: '/administration/doctor-workspace',
+            name: 'doctor-workspace',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final dashboard = dashboardDataSource;
+              if (guard == null ||
+                  dashboard == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  !identical(dashboard.sessionNavigationGuard, guard)) {
+                return const Scaffold(
+                  body: Center(child: Text('Doctor workspace unavailable.')),
+                );
+              }
+              return SaWorkspaceScreen(
+                source: SaWorkspaceRemote(
+                  apiClient: dashboard.apiClient,
+                  loadSession: dashboard.loadSession,
+                  guard: guard,
+                  gate: wd09cfOneShotGate,
+                  doctorMode: true,
+                ),
+              );
+            },
+          ),
           // WD05 admin/reporting: verified session and existing backend only.
           GoRoute(
             path: '/administration',

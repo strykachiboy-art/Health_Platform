@@ -4,7 +4,8 @@ part of 'sa_workspace_remote.dart';
 // credentials, transport, cache or offline mutation channel.
 extension _AdminOperationalRemote on SaWorkspaceRemote {
   void _adminTarget(SaSession s, SaRequest q) {
-    if (!adminMode ||
+    if ((!adminMode && !doctorMode) ||
+        !allows(s, q.operation) ||
         (q.operation.adminSpec!.selected && q.values['id'] != s.clinic)) {
       throw const SaUnavailable();
     }
