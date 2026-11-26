@@ -183,3 +183,22 @@ def test_real_sources_and_role_matrix(client,world,db,make_appointment,make_lab_
     assert read(client,h,q='PRIVATE_NARRATIVE')['items']==[]
     assert client.post(URL,headers=h,json={'q':'Ada','resource_types':['patient'],'status':'scheduled'}).status_code==400
     assert db.session.query(MedicationAdministration).count()==1
+
+    # Independent policy oracle: never infer the Admin boundary from the
+    # implementation's own available_resources() mapping.
+    h = headers(w['users']['admin'])
+    allowed_admin = {'patient', 'appointment', 'lab_order'}
+    result = read(client, h, q='Ada Synthetic', limit=50)
+    assert set(result['available_resources']) == allowed_admin
+    assert {r['resource_type']: r['record_id'] for r in result['items']} == {
+        k: records[k].id for k in allowed_admin
+    }
+    for k in set(records) - allowed_admin:
+        for requested in ([k], ['patient', k]):
+            denied = client.post(URL, headers=h, json={
+                'q': f'#{records[k].id}', 'resource_types': requested,
+            })
+            assert denied.status_code == 403
+            assert denied.json == {'success': False, 'error': 'Search access denied'}
+    assert all(r['resource_type'] in allowed_admin for r in
+               read(client, h, q=f'#{imaging.id}')['items'])

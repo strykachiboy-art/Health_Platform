@@ -38,7 +38,19 @@ def test_cursor_private_and_bound():
         decode_cursor(secret, SearchFilters.parse({'q': 'Different', 'limit': 2}).binding(secret, **kwargs), token)
 
 
-@pytest.mark.parametrize('role,expected', [('doctor',11),('nurse',10),('admin',9),('receptionist',3),
+@pytest.mark.parametrize('role,expected', [('doctor',11),('nurse',10),('admin',3),('receptionist',3),
     ('lab_technician',3),('pharmacist',2),('paramedic',1),('emt',1),('super_admin',0),('patient',0),('accountant',0)])
 def test_role_matrix(role,expected):
     assert len(available_resources(role)) == expected
+
+
+def test_admin_search_is_administrative_only():
+    assert set(available_resources('admin')) == {
+        'patient', 'appointment', 'lab_order',
+    }
+    assert set(available_resources('doctor')) == {
+        'patient', 'appointment', 'lab_order', 'prescription',
+        'imaging_order', 'procedure_order', 'blood_product_order',
+        'diet_order', 'nursing_order', 'nursing_task',
+        'medication_administration',
+    }

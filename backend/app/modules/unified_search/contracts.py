@@ -12,7 +12,7 @@ from itsdangerous import BadData, URLSafeTimedSerializer
 PATIENT_ROLES = frozenset({'admin', 'doctor', 'nurse', 'receptionist', 'pharmacist', 'lab_technician', 'paramedic', 'emt'})
 APPOINTMENT_ROLES = frozenset({'admin', 'doctor', 'nurse', 'receptionist'})
 LAB_ROLES = APPOINTMENT_ROLES | {'lab_technician'}
-CLINICAL_ROLES = frozenset({'admin', 'doctor', 'nurse'})
+CLINICAL_ROLES = frozenset({'doctor', 'nurse'})
 PRESCRIPTION_ROLES = frozenset({'doctor', 'pharmacist'})
 EMAR_ROLES = frozenset({'doctor', 'nurse'})
 ORDER_STATUSES = frozenset({'pending', 'active', 'in_progress', 'on_hold', 'completed', 'cancelled'})
