@@ -21,7 +21,7 @@ class ImagingProcedureRemoteDataSource {
   ApiClient get _api => unifiedSource.apiClient;
   SessionNavigationGuard get guard => unifiedSource.sessionNavigationGuard;
 
-  static const _readRoles = <String>{'admin', 'doctor', 'nurse'};
+  static const _readRoles = <String>{'doctor', 'nurse'};
 
   bool _current(int revision) =>
       guard.canAccessProtectedRoutes && guard.revision == revision;

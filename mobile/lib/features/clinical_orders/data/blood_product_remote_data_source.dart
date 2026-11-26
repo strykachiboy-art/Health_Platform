@@ -22,7 +22,6 @@ class BloodProductRemoteDataSource {
   SessionNavigationGuard get guard => unifiedSource.sessionNavigationGuard;
 
   static const readRoles = <String>{
-    'admin',
     'doctor',
     'nurse',
     'lab_technician',

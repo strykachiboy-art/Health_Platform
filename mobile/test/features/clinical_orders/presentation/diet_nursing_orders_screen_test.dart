@@ -273,19 +273,12 @@ void main() {
     );
   });
 
-  testWidgets('admin is read-only for nursing orders', (tester) async {
+  testWidgets('admin cannot read nursing orders or send HTTP', (tester) async {
     _wide(tester);
+    var calls = 0;
     final client = MockClient((req) async {
-      if (req.url.path.endsWith('current-admission')) {
-        return _admission();
-      }
-      return http.Response(
-        jsonEncode({
-          'items': [_row(kind: 'nursing-orders')],
-          'total': 1,
-        }),
-        200,
-      );
+      calls++;
+      return http.Response('{}', 500);
     });
     addTearDown(client.close);
     final guard = SessionNavigationGuard()..markSessionAvailable();
@@ -294,10 +287,11 @@ void main() {
       _app(client, guard, role: 'admin', kind: 'nursing-orders'),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Nursing: Neuro observations'), findsOneWidget);
+    expect(find.text('Nursing: Neuro observations'), findsNothing);
     expect(find.byKey(const ValueKey('p23d-c-create')), findsNothing);
     expect(find.byKey(const ValueKey('p23d-c-execute-17')), findsNothing);
-    expect(find.textContaining('Read-only'), findsOneWidget);
+    expect(find.byKey(const ValueKey('p23d-c-unavailable')), findsOneWidget);
+    expect(calls, 0);
   });
 
   testWidgets('sign-out clears diet data and all actions', (tester) async {

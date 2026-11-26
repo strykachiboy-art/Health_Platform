@@ -214,14 +214,14 @@ enum BbAction {
   orders(
     'Admission blood orders',
     'Orders',
-    bbStockRoles,
+    {'doctor', 'nurse', 'lab_technician'},
     'blood-products',
     clinical: true,
   ),
   order(
     'Blood order detail',
     'Orders',
-    bbStockRoles,
+    {'doctor', 'nurse', 'lab_technician'},
     'blood-products/:id',
     clinical: true,
   ),

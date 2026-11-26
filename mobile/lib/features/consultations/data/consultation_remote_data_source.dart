@@ -85,7 +85,7 @@ class ConsultationRemoteDataSource {
   final Future<AuthSessionState> Function() loadSession;
   final SessionNavigationGuard sessionNavigationGuard;
 
-  static const _roles = <String>{'admin', 'doctor', 'nurse'};
+  static const _roles = <String>{'doctor', 'nurse'};
 
   bool _current(int revision) =>
       sessionNavigationGuard.canAccessProtectedRoutes &&

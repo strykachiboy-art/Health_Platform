@@ -598,6 +598,35 @@ GoRouter createAppRouter({
           sessionNavigationGuard?.canAccessProtectedRoutes != true) {
         return '/login';
       }
+      final requestedPath = state.uri.path;
+      final restrictedAdminPath =
+          requestedPath == '/consultations' ||
+          requestedPath.startsWith('/consultations/') ||
+          requestedPath == '/clinical-orders' ||
+          requestedPath.startsWith('/clinical-orders/');
+      final clinicalGuard = sessionNavigationGuard;
+      final clinicalLoader = loadHomeSession;
+      if (restrictedAdminPath &&
+          clinicalGuard != null &&
+          clinicalLoader != null &&
+          clinicalGuard.canAccessProtectedRoutes) {
+        return () async {
+          final revision = clinicalGuard.revision;
+          try {
+            final current = await clinicalLoader();
+            final actor = current.session;
+            if (!clinicalGuard.canAccessProtectedRoutes ||
+                clinicalGuard.revision != revision ||
+                current.disposition != AuthSessionDisposition.ready ||
+                actor == null) {
+              return '/login';
+            }
+            return actor.role.trim().toLowerCase() == 'admin' ? '/home' : null;
+          } on Object {
+            return '/login';
+          }
+        }();
+      }
       // Login and saved-session restoration use the existing guard. Once
       // ready, land on home without requiring a second manual button tap.
       // The explicit session route remains reachable for logout/recovery.
@@ -1314,6 +1343,33 @@ GoRouter createAppRouter({
                   guard: guard,
                   gate: wd09cfOneShotGate,
                   staging: const bool.fromEnvironment('CSP_SA_STAGING_WRITES'),
+                ),
+              );
+            },
+          ),
+          // Clinic Admin mode: same workspace and one-shot gate; no platform operations.
+          GoRoute(
+            path: '/administration/clinic-workspace',
+            name: 'clinic-workspace',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final dashboard = dashboardDataSource;
+              if (guard == null ||
+                  dashboard == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  !identical(dashboard.sessionNavigationGuard, guard)) {
+                return const Scaffold(
+                  body: Center(child: Text('Administration unavailable.')),
+                );
+              }
+              return SaWorkspaceScreen(
+                source: SaWorkspaceRemote(
+                  apiClient: dashboard.apiClient,
+                  loadSession: dashboard.loadSession,
+                  guard: guard,
+                  gate: wd09cfOneShotGate,
+                  adminMode: true,
+                  staging: const bool.fromEnvironment('CSP_ADMIN_STAGING_WRITES'),
                 ),
               );
             },

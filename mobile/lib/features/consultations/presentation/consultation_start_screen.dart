@@ -115,11 +115,9 @@ class _ConsultationStartScreenState extends State<ConsultationStartScreen> {
             session.userId > 0 &&
             session.clinicContextId != null &&
             session.clinicContextId! > 0 &&
-            const <String>{
-              'admin',
-              'doctor',
-              'nurse',
-            }.contains(session.role.trim().toLowerCase());
+            const <String>{'doctor', 'nurse'}.contains(
+              session.role.trim().toLowerCase(),
+            );
         _loading = false;
       });
     } on Object {

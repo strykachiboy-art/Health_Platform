@@ -206,7 +206,7 @@ List<HomeDestination> homeDestinationsFor({
   }
   if (clinicContextId != null &&
       clinicContextId > 0 &&
-      const <String>{'admin', 'doctor', 'nurse'}.contains(normalizedRole)) {
+      const <String>{'doctor', 'nurse'}.contains(normalizedRole)) {
     destinations.insert(
       0,
       const HomeDestination(
@@ -219,7 +219,7 @@ List<HomeDestination> homeDestinationsFor({
   }
   if (clinicContextId != null &&
       clinicContextId > 0 &&
-      const <String>{'admin', 'doctor', 'nurse'}.contains(normalizedRole)) {
+      const <String>{'doctor', 'nurse'}.contains(normalizedRole)) {
     destinations.insert(
       0,
       const HomeDestination(

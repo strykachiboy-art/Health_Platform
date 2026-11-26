@@ -19,6 +19,7 @@ AuthSessionState _actor({
   String role = 'super_admin',
   int? clinic = 7,
   String token = 'test-access',
+  String? tenant,
 }) => AuthSessionState.ready(
   AuthTokenResponse(
     accessToken: token,
@@ -26,6 +27,7 @@ AuthSessionState _actor({
     userId: 41,
     role: role,
     clinicContextId: clinic,
+    tenantId: tenant,
   ),
 );
 SaWorkspaceRemote _source(
@@ -33,6 +35,7 @@ SaWorkspaceRemote _source(
   SessionNavigationGuard guard, {
   Future<AuthSessionState> Function()? load,
   bool staging = true,
+  bool adminMode = false,
   Wd09cfOneShotGate? gate,
 }) => SaWorkspaceRemote(
   apiClient: ApiClient(
@@ -46,6 +49,7 @@ SaWorkspaceRemote _source(
   guard: guard,
   gate: gate ?? Wd09cfOneShotGate(),
   staging: staging,
+  adminMode: adminMode,
 );
 http.Response _reply(Object data, [int status = 200]) => http.Response(
   jsonEncode(data),
@@ -366,6 +370,7 @@ Object _final(SaOperation op) => switch (op) {
   SaOperation.payrollGenerate => {
     'data': [_payroll()],
   },
+  _ => throw StateError('Unexpected Admin-only extension.'),
 };
 Object _preread(SaOperation op, String path) => switch (path) {
   '/api/v1/clinical-safety/rules/12' => {'rule': _rule()},
@@ -379,7 +384,126 @@ Object _preread(SaOperation op, String path) => switch (path) {
   _ => throw StateError('Unexpected pre-read: $path'),
 };
 void main() {
-  for (final op in SaOperation.values) {
+  const tenant = '12345678-1234-1234-1234-123456789abc';
+  for (final op in SaWorkspaceRemote.adminOperations.where((op) => !op.isExtendedAdmin)) {
+    test('admin contract ${op.name}: exact verb path body and response', () async {
+      final c = _cases[op]!;
+      final guard = SessionNavigationGuard()..markSessionAvailable();
+      addTearDown(guard.dispose);
+      var finalCalls = 0;
+      final client = MockClient((r) async {
+        expect(r.headers['authorization'], 'Bearer test-access');
+        final path = r.url.path + (r.url.hasQuery ? '?${r.url.query}' : '');
+        if (r.method == c.verb && path == c.path) {
+          finalCalls++;
+          if (op.writes && c.verb != 'DELETE') {
+            expect(jsonDecode(r.body), c.body);
+          } else {
+            expect(r.body, isEmpty);
+          }
+          return _reply(_final(op));
+        }
+        expect(r.method, 'GET');
+        return _reply(_preread(op, path));
+      });
+      addTearDown(client.close);
+      final source = _source(client, guard,
+        adminMode: true,
+        load: () async => _actor(role: 'admin', tenant: tenant),
+      );
+      final s = await source.session();
+      final SaResult result;
+      if (op.writes) {
+        final review = await source.review(s, op, c.fields);
+        expect(finalCalls, 0);
+        result = await source.submit(review);
+        await expectLater(source.submit(review),
+          throwsA(isA<Wd09cfAlreadyAttempted>()));
+      } else {
+        result = await source.read(s, op, c.fields);
+      }
+      expect(finalCalls, 1);
+      expect(result.rows, isNotEmpty);
+      expect(jsonEncode(result.rows), isNot(contains('never-render')));
+    });
+  }
+  test('admin workspace rejects seven platform operations, zero HTTP', () async {
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    var calls = 0;
+    final client = MockClient((r) async {
+      calls++;
+      throw StateError('Unexpected HTTP');
+    });
+    addTearDown(client.close);
+    final source = _source(client, guard, adminMode: true,
+      load: () async => _actor(role: 'admin', tenant: tenant));
+    final s = await source.session();
+    final held = SaOperation.values.where(
+      (op) => !SaWorkspaceRemote.adminOperations.contains(op),
+    ).toList();
+    expect(held, hasLength(7));
+    expect(SaWorkspaceRemote.adminOperations.where((op) => !op.isExtendedAdmin), hasLength(18));
+    expect(SaWorkspaceRemote.adminOperations.where((op) => op.isExtendedAdmin), hasLength(63));
+    for (final op in held) {
+      expect(source.allows(s, op), isFalse);
+      await expectLater(
+        op.writes ? source.review(s, op, _cases[op]!.fields)
+          : source.read(s, op, _cases[op]!.fields),
+        throwsA(isA<SaUnavailable>()),
+      );
+    }
+    final locked = _source(client, guard, adminMode: true, staging: false,
+      load: () async => _actor(role: 'admin', tenant: tenant));
+    final a = await locked.session();
+    await expectLater(locked.review(a, SaOperation.payrollGenerate,
+      _cases[SaOperation.payrollGenerate]!.fields), throwsA(isA<SaUnavailable>()));
+    expect(calls, 0);
+  });
+  test('admin workspace rejects missing tenant, clinic and foreign roles', () async {
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    var calls = 0;
+    final client = MockClient((r) async {
+      calls++;
+      throw StateError('Unexpected HTTP');
+    });
+    addTearDown(client.close);
+    for (final a in [
+      _actor(role: 'admin'),
+      _actor(role: 'admin', clinic: null, tenant: tenant),
+      _actor(role: 'super_admin', tenant: tenant),
+      _actor(role: 'doctor', tenant: tenant),
+      _actor(role: 'nurse', tenant: tenant),
+    ]) {
+      await expectLater(_source(client, guard, adminMode: true,
+        load: () async => a).session(), throwsA(isA<SaUnavailable>()));
+    }
+    expect(calls, 0);
+  });
+  testWidgets('clinic Admin workspace excludes platform operations', (tester) async {
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    var calls = 0;
+    final client = MockClient((r) async {
+      calls++;
+      throw StateError('Unexpected HTTP');
+    });
+    addTearDown(client.close);
+    await tester.pumpWidget(MaterialApp(home: SaWorkspaceScreen(
+      source: _source(client, guard, adminMode: true, staging: false,
+        load: () async => _actor(role: 'admin', tenant: tenant)),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Clinic administration workspace'), findsOneWidget);
+    final dropdown = tester.widget<DropdownButton<SaOperation>>(
+      find.byKey(const ValueKey('sa-operation')),
+    );
+    expect(dropdown.items!.map((e) => e.value).toSet(),
+      SaWorkspaceRemote.adminOperations.where((op) => !op.releaseHeld).toSet());
+    expect(calls, 0);
+  });
+  for (final op in _cases.keys) {
     test('contract ${op.name}: exact verb path body and response', () async {
       final c = _cases[op]!;
       final guard = SessionNavigationGuard()..markSessionAvailable();
@@ -445,7 +569,7 @@ void main() {
     }
     final source = _source(client, guard, staging: false);
     final s = await source.session();
-    for (final op in SaOperation.values.where((o) => o.releaseHeld)) {
+    for (final op in _cases.keys.where((o) => o.releaseHeld)) {
       await expectLater(
         source.review(s, op, _cases[op]!.fields),
         throwsA(isA<SaUnavailable>()),
@@ -462,7 +586,7 @@ void main() {
       throwsA(isA<SaUnavailable>()),
     );
     expect(calls, 0);
-    expect(SaOperation.values.length, 25);
+    expect(SaOperation.values.where((op) => !op.isExtendedAdmin).length, 25);
   });
   test('reject injection invalid date and numeric salaries before HTTP', () {
     expect(

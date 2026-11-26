@@ -96,14 +96,18 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
       if (!mounted || g != _generation || !widget.source.current(s)) return;
       setState(() {
         _session = s;
-        _operation = SaOperation.operations;
+        _operation = widget.source.adminMode
+            ? SaOperation.staffMemberships
+            : SaOperation.operations;
         _busy = false;
       });
     } on Object {
       if (mounted && g == _generation) {
         setState(() {
           _busy = false;
-          _error = 'An authorized Super Admin session is required.';
+          _error = widget.source.adminMode
+              ? 'An authorized clinic Admin session is required.'
+              : 'An authorized Super Admin session is required.';
         });
       }
     }
@@ -257,7 +261,11 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
     final s = _session;
     if (s == null || !widget.source.current(s)) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Super Admin workspace')),
+        appBar: AppBar(
+          title: Text(widget.source.adminMode
+              ? 'Clinic administration workspace'
+              : 'Super Admin workspace'),
+        ),
         body: Center(
           child: _busy
               ? const CircularProgressIndicator()
@@ -278,12 +286,16 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
       );
     }
     final available = SaOperation.values
-        .where((op) => op.allowed(s.clinic, widget.source.staging))
+        .where((op) => widget.source.allows(s, op))
         .toList();
     final review = _review;
     final result = _result;
     return Scaffold(
-      appBar: AppBar(title: const Text('Super Admin workspace')),
+      appBar: AppBar(
+          title: Text(widget.source.adminMode
+              ? 'Clinic administration workspace'
+              : 'Super Admin workspace'),
+        ),
       body: ListView(
         key: const ValueKey('sa-workspace'),
         padding: const EdgeInsets.all(20),
@@ -295,11 +307,11 @@ class _SaWorkspaceScreenState extends State<SaWorkspaceScreen> {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const Text(
-            'Online only. Flask authorizes every request. Use existing staff and department directories for identifiers; payroll creation/payment and personal leave requests remain in Authorized operations.',
+            'Online only. Flask authorizes every request. Use existing directories and list operations for identifiers; confirm server records before changes.',
           ),
           if (!widget.source.staging)
             const Text(
-              'Clinical-rule mutations and payroll batch generation are release-held. They are available only in an explicitly approved staging build.',
+              'Release-held changes are available only in an explicitly approved staging build. Transfers are same-organization only. Secrets and clinical governance controls are not offered in this workspace.',
             ),
           if (s.clinic == null)
             const Text(

@@ -61,7 +61,7 @@ List<Wd04ClinicalWorkflowLink> wd04ClinicalWorkflowLinks({
       ),
     );
   }
-  if (const <String>{'admin', 'doctor', 'nurse'}.contains(normalizedRole)) {
+  if (const <String>{'doctor', 'nurse'}.contains(normalizedRole)) {
     links.add(
       const Wd04ClinicalWorkflowLink(
         id: 'clinical_orders',

@@ -342,7 +342,7 @@ class Run2ModuleCatalog {
       "nursing_order",
       "Nursing order history",
       "clinical_orders",
-      {"admin", "doctor", "nurse"},
+      {"doctor", "nurse"},
       "api/v1/clinical-orders/nursing-orders/{id}",
       "raw",
       "Nursing order ID",

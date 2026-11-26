@@ -69,7 +69,7 @@ class ConsultationClinicalNoteDataSource {
 
   final ConsultationRemoteDataSource consultations;
 
-  static const _roles = <String>{'admin', 'doctor', 'nurse'};
+  static const _roles = <String>{'doctor', 'nurse'};
   static const _documentLimits = <String, int>{
     'icd10_code': 10,
     'chief_complaint': 2000,

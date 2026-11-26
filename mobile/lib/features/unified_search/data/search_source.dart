@@ -21,7 +21,7 @@ const _labRoles = <String>{
   'receptionist',
   'lab_technician',
 };
-const _clinicalRoles = <String>{'admin', 'doctor', 'nurse'};
+const _clinicalRoles = <String>{'doctor', 'nurse'};
 const _orderStatuses = <String>{
   'pending',
   'active',
@@ -48,7 +48,7 @@ const searchResources = <String, (Set<String>, Set<String>)>{
   'imaging_order': (_clinicalRoles, _orderStatuses),
   'procedure_order': (_clinicalRoles, _orderStatuses),
   'blood_product_order': (
-    {'admin', 'doctor', 'nurse', 'lab_technician'},
+    {'doctor', 'nurse', 'lab_technician'},
     _orderStatuses,
   ),
   'diet_order': (_clinicalRoles, _orderStatuses),

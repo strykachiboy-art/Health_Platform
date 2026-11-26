@@ -143,6 +143,15 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
   if (normalized == 'admin') {
     links.add(
       const Wd05AdministrationLink(
+        id: 'clinic_workspace',
+        title: 'Clinic administration workspace',
+        path: '/administration/clinic-workspace',
+        description: 'Clinic resources, inventory, assets, staff, patient administration and settings',
+        icon: Icons.groups_outlined,
+      ),
+    );
+    links.add(
+      const Wd05AdministrationLink(
         id: 'billing',
         title: 'Billing and invoices',
         path: '/billing',

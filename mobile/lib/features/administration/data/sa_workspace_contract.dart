@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+part 'admin_operational_contract.dart';
+
 // These are fixed Flask operations, not a generic HTTP console. No URL, role,
 // token, actor ID, clinic ID or tenant ID is accepted from a form.
 enum SaOperation {
@@ -28,6 +30,69 @@ enum SaOperation {
   payroll,
   payrollDetail,
   payrollGenerate,
+  adminClinics,
+  adminClinicDetail,
+  adminClinicBranches,
+  adminClinicProfile,
+  adminClinicStatus,
+  adminClinicBranchCreate,
+  adminLowStock,
+  adminItemDeactivate,
+  adminItemReactivate,
+  adminSuppliers,
+  adminSupplierDetail,
+  adminSupplierCreate,
+  adminSupplierUpdate,
+  adminSupplierDeactivate,
+  adminSupplierReactivate,
+  adminBatches,
+  adminBatchDetail,
+  adminBatchCreate,
+  adminBatchUpdate,
+  adminExpiringBatches,
+  adminStockMovements,
+  adminStockMovement,
+  adminTransfers,
+  adminTransferDetail,
+  adminTransferCreate,
+  adminTransferApprove,
+  adminTransferComplete,
+  adminTransferCancel,
+  adminAssetAssignments,
+  adminAssetAssignmentsDetail,
+  adminAssetHistory,
+  adminAssetHistoryDetail,
+  adminAssetMaintenance,
+  adminAssetMaintenanceDetail,
+  adminMaintenanceSchedule,
+  adminMaintenanceStart,
+  adminMaintenanceComplete,
+  adminMaintenanceCancel,
+  adminFamilyList,
+  adminFamilyCreate,
+  adminFamilyUpdate,
+  adminFamilyRemove,
+  adminInsuranceList,
+  adminInsuranceCreate,
+  adminInsuranceUpdate,
+  adminSettingsInitialize,
+  adminSettingsEnable,
+  adminSettingsDisable,
+  adminIntegrations,
+  adminIntegrationById,
+  adminIntegrationDetail,
+  adminIntegrationEnable,
+  adminIntegrationDisable,
+  adminWardCreate,
+  adminWardUpdate,
+  adminBedCreate,
+  adminBedMaintenance,
+  adminReservations,
+  adminReservationDetail,
+  adminBedReservation,
+  adminReservationCancel,
+  adminTheatreCreate,
+  adminLabCatalogPrice,
 }
 
 enum SaKind { text, id, integer, choice, date, timestamp, object, salaries }
@@ -170,6 +235,8 @@ const _until = SaField(
 );
 
 extension SaOperationContract on SaOperation {
+  SaAdminSpec? get adminSpec => _adminSpecs[this];
+  bool get isExtendedAdmin => adminSpec != null;
   String get title => switch (this) {
     SaOperation.rules => 'Clinical rules — global list',
     SaOperation.ruleDetail => 'Clinical rule — global detail',
@@ -196,8 +263,11 @@ extension SaOperationContract on SaOperation {
     SaOperation.payroll => 'Clinic payroll records',
     SaOperation.payrollDetail => 'Payroll record details',
     SaOperation.payrollGenerate => 'Generate payroll batch',
+    _ => adminSpec!.title,
   };
-  String get group => index <= SaOperation.ruleDisable.index
+  String get group => isExtendedAdmin
+      ? adminSpec!.group
+      : index <= SaOperation.ruleDisable.index
       ? 'Clinical rule administration'
       : index <= SaOperation.failures.index
       ? 'Platform observability'
@@ -209,7 +279,7 @@ extension SaOperationContract on SaOperation {
       ? 'Leave review'
       : 'Payroll';
   bool get clinicRequired => index > SaOperation.failures.index;
-  bool get releaseHeld => const {
+  bool get releaseHeld => (adminSpec?.staging ?? false) || const {
     SaOperation.ruleCreate,
     SaOperation.ruleUpdate,
     SaOperation.ruleDisable,
@@ -229,7 +299,7 @@ extension SaOperationContract on SaOperation {
     SaOperation.leaveApprove ||
     SaOperation.leaveReject ||
     SaOperation.payrollGenerate => 'POST',
-    _ => 'GET',
+    _ => adminSpec?.verb ?? 'GET',
   };
   List<SaField> get fields => switch (this) {
     SaOperation.rules || SaOperation.operations => const [],
@@ -363,6 +433,7 @@ extension SaOperationContract on SaOperation {
         max: 12000,
       ),
     ],
+    _ => adminSpec!.fields,
   };
 
   bool allowed(int? clinic, bool staging) =>
@@ -409,6 +480,11 @@ extension SaOperationContract on SaOperation {
                 'enabled',
                 'is_primary',
                 'include_ended',
+                'include_inactive',
+                'include_disabled',
+                'is_emergency_contact',
+                'is_active',
+                'under_maintenance',
               }.contains(field.key)
               ? value == 'true'
               : value;
@@ -463,6 +539,10 @@ extension SaOperationContract on SaOperation {
           values[field.key] = value;
       }
     }
+    final spec = adminSpec;
+    if (spec != null) {
+      return spec.prepare(this, values);
+    }
     if (this == SaOperation.ruleCreate) {
       final code = (values['rule_code'] as String).toUpperCase();
       if (!RegExp(r'^[A-Z][A-Z0-9_]{2,99}$').hasMatch(code)) {
@@ -500,6 +580,7 @@ extension SaOperationContract on SaOperation {
       SaOperation.payroll => 'staff/payroll',
       SaOperation.payrollDetail => 'staff/payroll/$id',
       SaOperation.payrollGenerate => 'staff/payroll/generate',
+      _ => throw const FormatException('Unsupported operation.'),
     };
     final body = Map<String, dynamic>.of(values)..remove('id');
     if (this == SaOperation.ruleUpdate && body.isEmpty) {

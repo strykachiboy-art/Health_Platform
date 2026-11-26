@@ -112,6 +112,28 @@ Map<String, dynamic> _amendment({
 };
 
 void main() {
+  test('admin cannot start or mutate consultation, zero HTTP', () async {
+    var calls = 0;
+    final client = MockClient((r) async {
+      calls++;
+      throw StateError('Unexpected HTTP');
+    });
+    addTearDown(client.close);
+    final guard = SessionNavigationGuard()..markSessionAvailable();
+    addTearDown(guard.dispose);
+    final notes = _notes(client, guard, session: () async => _ready(role: 'admin'));
+    final record = _record(_row());
+    await expectLater(notes.consultations.start(const ConsultationStartCommand(
+      patientId: 7, staffId: 8, idempotencyKey: 'admin-denied',
+    )), throwsA(isA<ConsultationSessionMismatchException>()));
+    await expectLater(notes.saveDraft(record, {'notes': 'Denied'}),
+      throwsA(isA<ConsultationNoteSessionException>()));
+    await expectLater(notes.complete(record, diagnosis: 'Denied'),
+      throwsA(isA<ConsultationNoteSessionException>()));
+    await expectLater(notes.cancel(record, reason: 'Denied'),
+      throwsA(isA<ConsultationNoteSessionException>()));
+    expect(calls, 0);
+  });
   for (final role in <String>['nurse', 'admin', 'receptionist', 'patient']) {
     test('$role cannot doctor-finalize, zero HTTP', () async {
       var httpCalls = 0;

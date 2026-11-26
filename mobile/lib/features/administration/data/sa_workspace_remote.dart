@@ -8,6 +8,8 @@ import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.
 import 'sa_workspace_contract.dart';
 import 'wd09cf_operations_remote_data_source.dart';
 
+part 'admin_operational_remote.dart';
+
 class SaUnavailable implements Exception {
   const SaUnavailable();
 }
@@ -41,12 +43,105 @@ class SaWorkspaceRemote {
     required this.guard,
     required this.gate,
     this.staging = false,
+    this.adminMode = false,
   });
   final ApiClient apiClient;
   final Future<AuthSessionState> Function() loadSession;
   final SessionNavigationGuard guard;
   final Wd09cfOneShotGate gate;
   final bool staging;
+  final bool adminMode;
+
+  static const adminOperations = <SaOperation>{
+    SaOperation.staffMemberships,
+    SaOperation.departmentMembers,
+    SaOperation.assignMembership,
+    SaOperation.primaryMembership,
+    SaOperation.endMembership,
+    SaOperation.excuses,
+    SaOperation.excuseDetail,
+    SaOperation.myExcuses,
+    SaOperation.excuseCreate,
+    SaOperation.excuseApprove,
+    SaOperation.excuseReject,
+    SaOperation.leaves,
+    SaOperation.leaveDetail,
+    SaOperation.leaveApprove,
+    SaOperation.leaveReject,
+    SaOperation.payroll,
+    SaOperation.payrollDetail,
+    SaOperation.payrollGenerate,
+    SaOperation.adminClinics,
+    SaOperation.adminClinicDetail,
+    SaOperation.adminClinicBranches,
+    SaOperation.adminClinicProfile,
+    SaOperation.adminClinicStatus,
+    SaOperation.adminClinicBranchCreate,
+    SaOperation.adminLowStock,
+    SaOperation.adminItemDeactivate,
+    SaOperation.adminItemReactivate,
+    SaOperation.adminSuppliers,
+    SaOperation.adminSupplierDetail,
+    SaOperation.adminSupplierCreate,
+    SaOperation.adminSupplierUpdate,
+    SaOperation.adminSupplierDeactivate,
+    SaOperation.adminSupplierReactivate,
+    SaOperation.adminBatches,
+    SaOperation.adminBatchDetail,
+    SaOperation.adminBatchCreate,
+    SaOperation.adminBatchUpdate,
+    SaOperation.adminExpiringBatches,
+    SaOperation.adminStockMovements,
+    SaOperation.adminStockMovement,
+    SaOperation.adminTransfers,
+    SaOperation.adminTransferDetail,
+    SaOperation.adminTransferCreate,
+    SaOperation.adminTransferApprove,
+    SaOperation.adminTransferComplete,
+    SaOperation.adminTransferCancel,
+    SaOperation.adminAssetAssignments,
+    SaOperation.adminAssetAssignmentsDetail,
+    SaOperation.adminAssetHistory,
+    SaOperation.adminAssetHistoryDetail,
+    SaOperation.adminAssetMaintenance,
+    SaOperation.adminAssetMaintenanceDetail,
+    SaOperation.adminMaintenanceSchedule,
+    SaOperation.adminMaintenanceStart,
+    SaOperation.adminMaintenanceComplete,
+    SaOperation.adminMaintenanceCancel,
+    SaOperation.adminFamilyList,
+    SaOperation.adminFamilyCreate,
+    SaOperation.adminFamilyUpdate,
+    SaOperation.adminFamilyRemove,
+    SaOperation.adminInsuranceList,
+    SaOperation.adminInsuranceCreate,
+    SaOperation.adminInsuranceUpdate,
+    SaOperation.adminSettingsInitialize,
+    SaOperation.adminSettingsEnable,
+    SaOperation.adminSettingsDisable,
+    SaOperation.adminIntegrations,
+    SaOperation.adminIntegrationById,
+    SaOperation.adminIntegrationDetail,
+    SaOperation.adminIntegrationEnable,
+    SaOperation.adminIntegrationDisable,
+    SaOperation.adminWardCreate,
+    SaOperation.adminWardUpdate,
+    SaOperation.adminBedCreate,
+    SaOperation.adminBedMaintenance,
+    SaOperation.adminReservations,
+    SaOperation.adminReservationDetail,
+    SaOperation.adminBedReservation,
+    SaOperation.adminReservationCancel,
+    SaOperation.adminTheatreCreate,
+    SaOperation.adminLabCatalogPrice,
+  };
+
+  String get requiredRole => adminMode ? 'admin' : 'super_admin';
+
+  bool allows(SaSession s, SaOperation op) =>
+      s.actor.role.trim().toLowerCase() == requiredRole &&
+      (adminMode ? adminOperations.contains(op) : !op.isExtendedAdmin) &&
+      op.allowed(s.clinic, staging);
 
   bool current(SaSession s) =>
       guard.canAccessProtectedRoutes && guard.revision == s.revision;
@@ -57,7 +152,11 @@ class SaWorkspaceRemote {
     final a = state.session;
     if (state.disposition != AuthSessionDisposition.ready ||
         a == null ||
-        a.role.trim().toLowerCase() != 'super_admin' ||
+        a.role.trim().toLowerCase() != requiredRole ||
+        (adminMode &&
+            ((a.clinicContextId ?? 0) <= 0 ||
+                !RegExp(r'^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$')
+                    .hasMatch(a.tenantId ?? ''))) ||
         a.userId <= 0 ||
         a.accessToken.isEmpty ||
         a.accessToken.trim() != a.accessToken ||
@@ -69,7 +168,7 @@ class SaWorkspaceRemote {
   }
 
   Future<void> _check(SaSession s, SaOperation op) async {
-    if (!current(s) || !op.allowed(s.clinic, staging)) {
+    if (!current(s) || !allows(s, op)) {
       throw const SaUnavailable();
     }
     final fresh = await session();
@@ -350,7 +449,13 @@ class SaWorkspaceRemote {
   ) async {
     if (op.writes) throw const SaUnavailable();
     final q = op.prepare(fields);
+    if (op.isExtendedAdmin) {
+      _adminTarget(s, q);
+    }
     final raw = await _get(s, op, q.path);
+    if (op.isExtendedAdmin) {
+      return _adminReadResult(s, q, raw);
+    }
     final id = q.values['id'];
     switch (op) {
       case SaOperation.rules:
@@ -482,6 +587,9 @@ class SaWorkspaceRemote {
     final op = q.operation;
     final id = q.values['id'];
     await _check(s, op);
+    if (op.isExtendedAdmin) {
+      return _adminPreflight(s, q);
+    }
     switch (op) {
       case SaOperation.ruleUpdate:
       case SaOperation.ruleDisable:
@@ -591,6 +699,9 @@ class SaWorkspaceRemote {
 
   String _key(SaSession s, SaRequest q) {
     final op = q.operation;
+    if (op.isExtendedAdmin) {
+      return _adminKey(s, q);
+    }
     final v = q.values;
     final target = switch (op) {
       SaOperation.leaveApprove ||
@@ -651,6 +762,9 @@ class SaWorkspaceRemote {
     };
     await _check(s, op);
     _require(raw['success'] != false);
+    if (op.isExtendedAdmin) {
+      return _adminReceipt(s, q, raw, latest);
+    }
     final id = q.values['id'];
     switch (op) {
       case SaOperation.ruleCreate:
