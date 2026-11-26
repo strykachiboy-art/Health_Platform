@@ -106,6 +106,57 @@ class PatientPrescriptionRemoteDataSource {
     );
   }
 
+  Future<bool> canCheckInteractions() async {
+    final revision = sessionNavigationGuard.revision;
+    try {
+      final actor = await _requireSession();
+      return _current(revision) && actor.role.trim().toLowerCase() == 'doctor';
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<List<String>> checkInteractions(PatientPrescriptionDetail reviewed) async {
+    final revision = sessionNavigationGuard.revision;
+    final before = await _requireSession();
+    if (!_current(revision) || before.role.trim().toLowerCase() != 'doctor' ||
+        reviewed.prescription.clinicId != before.clinicContextId) {
+      throw const PatientPrescriptionSessionMismatchException();
+    }
+    final fresh = await fetchPrescriptionDetail(prescriptionId: reviewed.prescription.id,
+      expectedPatientId: reviewed.prescription.patientId);
+    final ids = fresh.structuredItems.map((item) => item.drugId).toSet().toList()..sort();
+    final previous = reviewed.structuredItems.map((item) => item.drugId).toSet().toList()..sort();
+    final preflight = await _requireSession();
+    if (ids.length < 2 || ids.join(',') != previous.join(',') ||
+        fresh.prescription.status != reviewed.prescription.status ||
+        !_current(revision) || !_sameSession(before, preflight) || before.tenantId != preflight.tenantId) {
+      throw const PatientPrescriptionSessionMismatchException();
+    }
+    // The backend POST is a read-only interaction calculation, not an order change.
+    final envelope = await apiClient.postJson('api/v1/prescriptions/interactions/check',
+      body: {'drug_ids': ids}, bearerToken: before.accessToken);
+    final after = await _requireSession();
+    if (!_current(revision) || !_sameSession(before, after) || before.tenantId != after.tenantId) {
+      throw const PatientPrescriptionSessionMismatchException();
+    }
+    final raw = envelope['data'];
+    if (envelope['success'] != true || raw is! Map<String, dynamic> ||
+        raw['drug_ids'] is! List || (raw['drug_ids'] as List).join(',') != ids.join(',') ||
+        raw['interaction_warnings'] is! List || raw['has_interactions'] != (raw['interaction_warnings'] as List).isNotEmpty) {
+      throw const FormatException('Interaction response mismatch.');
+    }
+    final warnings = <String>[];
+    for (final item in raw['interaction_warnings'] as List) {
+      if (item is! Map<String, dynamic> || !ids.contains(item['drug_a_id']) || !ids.contains(item['drug_b_id']) ||
+          item['drug_a_id'] == item['drug_b_id'] || item['severity'] is! String || item['description'] is! String) {
+        throw const FormatException('Invalid interaction warning.');
+      }
+      warnings.add('${item['severity']}: drugs #${item['drug_a_id']} / #${item['drug_b_id']} — ${item['description']}');
+    }
+    return List.unmodifiable(warnings);
+  }
+
   Future<PatientPrescriptionPage> fetchPrescriptions({
     required int patientId,
     int page = 1,

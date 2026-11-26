@@ -211,6 +211,26 @@ class Wd05ReportReadRemoteDataSource {
     return value;
   }
 
+  Future<Wd05GeneratedReport> detail(Wd05GeneratedReport selected) async {
+    final revision = sessionNavigationGuard.revision;
+    final before = await _authorized(revision);
+    if (selected.clinicId != before.clinicContextId || selected.id <= 0) {
+      throw const Wd05ReportSessionUnavailable();
+    }
+    final raw = await apiClient.getJson('api/v1/reports/${selected.id}', bearerToken: before.accessToken);
+    if (!_same(before, await _authorized(revision)) || !_current(revision)) {
+      throw const Wd05ReportSessionUnavailable();
+    }
+    if (raw['success'] != true || raw['data'] is! Map<String, dynamic>) {
+      throw const FormatException('Invalid report detail.');
+    }
+    final row = Wd05GeneratedReport.fromJson(raw['data'] as Map<String, dynamic>, expectedClinicId: before.clinicContextId!);
+    if (row.id != selected.id) {
+      throw const FormatException('Report identity mismatch.');
+    }
+    return row;
+  }
+
   Future<Wd05ReportPage> listReports({
     int page = 1,
     int perPage = 20,

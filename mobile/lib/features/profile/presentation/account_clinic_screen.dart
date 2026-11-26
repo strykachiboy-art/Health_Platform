@@ -288,6 +288,14 @@ class _AccountClinicScreenState extends State<AccountClinicScreen> {
                   icon: const Icon(Icons.logout_outlined),
                   label: const Text('Sign out'),
                 ),
+                if (session.role.trim().toLowerCase() == 'doctor' && _profile != null)
+                  OutlinedButton.icon(
+                    key: const ValueKey('doctor-manage-own-profile'),
+                    onPressed: _changing || widget.sessionNavigationGuard?.canAccessProtectedRoutes != true
+                        ? null : () => context.push<void>('/account/doctor-profile'),
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Manage own profile'),
+                  ),
                 if (!superAdmin) ...[
                   Text(
                     'Email: ${_profile?.email ?? 'Unavailable'}',

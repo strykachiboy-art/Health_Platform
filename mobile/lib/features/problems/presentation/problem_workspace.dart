@@ -342,6 +342,28 @@ class _ProblemWorkspaceScreenState extends State<ProblemWorkspaceScreen> {
     }
   }
 
+  Future<void> _localCondition(ProblemRecord selected) async {
+    if (_busy || !_active || !identical(selected, _selected)) {
+      return;
+    }
+    final generation = ++_generation;
+    setState(() { _busy = true; _message = null; });
+    try {
+      final preview = await widget.session.localCondition(selected);
+      if (_current(generation)) {
+        setState(() => _message = preview);
+      }
+    } on Object catch (error) {
+      if (_current(generation)) {
+        setState(() => _message = _failure(error));
+      }
+    } finally {
+      if (_current(generation)) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
   Future<void> _loadHistory() async {
     final row = _selected;
     if (row == null || _busy || !_active) {
@@ -593,6 +615,10 @@ class _ProblemWorkspaceScreenState extends State<ProblemWorkspaceScreen> {
                         ? null
                         : () => unawaited(_loadHistory()),
                     child: const Text('Review amendment history'),
+                  ),
+                  OutlinedButton(
+                    onPressed: _busy || action != null ? null : () => unawaited(_localCondition(selected)),
+                    child: const Text('Review local FHIR Condition'),
                   ),
                   if (_canWrite && !selected.content.terminal && action == null)
                     Wrap(

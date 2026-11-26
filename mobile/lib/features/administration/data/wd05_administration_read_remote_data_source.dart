@@ -293,6 +293,24 @@ class Wd05AdministrationReadRemoteDataSource {
     );
   }
 
+  Future<Wd05AdministrationItem> detail(Wd05AdministrationSection section, int id) async {
+    _id(id);
+    if (section != Wd05AdministrationSection.staff && section != Wd05AdministrationSection.departments) {
+      throw const Wd05AdministrationReadUnavailable();
+    }
+    final revision = sessionNavigationGuard.revision;
+    final before = await _authorized(section, revision);
+    final raw = await apiClient.getJson('${section.path}/$id', bearerToken: before.accessToken);
+    if (!_same(before, await _authorized(section, revision)) || !_current(revision)) {
+      throw const Wd05AdministrationReadUnavailable();
+    }
+    final row = _parseItem(section, raw['data'], before.clinicContextId!);
+    if (row.id != id) {
+      throw const FormatException('Administration detail identity mismatch.');
+    }
+    return row;
+  }
+
   Future<Wd05AdministrationReadPage> load({
     required Wd05AdministrationSection section,
     int page = 1,

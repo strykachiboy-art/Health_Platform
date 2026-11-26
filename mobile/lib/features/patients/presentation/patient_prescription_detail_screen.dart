@@ -27,6 +27,8 @@ class PatientPrescriptionDetailScreen extends StatefulWidget {
 class _PatientPrescriptionDetailScreenState
     extends State<PatientPrescriptionDetailScreen> {
   PatientPrescriptionDetail? _detail;
+  List<String>? _interactionWarnings;
+  bool _doctorInteractions = false;
   String? _error;
   bool _loading = false;
   int _generation = 0;
@@ -52,6 +54,8 @@ class _PatientPrescriptionDetailScreenState
     widget.dataSource.sessionNavigationGuard.addListener(_onGuardChanged);
     _generation++;
     _detail = null;
+    _interactionWarnings = null;
+    _doctorInteractions = false;
     _error = null;
     _loading = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -71,6 +75,8 @@ class _PatientPrescriptionDetailScreenState
     _generation++;
     setState(() {
       _detail = null;
+    _interactionWarnings = null;
+    _doctorInteractions = false;
       _loading = false;
       _error = 'Session changed. Prescription detail cleared.';
     });
@@ -87,12 +93,16 @@ class _PatientPrescriptionDetailScreenState
     if (!guard.canAccessProtectedRoutes) {
       setState(() {
         _detail = null;
+    _interactionWarnings = null;
+    _doctorInteractions = false;
         _error = 'Session unavailable. Prescription detail cleared.';
       });
       return;
     }
     setState(() {
       _detail = null;
+    _interactionWarnings = null;
+    _doctorInteractions = false;
       _error = null;
       _loading = true;
     });
@@ -109,15 +119,19 @@ class _PatientPrescriptionDetailScreenState
         prescriptionId: prescriptionId,
         expectedPatientId: patientId,
       );
+      final doctorInteractions = await source.canCheckInteractions();
       if (!current()) return;
       setState(() {
         _detail = result;
+        _doctorInteractions = doctorInteractions;
         _loading = false;
       });
     } on Object catch (error) {
       if (!current()) return;
       setState(() {
         _detail = null;
+    _interactionWarnings = null;
+    _doctorInteractions = false;
         _loading = false;
         _error = error is PatientPrescriptionSessionMismatchException
             ? 'Session unavailable. Prescription detail cleared.'
@@ -126,6 +140,32 @@ class _PatientPrescriptionDetailScreenState
             ? 'Prescription detail access denied or unavailable.'
             : 'Prescription detail could not be verified from server.';
       });
+    }
+  }
+
+  Future<void> _checkInteractions(PatientPrescriptionDetail detail) async {
+    if (_loading || !_doctorInteractions) {
+      return;
+    }
+    final source = widget.dataSource;
+    final revision = source.sessionNavigationGuard.revision;
+    final generation = ++_generation;
+    setState(() { _loading = true; _interactionWarnings = null; _error = null; });
+    bool current() => mounted && generation == _generation && identical(source, widget.dataSource) &&
+      source.sessionNavigationGuard.revision == revision && source.sessionNavigationGuard.canAccessProtectedRoutes;
+    try {
+      final result = await source.checkInteractions(detail);
+      if (current()) {
+        setState(() => _interactionWarnings = result);
+      }
+    } on Object {
+      if (current()) {
+        setState(() => _error = 'Interaction check unavailable. Reload the prescription.');
+      }
+    } finally {
+      if (current()) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -153,6 +193,13 @@ class _PatientPrescriptionDetailScreenState
                     key: const ValueKey('p23h-s01-detail-record'),
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
+                  if (_doctorInteractions && detail.structuredItems.map((x) => x.drugId).toSet().length >= 2)
+                    OutlinedButton(onPressed: _loading ? null : () => unawaited(_checkInteractions(detail)), child: const Text('Check known drug interactions')),
+                  if (_interactionWarnings != null) ...[
+                    const Text('Server interaction check for this prescription only; not clinical clearance.'),
+                    if (_interactionWarnings!.isEmpty) const Text('No known interactions returned for the selected drugs.'),
+                    for (final warning in _interactionWarnings!) Text(warning),
+                  ],
                   Text('Patient #${detail.prescription.patientId}'),
                   Text('Server status: ${detail.prescription.status.name}'),
                   Text(

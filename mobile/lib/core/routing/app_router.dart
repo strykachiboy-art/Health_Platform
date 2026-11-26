@@ -72,6 +72,8 @@ import 'package:clinic_system_pro/features/patient_portal/data/patient_portal_re
 import 'package:clinic_system_pro/features/patient_portal/presentation/patient_portal_screen.dart';
 import 'package:clinic_system_pro/features/patient_portal/presentation/patient_section_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/doctor_observation_source.dart';
+import 'package:clinic_system_pro/features/patients/presentation/doctor_directory_screen.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
 import 'package:clinic_system_pro/features/emar/presentation/emar_patient_route_screen.dart';
@@ -302,6 +304,16 @@ GoRouter createAppRouter({
   // WD09B: one attempt per actor/target/action across route revisits.
   final wd09bOneShotGate = Wd09bOneShotGate();
   final wd09cfOneShotGate = Wd09cfOneShotGate();
+  final observationReader = patientAllergyDataSource;
+  final doctorObservationSource = observationReader == null ||
+          sessionNavigationGuard == null ||
+          !identical(observationReader.sessionNavigationGuard, sessionNavigationGuard)
+      ? null
+      : DoctorObservationSource(
+          observationReader,
+          deviceRegistrationConnectivitySource ?? ConnectivityPlusDeviceConnectivitySource(),
+          wd09cfOneShotGate,
+        );
   Widget p23iWorkspace(P23IWorkspaceMode mode) {
     final guard = sessionNavigationGuard;
     final billing = p23iBillingReader;
@@ -1878,6 +1890,28 @@ GoRouter createAppRouter({
             },
           ),
           GoRoute(
+            path: '/consultations/my-workspace',
+            name: 'doctor-consultation-history',
+            builder: (context, state) {
+              final source = doctorObservationSource;
+              if (source == null) {
+                return const Scaffold(body: Center(child: Text('Doctor workspace unavailable.')));
+              }
+              return DoctorDirectoryScreen(source: source);
+            },
+          ),
+          GoRoute(
+            path: '/account/doctor-profile',
+            name: 'doctor-own-profile',
+            builder: (context, state) {
+              final source = doctorObservationSource;
+              if (source == null) {
+                return const Scaffold(body: Center(child: Text('Doctor profile unavailable.')));
+              }
+              return DoctorDirectoryScreen(source: source, profileOnly: true);
+            },
+          ),
+          GoRoute(
             path: '/consultations/templates',
             name: 'consultation-templates',
             builder: (context, state) {
@@ -2539,6 +2573,7 @@ GoRouter createAppRouter({
                 dataSource: source,
                 patientId: patientId,
                 allergyDataSource: patientAllergyDataSource,
+                doctorObservationSource: doctorObservationSource,
                 vitalsDataSource: patientVitalsDataSource,
                 admissionDataSource: patientAdmissionDataSource,
                 consultationDataSource: patientConsultationDataSource,

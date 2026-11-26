@@ -462,6 +462,50 @@ class ProblemSession {
     );
   }
 
+  Future<String> localCondition(ProblemRecord prior) async {
+    _general();
+    if (!identical(prior._session, this)) {
+      _bad();
+    }
+    final fresh = await detail(prior.patientId, prior.id);
+    if (fresh.version != prior.version) {
+      _bad();
+    }
+    return _source._read(this, '${_root(prior.patientId)}/${prior.id}/fhir-condition', (j) {
+      if (j['resourceType'] != 'Condition' || j['id'] != '${prior.id}' ||
+          _object(j['meta'])['versionId'] != '${prior.version}' ||
+          _object(j['subject'])['reference'] != 'Patient/${prior.patientId}' ||
+          _object(j['code'])['text'] != prior.content.name) {
+        _bad();
+      }
+      final verification = _array(_object(j['verificationStatus'])['coding']);
+      if (verification.length != 1 || _object(verification.single)['system'] != 'http://terminology.hl7.org/CodeSystem/condition-ver-status' ||
+          _object(verification.single)['code'] != prior.content.verificationStatus.replaceAll('_', '-')) {
+        _bad();
+      }
+      if (prior.content.verificationStatus != 'entered_in_error') {
+        final clinical = _array(_object(j['clinicalStatus'])['coding']);
+        if (clinical.length != 1 || _object(clinical.single)['system'] != 'http://terminology.hl7.org/CodeSystem/condition-clinical' ||
+            _object(clinical.single)['code'] != prior.content.clinicalStatus) {
+          _bad();
+        }
+      } else if (j.containsKey('clinicalStatus')) {
+        _bad();
+      }
+      final coding = _object(j['code'])['coding'];
+      if (prior.content.code != null) {
+        final entries = _array(coding);
+        if (entries.length != 1 || _object(entries.single)['code'] != prior.content.code ||
+            _object(entries.single)['system'] != prior.content.codingSystem) {
+          _bad();
+        }
+      } else if (coding != null) {
+        _bad();
+      }
+      return 'Local FHIR R4 Condition #${prior.id}, version ${prior.version}\nSubject: Patient/${prior.patientId}\nCode: ${prior.content.name}${prior.content.code == null ? '' : ' (${prior.content.code})'}\nVerification: ${prior.content.verificationStatus}\nNo external transmission or import.';
+    });
+  }
+
   Future<ProblemHistory> history(ProblemRecord prior) async {
     _general();
     if (!identical(prior._session, this)) {

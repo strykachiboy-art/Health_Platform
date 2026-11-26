@@ -23,6 +23,7 @@ class Wd05AdministrationReadScreen extends StatefulWidget {
 class _Wd05AdministrationReadScreenState
     extends State<Wd05AdministrationReadScreen> {
   Wd05AdministrationReadPage? _page;
+  Wd05AdministrationItem? _selectedItem;
   String? _error;
   bool _loading = true;
   int _generation = 0;
@@ -58,9 +59,34 @@ class _Wd05AdministrationReadScreenState
     _generation++;
     setState(() {
       _page = null;
+      _selectedItem = null;
       _error = 'Session changed. Reopen this worklist after authentication.';
       _loading = false;
     });
+  }
+
+  Future<void> _detail(Wd05AdministrationItem item) async {
+    if (_loading) {
+      return;
+    }
+    final source = widget.source;
+    final revision = source.sessionNavigationGuard.revision;
+    final generation = ++_generation;
+    setState(() { _selectedItem = null; _loading = true; _error = null; });
+    try {
+      final result = await source.detail(widget.section, item.id);
+      if (_current(generation, source, revision)) {
+        setState(() => _selectedItem = result);
+      }
+    } on Object catch (error) {
+      if (_current(generation, source, revision)) {
+        setState(() => _error = _message(error));
+      }
+    } finally {
+      if (_current(generation, source, revision)) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   Future<void> _load({int page = 1}) async {
@@ -70,6 +96,7 @@ class _Wd05AdministrationReadScreenState
     setState(() {
       _loading = true;
       _page = null;
+      _selectedItem = null;
       _error = null;
     });
     try {
@@ -130,6 +157,10 @@ class _Wd05AdministrationReadScreenState
           if (_loading) const Center(child: CircularProgressIndicator()),
           if (_error != null)
             Text(_error!, key: const ValueKey('wd05-admin-read-error')),
+          if (_selectedItem != null) ...[
+            Text('Verified detail: ${_selectedItem!.title}'),
+            Text(_selectedItem!.description),
+          ],
           if (page != null) ...[
             Text('Verified records: ${page.items.length} of ${page.total}'),
             if (page.items.isEmpty)
@@ -139,6 +170,8 @@ class _Wd05AdministrationReadScreenState
                 key: ValueKey('wd05-admin-read-item-${item.id}'),
                 title: Text(item.title),
                 subtitle: Text(item.description),
+                onTap: _loading || !active || (widget.section != Wd05AdministrationSection.staff && widget.section != Wd05AdministrationSection.departments)
+                    ? null : () => unawaited(_detail(item)),
               ),
             Row(
               children: [

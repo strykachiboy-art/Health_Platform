@@ -19,6 +19,7 @@ class Wd05GeneratedReportsScreen extends StatefulWidget {
 class _Wd05GeneratedReportsScreenState
     extends State<Wd05GeneratedReportsScreen> {
   Wd05ReportPage? _snapshot;
+  Wd05GeneratedReport? _selectedReport;
   bool _loading = false;
   String? _error;
   String _type = 'all';
@@ -42,6 +43,7 @@ class _Wd05GeneratedReportsScreenState
     widget.source.sessionNavigationGuard.addListener(_sessionChanged);
     _generation++;
     _snapshot = null;
+    _selectedReport = null;
     _error = null;
     _loading = false;
     unawaited(_load());
@@ -61,6 +63,7 @@ class _Wd05GeneratedReportsScreenState
     _generation++;
     setState(() {
       _snapshot = null;
+    _selectedReport = null;
       _loading = false;
       _error = 'Report metadata cleared after session change.';
     });
@@ -91,6 +94,30 @@ class _Wd05GeneratedReportsScreenState
     return 'Report metadata could not be verified from the server.';
   }
 
+  Future<void> _detail(Wd05GeneratedReport report) async {
+    if (_loading) {
+      return;
+    }
+    final source = widget.source;
+    final revision = source.sessionNavigationGuard.revision;
+    final generation = ++_generation;
+    setState(() { _selectedReport = null; _loading = true; _error = null; });
+    try {
+      final result = await source.detail(report);
+      if (_current(generation, revision, source)) {
+        setState(() => _selectedReport = result);
+      }
+    } on Object catch (error) {
+      if (_current(generation, revision, source)) {
+        setState(() => _error = _safeMessage(error));
+      }
+    } finally {
+      if (_current(generation, revision, source)) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
   Future<void> _load({int page = 1}) async {
     if (_loading) return;
     final source = widget.source;
@@ -100,6 +127,7 @@ class _Wd05GeneratedReportsScreenState
       _loading = true;
       _error = null;
       _snapshot = null;
+    _selectedReport = null;
     });
     try {
       final result = await source.listReports(
@@ -197,6 +225,11 @@ class _Wd05GeneratedReportsScreenState
         if (_loading) const Center(child: CircularProgressIndicator()),
         if (_error != null)
           Text(_error!, key: const ValueKey('wd05-reports-error')),
+        if (_selectedReport != null) ...[
+          Text('Verified report #${_selectedReport!.id}'),
+          Text('${_selectedReport!.type} / ${_selectedReport!.format} · ${_selectedReport!.createdUtc.toIso8601String()}'),
+          const Text('Metadata only; export/download remains unavailable.'),
+        ],
         if (snapshot != null) ...[
           Text(
             'Reports on page ${snapshot.page}: ${snapshot.items.length} of ${snapshot.total}',
@@ -212,6 +245,7 @@ class _Wd05GeneratedReportsScreenState
                   'Generated UTC: ${report.createdUtc.toIso8601String()}',
                 ),
                 trailing: Text('ID ${report.id}'),
+                onTap: _loading ? null : () => unawaited(_detail(report)),
               ),
             ),
           Row(

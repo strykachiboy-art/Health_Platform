@@ -18,6 +18,8 @@ import 'package:clinic_system_pro/features/emergency_access/data/emergency_acces
 import 'package:clinic_system_pro/features/patients/data/models/patient.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_allergy_remote_data_source.dart';
+import 'package:clinic_system_pro/features/patients/data/doctor_observation_source.dart';
+import 'package:clinic_system_pro/features/patients/presentation/doctor_observation_screen.dart';
 import 'package:clinic_system_pro/features/patients/presentation/patient_structured_allergies_card.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_vitals_remote_data_source.dart';
 import 'package:clinic_system_pro/features/patients/data/patient_admission_remote_data_source.dart';
@@ -52,6 +54,7 @@ class PatientDetailScreen extends StatefulWidget {
     required this.patientId,
     this.emergencyAccessContext,
     this.allergyDataSource,
+    this.doctorObservationSource,
     this.problemSource,
     this.timelineSource,
     this.hieSource,
@@ -74,6 +77,7 @@ class PatientDetailScreen extends StatefulWidget {
   final int patientId;
   final EmergencyAccessContext? emergencyAccessContext;
   final PatientAllergyRemoteDataSource? allergyDataSource;
+  final DoctorObservationSource? doctorObservationSource;
   final ProblemSource? problemSource;
   final TimelineSource? timelineSource;
   final HieRemoteDataSource? hieSource;
@@ -575,6 +579,15 @@ class _PatientDetailScreenState extends State<PatientDetailScreen> {
             key: ValueKey('problem-entry-patient-${patient.id}'),
             source: widget.problemSource!, patientId: patient.id,
             allowWrite: patient.isActive,
+          ),
+        if ((_shows(_WorkspaceSection.overview) || _shows(_WorkspaceSection.vitals)) &&
+            widget.doctorObservationSource != null && !_patientSnapshotStale &&
+            _emergencyBoundGrantId == null && patient.isActive)
+          DoctorObservationEntry(
+            key: ValueKey('doctor-observation-entry-${patient.id}'),
+            source: widget.doctorObservationSource!,
+            patientId: patient.id,
+            clinicId: patient.clinicId,
           ),
         if (_shows(_WorkspaceSection.overview) && widget.allergyDataSource != null && !_patientSnapshotStale) ...[
           const SizedBox(height: 12),

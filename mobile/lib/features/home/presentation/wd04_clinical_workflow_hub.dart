@@ -197,6 +197,16 @@ List<Wd04ClinicalWorkflowLink> wd04ClinicalWorkflowLinks({
     );
   }
 
+  if (normalizedRole == 'doctor') {
+    links.add(const Wd04ClinicalWorkflowLink(
+      id: 'doctor_consultation_history',
+      title: 'My patients and consultation history',
+      path: '/consultations/my-workspace',
+      description: 'Server-scoped previously seen patients and staff consultation history.',
+      icon: Icons.history_outlined,
+    ));
+  }
+
   return List<Wd04ClinicalWorkflowLink>.unmodifiable(links);
 }
 
