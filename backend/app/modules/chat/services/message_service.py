@@ -10,6 +10,7 @@ from app.core.audit.services.audit_service import create_audit_log
 from app.core.enums.audit_enums import AuditAction
 from app.core.enums.chat_enums import (
     ConversationStatus,
+    ConversationType,
     MessagePriority,
     MessageStatus,
     MessageType,
@@ -20,6 +21,8 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.utils.decorators import transactional
+from app.core.idempotency.services.idempotency_service import normalize_idempotency_key, reserve_idempotency_operation
+from app.core.offline_operations.services.disposition_service import assert_operation_not_disposed
 
 from app.modules.chat.models.conversation_model import Conversation
 from app.modules.chat.models.message_model import Message
@@ -278,6 +281,7 @@ def create_message(
     message_type: MessageType = MessageType.TEXT,
     priority: MessagePriority = MessagePriority.NORMAL,
     reply_to_message_id: int | None = None,
+    idempotency_key: str | None = None,
 ) -> Message:
     _validate_positive_id(
         clinic_id,
@@ -366,6 +370,31 @@ def create_message(
         reply_to_message_id,
     )
 
+    record = None
+    if idempotency_key is not None:
+        # Ordinary text only; never grant offline authority through this header.
+        if (conversation.conversation_type not in (ConversationType.DIRECT, ConversationType.GROUP)
+                or conversation.patient_id is not None or conversation.appointment_id is not None
+                or conversation.consultation_id is not None or message_type != MessageType.TEXT
+                or priority != MessagePriority.NORMAL or reply_to_message_id is not None):
+            raise ValidationError("Keyed chat is limited to ordinary non-case text")
+        idempotency_key = normalize_idempotency_key(idempotency_key)
+        assert_operation_not_disposed(clinic_id=clinic_id, user_id=sender_id, operation_type="chat.message.create", idempotency_key=idempotency_key)
+        record, created = reserve_idempotency_operation(
+            clinic_id=clinic_id, user_id=sender_id, operation="chat.message.create",
+            idempotency_key=idempotency_key,
+            request_payload={"conversation_id": conversation.id, "content": content,
+                             "message_type": message_type.value, "priority": priority.value,
+                             "reply_to_message_id": reply_to_message_id},
+        )
+        if not created:
+            existing = db.session.get(Message, record.entity_id) if record.entity_type == "Message" and record.entity_id is not None else None
+            if (existing is None or existing.clinic_id != clinic_id or existing.sender_id != sender_id
+                    or existing.conversation_id != conversation.id or existing.status == MessageStatus.DELETED
+                    or existing.content != content or existing.message_type != message_type or existing.priority != priority):
+                raise ConflictError("Chat operation requires reconciliation", code="IDEMPOTENCY_RECORD_UNRESOLVED")
+            ChatSecurityService.ensure_user_can_access_message(sender_id, existing.id)
+            return existing
     message = Message(
         clinic_id=clinic_id,
         conversation_id=conversation.id,
@@ -426,6 +455,9 @@ def create_message(
         },
     )
 
+    if record is not None:
+        record.entity_type = "Message"
+        record.entity_id = message.id
     return message
 
 

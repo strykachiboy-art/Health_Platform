@@ -1106,6 +1106,8 @@ def create_chat_message(
         clinic_id = _current_clinic_id()
         sender_id = _current_user_id()
 
+        key = request.headers.get("Idempotency-Key")
+        keyed = {} if key is None else {"idempotency_key": key}
         message = create_message(
             clinic_id=clinic_id,
             conversation_id=conversation_id,
@@ -1116,6 +1118,7 @@ def create_chat_message(
             reply_to_message_id=(
                 payload.reply_to_message_id
             ),
+            **keyed,
         )
 
         return jsonify(

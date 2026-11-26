@@ -24,6 +24,8 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.utils.decorators import transactional
+from app.core.idempotency.services.idempotency_service import normalize_idempotency_key, reserve_idempotency_operation
+from app.core.offline_operations.services.disposition_service import assert_operation_not_disposed
 from app.extensions import db
 from app.modules.appointment.models.appointment_model import Appointment
 from app.modules.asset_control.models.asset_model import Asset
@@ -781,6 +783,7 @@ def create_feedback(
     payload: FeedbackCreateSchema,
     clinic_id: int | None = None,
     source: FeedbackSource = FeedbackSource.API,
+    idempotency_key: str | None = None,
 ) -> Feedback:
     source = _normalize_enum(
         source,
@@ -793,12 +796,41 @@ def create_feedback(
             "System feedback must use create_system_feedback"
         )
 
-    return _create_feedback_without_nested_transaction(
+    # Keyed contract is deliberately narrower than ordinary online feedback.
+    record = None
+    if idempotency_key is not None:
+        actor = _get_actor(actor_user_id)
+        if _actor_role(actor) == Role.SUPER_ADMIN or clinic_id is None:
+            raise ValidationError("Keyed feedback requires an active clinic context")
+        resolved = _resolve_actor_clinic(actor, clinic_id)
+        ensure_clinic_active(resolved)
+        if (source != FeedbackSource.API or payload.target_module is not None
+                or payload.target_resource_type is not None or payload.target_resource_id is not None
+                or payload.feedback_type not in (FeedbackType.PRODUCT_FEEDBACK, FeedbackType.BUG_REPORT, FeedbackType.FEATURE_REQUEST)
+                or payload.category not in (FeedbackCategory.USABILITY, FeedbackCategory.PERFORMANCE, FeedbackCategory.ACCESSIBILITY)):
+            raise ValidationError("Keyed feedback is limited to untargeted product feedback")
+        idempotency_key = normalize_idempotency_key(idempotency_key)
+        assert_operation_not_disposed(clinic_id=resolved, user_id=actor.id, operation_type="feedback.create", idempotency_key=idempotency_key)
+        record, created = reserve_idempotency_operation(
+            clinic_id=resolved, user_id=actor.id, operation="feedback.create",
+            idempotency_key=idempotency_key, request_payload=payload.model_dump(mode="json"),
+        )
+        if not created:
+            existing = db.session.get(Feedback, record.entity_id) if record.entity_type == "Feedback" and record.entity_id is not None else None
+            if (existing is None or existing.clinic_id != resolved
+                    or existing.submitted_by_user_id != actor.id):
+                raise ConflictError("Feedback operation requires reconciliation", code="IDEMPOTENCY_RECORD_UNRESOLVED")
+            return existing
+    feedback = _create_feedback_without_nested_transaction(
         actor_user_id=actor_user_id,
         payload=payload,
         clinic_id=clinic_id,
         source=source,
     )
+    if record is not None:
+        record.entity_type = "Feedback"
+        record.entity_id = feedback.id
+    return feedback
 
 
 @transactional

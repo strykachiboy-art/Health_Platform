@@ -8,6 +8,7 @@ from app.core.exceptions import DomainError, NotFoundError, ValidationError
 from app.core.utils.decorators import (
     login_required,
     role_required,
+    get_current_clinic_id,
 )
 from app.core.enums.role_enums import Role
 
@@ -288,10 +289,14 @@ def create_feedback_route():
             _get_json_object()
         )
 
-        feedback = create_feedback(
-            actor_user_id=actor_user_id,
-            payload=payload,
-        )
+        key = request.headers.get("Idempotency-Key")
+        if key is None:
+            feedback = create_feedback(actor_user_id=actor_user_id, payload=payload)
+        else:
+            feedback = create_feedback(
+                actor_user_id=actor_user_id, payload=payload,
+                clinic_id=get_current_clinic_id(required=True), idempotency_key=key,
+            )
 
         return jsonify({
             "success": True,
