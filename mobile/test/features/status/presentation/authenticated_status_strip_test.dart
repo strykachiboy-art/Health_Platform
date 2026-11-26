@@ -92,6 +92,7 @@ void main() {
     Future<ScopedSyncCounts> counts({
       required int userId,
       required int clinicContextId,
+      required String? tenantId,
     }) async {
       checkedUser = userId;
       checkedClinic = clinicContextId;
@@ -132,6 +133,7 @@ void main() {
     Future<ScopedSyncCounts> counts({
       required int userId,
       required int clinicContextId,
+      required String? tenantId,
     }) async {
       reads++;
       return const ScopedSyncCounts(pending: 0, needsReview: 0);
@@ -149,6 +151,7 @@ void main() {
     Future<ScopedSyncCounts> counts({
       required int userId,
       required int clinicContextId,
+      required String? tenantId,
     }) async => throw StateError('private DB failure');
     Future<AuthSessionState> session() async => _ready();
     await mount(tester, loadSession: session, counts: counts);
@@ -165,6 +168,7 @@ void main() {
     Future<ScopedSyncCounts> counts({
       required int userId,
       required int clinicContextId,
+      required String? tenantId,
     }) async => const ScopedSyncCounts(pending: 7, needsReview: 3);
     Future<AuthSessionState> session() async => _ready();
     await mount(tester, loadSession: session, counts: counts, guard: guard);
@@ -185,6 +189,7 @@ void main() {
     Future<ScopedSyncCounts> counts({
       required int userId,
       required int clinicContextId,
+      required String? tenantId,
     }) => pending.future;
     Future<AuthSessionState> session() async => _ready();
     await tester.pumpWidget(
@@ -222,6 +227,7 @@ void main() {
     Future<ScopedSyncCounts> counts({
       required int userId,
       required int clinicContextId,
+      required String? tenantId,
     }) async => const ScopedSyncCounts(pending: 5, needsReview: 0);
     await mount(tester, loadSession: session, counts: counts);
     expect(find.text('Sync: Unavailable'), findsOneWidget);
@@ -237,6 +243,7 @@ void main() {
     Future<ScopedSyncCounts> counts({
       required int userId,
       required int clinicContextId,
+      required String? tenantId,
     }) async {
       reads++;
       return ScopedSyncCounts(pending: reads, needsReview: 0);

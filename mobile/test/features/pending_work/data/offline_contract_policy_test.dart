@@ -2,10 +2,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:clinic_system_pro/features/pending_work/data/offline_contract_policy.dart';
 
 void main() {
-  test('P25 only appointment.create is admitted to stable-key replay', () {
-    expect(OfflineContractRegistry.mayAutoReplay('appointment.create'), isTrue);
+  test('RUN2 only the three exact operation types admit stable-key replay', () {
+    const allowed = {'appointment.create', 'feedback.product.preset', 'chat.message.preset'};
+    expect(OfflineContractRegistry.policies.entries.where((e) => e.value.canAutoReplay).map((e) => e.key).toSet(), allowed);
+    for (final type in allowed) {
+      expect(OfflineContractRegistry.mayAutoReplay(type), isTrue);
+      expect(OfflineContractRegistry.classify(type), OfflineContractClass.provedSafeQueued);
+    }
     for (final entry in OfflineContractRegistry.policies.entries) {
-      if (entry.key == 'appointment.create') {
+      if (allowed.contains(entry.key)) {
         continue;
       }
       expect(OfflineContractRegistry.mayAutoReplay(entry.key), isFalse);

@@ -1,7 +1,7 @@
 import '../networking/api_client.dart';
 import '../networking/api_exception.dart';
 import 'operation_lifecycle.dart';
-import 'operation_payload_crypto.dart';
+import 'tenant_operation_scope.dart';
 import 'operation_queue_store.dart';
 import '../storage/app_database.dart';
 import '../../features/auth/data/models/auth_token_response.dart';
@@ -149,10 +149,13 @@ class OperationDiscardService {
       );
     }
 
-    final context = OperationPayloadContext(
-      userId: session.userId.toString(),
-      clinicContextId: session.clinicContextId.toString(),
-    );
+    final context = TenantOperationScope.appointmentContext(session);
+    if (context == null) {
+      return const OperationDiscardResult(
+        OperationDiscardStatus.sessionUnavailable,
+        category: 'tenantContextUnavailable',
+      );
+    }
 
     final OperationQueueEntryData? entry;
     try {
@@ -235,6 +238,16 @@ class OperationDiscardService {
 
     final Map<String, dynamic> receipt;
     try {
+      final current = await _loadSession();
+      if (!TenantOperationScope.matchesAppointment(current, context) ||
+          current?.accessToken != session.accessToken ||
+          current?.refreshToken != session.refreshToken ||
+          current?.role != session.role) {
+        return const OperationDiscardResult(
+          OperationDiscardStatus.sessionUnavailable,
+          category: 'sessionChangedBeforeDisposition',
+        );
+      }
       receipt = await _sendDisposition(
         path: path,
         body: body,
@@ -286,6 +299,16 @@ class OperationDiscardService {
     }
 
     try {
+      final current = await _loadSession();
+      if (!TenantOperationScope.matchesAppointment(current, context) ||
+          current?.accessToken != session.accessToken ||
+          current?.refreshToken != session.refreshToken ||
+          current?.role != session.role) {
+        return const OperationDiscardResult(
+          OperationDiscardStatus.localCleanupFailed,
+          category: 'sessionChangedAfterDisposition',
+        );
+      }
       final cleanupStatus = await _queueStore.discardAfterConfirmedDisposition(
         operationId: operationId,
         context: context,

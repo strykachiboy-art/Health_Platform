@@ -22,6 +22,14 @@ import 'package:clinic_system_pro/core/session/session_invalidation_coordinator.
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/core/storage/app_database.dart';
 import 'package:clinic_system_pro/core/sync/operation_payload_crypto.dart';
+import 'package:clinic_system_pro/core/sync/tenant_operation_scope.dart';
+import 'package:clinic_system_pro/core/sync/run2_workspace.dart';
+import 'package:clinic_system_pro/core/sync/run2_module_transport.dart';
+import 'package:clinic_system_pro/core/sync/run2_policy.dart';
+import 'package:clinic_system_pro/core/sync/run2_transport.dart';
+import 'package:clinic_system_pro/core/sync/run2_blood_bank_fence.dart';
+import 'package:clinic_system_pro/features/pending_work/presentation/run2_workspace_screen.dart';
+import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
 import 'package:clinic_system_pro/core/sync/operation_queue_store.dart';
 import 'package:clinic_system_pro/core/sync/operation_replay_worker.dart';
 import 'package:clinic_system_pro/core/sync/operation_discard_service.dart';
@@ -210,25 +218,43 @@ Future<void> main() async {
     payloadCrypto: OperationPayloadCrypto(secureStorage: secureStorage),
   );
 
+  Future<AuthTokenResponse?> loadOfflineSession() async {
+    final revision = sessionNavigationGuard.revision;
+    if (!sessionNavigationGuard.canAccessProtectedRoutes) {
+      return null;
+    }
+    final state = await sessionCoordinator.restoreSession();
+    if (state.disposition != AuthSessionDisposition.ready ||
+        !sessionNavigationGuard.canAccessProtectedRoutes ||
+        revision != sessionNavigationGuard.revision) {
+      return null;
+    }
+    return state.session;
+  }
+
   final replayWorker = OperationReplayWorker.withApiClient(
     queueStore: queueStore,
     apiClient: apiClient,
-    loadSession: () async {
-      final state = await sessionCoordinator.restoreSession();
-      if (state.disposition != AuthSessionDisposition.ready) {
-        return null;
-      }
-      return state.session;
-    },
+    loadSession: loadOfflineSession,
   );
 
-  final replayScheduler = OperationReplayScheduler(
+  late final OperationReplayScheduler replayScheduler;
+  final offlineWorkspace = Run2Workspace(
+    store: queueStore,
+    guard: sessionNavigationGuard,
+    loadSession: loadOfflineSession,
+    transport: ApiRun2Transport(apiClient),
+    moduleTransport: Run2ModuleTransport(apiClient),
+    notifyQueued: () => replayScheduler.notifyOperationQueued(),
+  );
+  final bloodBankFence = Run2BloodBankFence(queueStore);
+  replayScheduler = OperationReplayScheduler(
     connectivitySource: connectivitySource,
-    runReplay: replayWorker.runOnce,
+    runReplay: () => runCombinedOfflineDelivery(replayWorker, offlineWorkspace),
     runMaintenance: () async {
-      await queueStore.purgeTerminalOperationsPastRetention(
-        now: DateTime.now().toUtc(),
-      );
+      final now = DateTime.now().toUtc();
+      await queueStore.purgeTerminalOperationsPastRetention(now: now);
+      await queueStore.purgeRun2ExpiredModuleRecords(now: now);
     },
   );
   final sessionInvalidationCoordinator = SessionInvalidationCoordinator(
@@ -246,20 +272,31 @@ Future<void> main() async {
     queueStore: queueStore,
     replayScheduler: replayScheduler,
     loadContext: () async {
+      final revision = sessionNavigationGuard.revision;
       try {
-        final state = await sessionCoordinator.restoreSession();
-        if (state.disposition != AuthSessionDisposition.ready) return null;
-
-        final session = state.session;
+        final session = await loadOfflineSession();
         if (session == null || session.userId <= 0) return null;
 
         final clinicContextId = session.clinicContextId;
         if (clinicContextId == null || clinicContextId <= 0) return null;
 
-        return OperationPayloadContext(
-          userId: session.userId.toString(),
-          clinicContextId: clinicContextId.toString(),
-        );
+        final context = TenantOperationScope.appointmentContext(session);
+        if (context == null ||
+            await queueStore.hasUnresolvedLegacyScope(
+              userId: session.userId,
+              clinicId: clinicContextId,
+            )) {
+          return null;
+        }
+        final current = await loadOfflineSession();
+        if (revision != sessionNavigationGuard.revision ||
+            !TenantOperationScope.matchesAppointment(current, context) ||
+            current?.accessToken != session.accessToken ||
+            current?.refreshToken != session.refreshToken ||
+            current?.role != session.role) {
+          return null;
+        }
+        return context;
       } catch (_) {
         return null;
       }
@@ -295,11 +332,20 @@ Future<void> main() async {
             sessionNavigationGuard.revision != revision) {
           return null;
         }
+        final context = TenantOperationScope.appointmentContext(session);
+        if (context == null ||
+            await queueStore.hasUnresolvedLegacyScope(
+              userId: session.userId,
+              clinicId: session.clinicContextId!,
+            )) {
+          return null;
+        }
+        if (!sessionNavigationGuard.canAccessProtectedRoutes ||
+            sessionNavigationGuard.revision != revision) {
+          return null;
+        }
         return AppointmentCreateQueueReadSession(
-          context: OperationPayloadContext(
-            userId: session.userId.toString(),
-            clinicContextId: session.clinicContextId!.toString(),
-          ),
+          context: context,
           revision: revision,
         );
       } catch (_) {
@@ -313,12 +359,7 @@ Future<void> main() async {
   final pendingWorkDiscard = OperationDiscardService.withApiClient(
     queueStore: queueStore,
     apiClient: apiClient,
-    loadSession: () async {
-      final state = await sessionCoordinator.restoreSession();
-      return state.disposition == AuthSessionDisposition.ready
-          ? state.session
-          : null;
-    },
+    loadSession: loadOfflineSession,
   );
   final pendingWorkSource = PendingWorkSource(
     guard: sessionNavigationGuard,
@@ -394,9 +435,39 @@ Future<void> main() async {
           children: [
             AuthenticatedStatusStrip(
               loadSession: sessionCoordinator.restoreSession,
-              loadSyncCounts: syncStatusSource.load,
+              loadSyncCounts: ({
+                required int userId,
+                required int clinicContextId,
+                required String? tenantId,
+              }) async {
+                final current = await loadOfflineSession();
+                final context = TenantOperationScope.fromSession(current);
+                if (context == null || current == null ||
+                    current.userId != userId ||
+                    current.clinicContextId != clinicContextId ||
+                    current.tenantId != tenantId ||
+                    await queueStore.hasUnresolvedLegacyScope(
+                      userId: userId,
+                      clinicId: clinicContextId,
+                    )) {
+                  throw StateError('Offline status unavailable.');
+                }
+                final baseCounts = await syncStatusSource.loadForContext(context);
+                final roleScope = Run2Policy.context(current);
+                if (roleScope == null) {
+                  return baseCounts;
+                }
+                final presets = await syncStatusSource.loadForContext(
+                  roleScope, operationTypes: Run2Policy.replayTypes,
+                );
+                return ScopedSyncCounts(
+                  pending: baseCounts.pending + presets.pending,
+                  needsReview: baseCounts.needsReview + presets.needsReview,
+                );
+              },
               sessionNavigationGuard: sessionNavigationGuard,
             ),
+            Run2OfflineButton(workspace: offlineWorkspace),
             AuthenticatedClinicalEmergencyIndicators(
               loadSession: sessionCoordinator.restoreSession,
               loadOpenAlertCount: clinicalSafetyDataSource.fetchOpenAlertCount,
@@ -414,6 +485,7 @@ Future<void> main() async {
         appointmentCreateSyncPageLoader:
             appointmentCreateSyncReadModel.loadPage,
         pendingWorkSource: pendingWorkSource,
+        bloodBankFence: bloodBankFence,
         localDatabase: localDatabase,
       ),
     ),
@@ -452,6 +524,7 @@ class ClinicSystemProApp extends StatefulWidget {
     this.operationReplayScheduler,
     this.appointmentCreateSyncPageLoader,
     this.pendingWorkSource,
+    this.bloodBankFence,
     this.localDatabase,
   });
 
@@ -484,6 +557,7 @@ class ClinicSystemProApp extends StatefulWidget {
   final OperationReplayScheduler? operationReplayScheduler;
   final AppointmentCreateSyncPageLoader? appointmentCreateSyncPageLoader;
   final PendingWorkAccess? pendingWorkSource;
+  final Run2BloodBankFence? bloodBankFence;
   final AppDatabase? localDatabase;
 
   @override
@@ -524,6 +598,7 @@ class _ClinicSystemProAppState extends State<ClinicSystemProApp> {
       deviceRegistrationConnectivitySource: widget.deviceConnectivitySource,
       appointmentCreateSyncPageLoader: widget.appointmentCreateSyncPageLoader,
       pendingWorkSource: widget.pendingWorkSource,
+      bloodBankFence: widget.bloodBankFence,
     );
 
     widget.pushReceiver?.start(

@@ -74,6 +74,14 @@ class ApiClient {
     );
   }
 
+  /// Explicit local historical snapshot capture, never an ordinary GET cache.
+  /// Refuse server no-store/no-cache instructions and oversized/non-JSON data.
+  /// Endpoint eligibility and minimized projections belong to the typed adapter.
+  Future<Map<String, dynamic>> getJsonForOfflineSnapshot(String path, {
+    required String bearerToken,
+  }) => _requestJson(method: 'GET', path: path, bearerToken: bearerToken,
+    offlineSnapshot: true);
+
   /// FHIR-R02 local read-only projection. Require the FHIR JSON media type
   /// and UTF-8 rather than the HTTP client's legacy text encoding fallback.
   Future<Map<String, dynamic>> getFhirJson(String path, {
@@ -213,6 +221,7 @@ class ApiClient {
     String? idempotencyKey,
     Map<String, String>? additionalHeaders,
     bool fhirJson = false,
+    bool offlineSnapshot = false,
   }) async {
     if (bearerToken != null && bearerToken.trim().isEmpty) {
       throw ArgumentError.value(
@@ -326,13 +335,24 @@ class ApiClient {
     final Object? decoded;
 
     try {
+      if (offlineSnapshot) {
+        final directives = (response.headers['cache-control'] ?? '').toLowerCase();
+        final pragma = (response.headers['pragma'] ?? '').toLowerCase();
+        final media = response.headers['content-type']?.split(';').first.trim().toLowerCase();
+        if (directives.contains('no-store') || directives.contains('no-cache') ||
+            directives.contains('max-age=0') || directives.contains('must-revalidate') ||
+            pragma.contains('no-cache') || media != 'application/json' ||
+            response.bodyBytes.length > 512 * 1024) {
+          throw const FormatException('Server response is not eligible for local persistence.');
+        }
+      }
       if (fhirJson) {
         final mediaType = response.headers['content-type']?.split(';').first.trim().toLowerCase();
         if (mediaType != 'application/fhir+json' || response.bodyBytes.length > 5 * 1024 * 1024) {
           throw const FormatException('Invalid FHIR response media type or size.');
         }
       }
-      decoded = jsonDecode(fhirJson ? utf8.decode(response.bodyBytes) : response.body);
+      decoded = jsonDecode(fhirJson || offlineSnapshot ? utf8.decode(response.bodyBytes) : response.body);
     } on FormatException catch (error) {
       throw ApiException(
         kind: ApiFailureKind.invalidResponse,

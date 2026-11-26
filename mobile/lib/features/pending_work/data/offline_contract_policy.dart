@@ -22,7 +22,8 @@ class OfflineContractPolicy {
   final bool canAutoReplay;
 }
 
-/// The worker itself independently enforces the same single-operation allowlist.
+/// The existing appointment worker and finite RUN2 preset adapter independently
+/// enforce the exact same narrow operation allowlists.
 /// No caller may interpret a contract matrix row as runtime authorization.
 class OfflineContractRegistry {
   const OfflineContractRegistry._();
@@ -82,6 +83,20 @@ class OfflineContractRegistry {
       backendSupportsStableIdempotency: false,
       canAutoReplay: false,
     ),
+    // Local aliases for fixed, nonclinical request shapes only. General chat
+    // and feedback writes retain their existing online-only classification.
+    'feedback.product.preset': OfflineContractPolicy(
+      operationType: 'feedback.product.preset',
+      contractClass: OfflineContractClass.provedSafeQueued,
+      backendSupportsStableIdempotency: true,
+      canAutoReplay: true,
+    ),
+    'chat.message.preset': OfflineContractPolicy(
+      operationType: 'chat.message.preset',
+      contractClass: OfflineContractClass.provedSafeQueued,
+      backendSupportsStableIdempotency: true,
+      canAutoReplay: true,
+    ),
     'feedback.create': OfflineContractPolicy(
       operationType: 'feedback.create',
       contractClass: OfflineContractClass.onlineOnly,
@@ -127,7 +142,7 @@ class OfflineContractRegistry {
   };
 
   static bool mayAutoReplay(String operationType) =>
-      operationType == 'appointment.create' &&
+      const {'appointment.create', 'feedback.product.preset', 'chat.message.preset'}.contains(operationType) &&
       policies[operationType]?.canAutoReplay == true &&
       policies[operationType]?.backendSupportsStableIdempotency == true;
 

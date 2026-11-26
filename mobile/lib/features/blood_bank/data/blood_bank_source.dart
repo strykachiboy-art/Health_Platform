@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:clinic_system_pro/core/networking/api_client.dart';
+import 'package:clinic_system_pro/core/sync/run2_blood_bank_fence.dart';
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
 import 'package:clinic_system_pro/features/auth/data/auth_session_coordinator.dart';
 import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.dart';
@@ -16,19 +17,22 @@ class BbUnknownOutcome implements Exception {
   const BbUnknownOutcome();
 }
 
-/// Router-lifetime, memory-only transport. No retry, queue, cache, token store,
-/// or automatic disposition; an uncertain mutation locks this clinic/user scope.
+/// Online-only transport. Production uses a persistent pre-send fence in the
+/// existing encrypted store; tests may inject an isolated source without it.
+/// No retry, cached clinical data, or automatic no-effect disposition.
 class BloodBankSource {
   BloodBankSource({
     required this.api,
     required this.loadSession,
     required this.guard,
     this.admissions,
+    this.fence,
   });
   final ApiClient api;
   final Future<AuthSessionState> Function() loadSession;
   final SessionNavigationGuard guard;
   final PatientAdmissionRemoteDataSource? admissions;
+  final Run2BloodBankFence? fence;
   final Set<String> _uncertain = {};
   final Set<String> _inFlight = {};
   final Set<String> _consumedScans = {};
@@ -58,7 +62,20 @@ class BloodBankSource {
   Future<BloodBankSession> open() async {
     final rev = guard.revision;
     final session = BloodBankSession._(this, await _auth(rev), rev);
-    if (session.role != 'patient') await session.read(BbAction.offline);
+    if (session.role != 'patient') {
+      await session.read(BbAction.offline);
+      final durable = fence;
+      if (durable != null) {
+        try {
+          if (await durable.blocked(session._auth)) {
+            _uncertain.add(session._key);
+          }
+        } on Object {
+          _uncertain.add(session._key);
+        }
+      }
+      await session.check();
+    }
     return session;
   }
 }
@@ -133,13 +150,21 @@ class BloodBankSession {
       throw const BbUnknownOutcome();
     }
     try {
+      final durable = source.fence;
+      final fenceId = durable == null ? null : await durable.begin(_auth);
+      await check();
       final raw = await source.api.postJson(
         path,
         body: body,
         bearerToken: _auth.accessToken,
       );
       await check();
-      return parse(raw);
+      final value = parse(raw);
+      if (durable != null && fenceId != null) {
+        await durable.complete(_auth, fenceId);
+      }
+      await check();
+      return value;
     } on Object {
       source._uncertain.add(_key);
       throw const BbUnknownOutcome();

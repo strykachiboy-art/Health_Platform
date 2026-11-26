@@ -238,6 +238,12 @@ class _PendingWorkCenterScreenState extends State<PendingWorkCenterScreen> {
               'Medication, emergency, billing, chat and feedback actions remain outside automatic offline replay.',
               key: ValueKey('p25-no-broad-replay'),
             ),
+            const Text(
+              'Older unbound local work is retained for authorized review, '
+              'not automatically resent or assigned to a hospital. If status '
+              'is unavailable, do not recreate an uncertain appointment.',
+              key: ValueKey('run2-legacy-scope-notice'),
+            ),
             if (!allowed)
               const Text(
                 'Pending work is hidden until a valid clinic session is restored.',

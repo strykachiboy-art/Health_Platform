@@ -3,6 +3,7 @@ import '../networking/api_exception.dart';
 import '../../features/auth/data/models/auth_token_response.dart';
 import 'operation_lifecycle.dart';
 import 'operation_payload_crypto.dart';
+import 'tenant_operation_scope.dart';
 import 'operation_queue_store.dart';
 import '../storage/app_database.dart';
 
@@ -237,10 +238,29 @@ class OperationReplayWorker {
       );
     }
 
-    final context = OperationPayloadContext(
-      userId: session.userId.toString(),
-      clinicContextId: clinicId.toString(),
-    );
+    final context = TenantOperationScope.appointmentContext(session);
+    if (context == null) {
+      return OperationReplayRunResult(
+        items: results,
+        blockedReason: 'tenantContextUnavailable',
+      );
+    }
+    try {
+      if (await _queueStore.hasUnresolvedLegacyScope(
+        userId: session.userId,
+        clinicId: clinicId,
+      )) {
+        return OperationReplayRunResult(
+          items: results,
+          blockedReason: 'legacyScopeRequiresReview',
+        );
+      }
+    } on Object {
+      return OperationReplayRunResult(
+        items: results,
+        blockedReason: 'legacyScopeCheckUnavailable',
+      );
+    }
 
     final now = _clock().toUtc();
 
@@ -359,7 +379,10 @@ class OperationReplayWorker {
         sendSession = null;
       }
 
-      if (!_sessionMatchesContext(sendSession, context)) {
+      if (!_sessionMatchesContext(sendSession, context) ||
+          sendSession?.role != session.role ||
+          sendSession?.accessToken != session.accessToken ||
+          sendSession?.refreshToken != session.refreshToken) {
         final unsent = await _queueStore.recordFailure(
           operationId: entry.operationId,
           failure: OperationAttemptFailure.confirmedTransientNoEffect,
@@ -518,10 +541,13 @@ class OperationReplayWorker {
         );
       }
 
-      final context = OperationPayloadContext(
-        userId: session.userId.toString(),
-        clinicContextId: clinicId.toString(),
-      );
+      final context = TenantOperationScope.appointmentContext(session);
+      if (context == null) {
+        return result(
+          OperationReconciliationDisposition.clinicContextUnavailable,
+          category: 'tenantContextUnavailable',
+        );
+      }
 
       final entry = await _findForReconciliation(id, result);
       if (entry is _OperationReconciliationStop) {
@@ -578,7 +604,10 @@ class OperationReplayWorker {
         sendSession = null;
       }
 
-      if (!_sessionMatchesContext(sendSession, context)) {
+      if (!_sessionMatchesContext(sendSession, context) ||
+          sendSession?.role != session.role ||
+          sendSession?.accessToken != session.accessToken ||
+          sendSession?.refreshToken != session.refreshToken) {
         return result(
           OperationReconciliationDisposition.sessionChangedBeforeSend,
           category: 'sessionChangedBeforeSend',
@@ -758,11 +787,7 @@ class OperationReplayWorker {
     AuthTokenResponse? session,
     OperationPayloadContext context,
   ) {
-    return session != null &&
-        session.userId > 0 &&
-        session.accessToken.trim().isNotEmpty &&
-        session.userId.toString() == context.userId &&
-        session.clinicContextId?.toString() == context.clinicContextId;
+    return TenantOperationScope.matchesAppointment(session, context);
   }
 
   static OperationAttemptFailure _classifyApiFailure(ApiException exception) {

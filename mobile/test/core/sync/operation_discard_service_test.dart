@@ -17,12 +17,13 @@ const _session = AuthTokenResponse(
   userId: 7,
   role: 'DOCTOR',
   clinicContextId: 3,
+  tenantId: '12345678-1234-1234-1234-123456789abc',
 );
 
 OperationPayloadContext _context({
   String userId = '7',
   String clinicId = '3',
-}) => OperationPayloadContext(userId: userId, clinicContextId: clinicId);
+}) => OperationPayloadContext(userId: userId, clinicContextId: 'tenant-v1:12345678-1234-1234-1234-123456789abc:$clinicId');
 
 class _MemorySecureStorage implements SecureKeyValueStorage {
   final Map<String, String> values = <String, String>{};

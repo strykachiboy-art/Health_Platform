@@ -11,7 +11,7 @@ import 'package:clinic_system_pro/features/auth/data/models/auth_token_response.
 
 final _now = DateTime.utc(2026, 10, 15, 10);
 
-final _context = OperationPayloadContext(userId: '7', clinicContextId: '3');
+final _context = OperationPayloadContext(userId: '7', clinicContextId: 'tenant-v1:12345678-1234-1234-1234-123456789abc:3');
 
 const _session = AuthTokenResponse(
   accessToken: 'a.b.c',
@@ -19,6 +19,7 @@ const _session = AuthTokenResponse(
   userId: 7,
   role: 'RECEPTIONIST',
   clinicContextId: 3,
+  tenantId: '12345678-1234-1234-1234-123456789abc',
 );
 
 const _appointmentPayload = <String, dynamic>{
@@ -734,6 +735,7 @@ void main() {
       userId: 8,
       role: 'RECEPTIONIST',
       clinicContextId: 3,
+      tenantId: '12345678-1234-1234-1234-123456789abc',
     );
 
     var calls = 0;

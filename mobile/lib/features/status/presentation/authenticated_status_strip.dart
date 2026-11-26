@@ -144,6 +144,7 @@ class _AuthenticatedStatusStripState extends State<AuthenticatedStatusStrip>
       final counts = await widget.loadSyncCounts(
         userId: session.userId,
         clinicContextId: clinicId,
+        tenantId: session.tenantId,
       );
       if (!_stillCurrent(generation, revision)) return;
       // The guard revision alone does not detect all secure-store changes.
@@ -155,6 +156,7 @@ class _AuthenticatedStatusStripState extends State<AuthenticatedStatusStrip>
           current == null ||
           current.userId != session.userId ||
           current.clinicContextId != clinicId ||
+          current.tenantId != session.tenantId ||
           current.accessToken != session.accessToken ||
           current.refreshToken != session.refreshToken ||
           current.role != session.role) {

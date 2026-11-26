@@ -255,6 +255,20 @@ class OperationQueueStore {
           return OperationQueueEnqueueResult.payloadAttached;
         }
 
+        if (const {'feedback.product.preset', 'chat.message.preset'}.contains(identity.operationType)) {
+          if (!context.clinicContextId.startsWith('tenant-v1:') || !context.clinicContextId.contains(':role:')) {
+            return OperationQueueEnqueueResult.contextConflict;
+          }
+          final unresolved = await (_database.select(table)..where((row) =>
+              row.ownerUserId.equals(context.userId) &
+              row.clinicContextId.equals(context.clinicContextId) &
+              row.operationType.equals(identity.operationType) &
+              row.lifecycleState.isNotIn(const ['acknowledged', 'rejected', 'cancelled']))
+              ..limit(1)).get();
+          if (unresolved.isNotEmpty) {
+            return OperationQueueEnqueueResult.operationIdConflict;
+          }
+        }
         final existingByKey =
             await (_database.select(table)..where(
                   (row) => row.idempotencyKey.equals(identity.idempotencyKey),
@@ -346,6 +360,145 @@ class OperationQueueStore {
       ..limit(limit, offset: offset);
 
     return query.get();
+  }
+
+  /// Old numeric clinic scopes cannot be rebound to a tenant by the client.
+  /// Hold new work for this legacy owner/clinic pair while unresolved records
+  /// exist. Do not decrypt, return identities, reassign or delete these rows.
+  Future<bool> hasUnresolvedLegacyScope({
+    required int userId,
+    required int clinicId,
+  }) async {
+    if (userId <= 0 || clinicId <= 0) {
+      throw ArgumentError('Invalid legacy scope.');
+    }
+    final table = _database.operationQueueEntry;
+    final rows = await (_database.select(table)
+          ..where((row) =>
+              row.ownerUserId.equals(userId.toString()) &
+              row.clinicContextId.equals(clinicId.toString()) &
+              row.lifecycleState.isNotIn(<String>[
+                OperationLifecycleState.acknowledged.name,
+                OperationLifecycleState.rejected.name,
+                OperationLifecycleState.cancelled.name,
+              ]))
+          ..limit(1))
+        .get();
+    return rows.isNotEmpty;
+  }
+
+  /// Local-only reminders and observations are not delivered by any worker.
+  /// Delete only an exact scoped record that has never entered delivery.
+  Future<void> removeRun2LocalOnly({
+    required String operationId,
+    required OperationPayloadContext context,
+    required String type,
+  }) async {
+    if (!context.clinicContextId.startsWith('tenant-v1:') ||
+        !context.clinicContextId.contains(':role:') ||
+        !const {'local.workflow.reminder', 'local.backend.health', 'local.module.snapshot', 'local.module.draft'}.contains(type)) {
+      throw StateError('Local-only removal is not authorized.');
+    }
+    await _removeRun2Undelivered(operationId, context, type);
+  }
+
+  /// Internal completion of a pre-send fence after a validated live response.
+  /// This is not a no-effect disposition or a user-facing discard route.
+  Future<void> completeRun2BloodBankFence({
+    required String operationId,
+    required OperationPayloadContext context,
+  }) async {
+    if (!context.clinicContextId.startsWith('tenant-v1:') ||
+        !context.clinicContextId.endsWith(':blood-bank-fence') ||
+        !operationId.startsWith('bb_fence_')) {
+      throw StateError('Invalid Blood Bank fence scope.');
+    }
+    await _removeRun2Undelivered(operationId, context, 'local.blood_bank.fence');
+  }
+
+  Future<void> _removeRun2Undelivered(
+    String id, OperationPayloadContext context, String type,
+  ) async {
+    await _withContextMutationLock(context, () async {
+      await _database.transaction(() async {
+        final entry = await findByOperationId(id);
+        if (entry == null || entry.operationType != type ||
+            entry.ownerUserId != context.userId ||
+            entry.clinicContextId != context.clinicContextId ||
+            entry.lifecycleState != OperationLifecycleState.queued.name ||
+            entry.attemptsCompleted != 0) {
+          throw StateError('Local record unavailable or not removable.');
+        }
+        await (_database.delete(_database.operationQueuePayload)
+          ..where((row) => row.operationId.equals(id))).go();
+        final count = await (_database.delete(_database.operationQueueEntry)
+          ..where((row) => row.operationId.equals(id) &
+              row.ownerUserId.equals(context.userId) &
+              row.clinicContextId.equals(context.clinicContextId) &
+              row.operationType.equals(type) &
+              row.lifecycleState.equals(OperationLifecycleState.queued.name) &
+              row.attemptsCompleted.equals(0))).go();
+        if (count != 1) {
+          throw StateError('Local record changed during removal.');
+        }
+      });
+    });
+  }
+
+  /// Holds an expired/denied preset without deleting it, resetting its key,
+  /// or pretending that an earlier attempt had no server effect. No network.
+  Future<void> holdRun2Preset({
+    required String operationId,
+    required OperationPayloadContext context,
+    required String type,
+    required DateTime now,
+  }) async {
+    if (!context.clinicContextId.startsWith('tenant-v1:') ||
+        !context.clinicContextId.contains(':role:') ||
+        !const {'feedback.product.preset', 'chat.message.preset'}.contains(type)) {
+      throw StateError('Invalid preset scope.');
+    }
+    final count = await (_database.update(_database.operationQueueEntry)
+      ..where((row) => row.operationId.equals(operationId) &
+          row.ownerUserId.equals(context.userId) &
+          row.clinicContextId.equals(context.clinicContextId) &
+          row.operationType.equals(type) &
+          row.lifecycleState.isIn(<String>[
+            OperationLifecycleState.queued.name,
+            OperationLifecycleState.retryScheduled.name,
+          ]))).write(OperationQueueEntryCompanion(
+            lifecycleState: Value(OperationLifecycleState.reconciliationRequired.name),
+            lastFailureCategory: Value(OperationAttemptFailure.outcomeUnknown.name),
+            nextAttemptAt: const Value<DateTime?>(null),
+            updatedAt: Value(now.toUtc()),
+          ));
+    if (count != 1) {
+      throw StateError('Preset state changed before hold.');
+    }
+  }
+
+  /// Remove only expired never-delivered module snapshots/drafts. Does not
+  /// touch legacy work, clinical uncertainty fences, or any replay identity.
+  Future<int> purgeRun2ExpiredModuleRecords({required DateTime now}) async {
+    final cutoff = now.toUtc().subtract(const Duration(hours: 24));
+    return _database.transaction(() async {
+      final table = _database.operationQueueEntry;
+      final eligible = (table.operationType.isIn(const ['local.module.snapshot', 'local.module.draft']) &
+          table.lifecycleState.equals(OperationLifecycleState.queued.name) &
+          table.attemptsCompleted.equals(0) &
+          table.createdAt.isSmallerOrEqualValue(cutoff) &
+          table.ownerUserId.isNotNull() &
+          table.clinicContextId.like('tenant-v1:%:role:%'));
+      final expired = await (_database.select(table)..where((_) => eligible)).get();
+      if (expired.isEmpty) return 0;
+      final ids = expired.map((e) => e.operationId).toList(growable: false);
+      await (_database.delete(_database.operationQueuePayload)
+        ..where((r) => r.operationId.isIn(ids))).go();
+      final count = await (_database.delete(table)
+        ..where((r) => r.operationId.isIn(ids) & eligible)).go();
+      if (count != ids.length) throw StateError('Local expiry state changed.');
+      return count;
+    });
   }
 
   /// Returns one operation by its stable ID, or null when it is absent.

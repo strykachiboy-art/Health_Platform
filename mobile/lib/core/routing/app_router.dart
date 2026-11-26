@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/features/blood_bank/data/blood_bank_source.dart';
+import 'package:clinic_system_pro/core/sync/run2_blood_bank_fence.dart';
 import 'package:clinic_system_pro/features/blood_bank/presentation/blood_bank_workspace.dart';
 import 'package:clinic_system_pro/features/problems/data/problem_source.dart';
 import 'package:clinic_system_pro/features/clinical_timeline/data/timeline_source.dart';
@@ -154,6 +155,7 @@ GoRouter createAppRouter({
   ClinicalOrdersRemoteDataSource? clinicalOrdersDataSource,
   AppointmentCreateSyncPageLoader? appointmentCreateSyncPageLoader,
   PendingWorkAccess? pendingWorkSource,
+  Run2BloodBankFence? bloodBankFence,
   PatientRemoteDataSource? patientDataSource,
   PatientAllergyRemoteDataSource? patientAllergyDataSource,
   PatientVitalsRemoteDataSource? patientVitalsDataSource,
@@ -250,7 +252,8 @@ GoRouter createAppRouter({
   final bbSource = bbReader != null && bbGuard != null &&
           identical(bbReader.sessionNavigationGuard, bbGuard)
       ? BloodBankSource(api: bbReader.apiClient, loadSession: bbReader.loadSession,
-          guard: bbGuard, admissions: patientAdmissionDataSource)
+          guard: bbGuard, admissions: patientAdmissionDataSource,
+          fence: bloodBankFence)
       : null;
   Widget bbWorkspace(GoRouterState state) {
     final source = bbSource;

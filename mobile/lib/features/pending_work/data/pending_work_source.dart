@@ -103,6 +103,7 @@ class PendingWorkSource implements PendingWorkAccess {
       guard.revision == revision &&
       a.userId == b.userId &&
       a.clinicContextId == b.clinicContextId &&
+      a.tenantId == b.tenantId &&
       a.role == b.role &&
       a.accessToken == b.accessToken &&
       a.refreshToken == b.refreshToken;

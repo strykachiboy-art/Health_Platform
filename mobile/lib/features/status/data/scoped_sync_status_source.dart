@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import 'package:clinic_system_pro/core/storage/app_database.dart';
+import 'package:clinic_system_pro/core/sync/operation_payload_crypto.dart';
 
 /// Scoped queue metadata only. No operation body, token, or patient record is
 /// retrieved and a count never implies that an operation reached the server.
@@ -19,6 +20,7 @@ class ScopedSyncCounts {
 typedef ScopedSyncCountsLoader = Future<ScopedSyncCounts> Function({
   required int userId,
   required int clinicContextId,
+  required String? tenantId,
 });
 
 /// Reads the existing local Drift table without creating a new queue or
@@ -36,14 +38,26 @@ class ScopedSyncStatusSource {
       throw ArgumentError('A positive user and clinic context are required.');
     }
 
+    return loadForContext(OperationPayloadContext(
+      userId: userId.toString(),
+      clinicContextId: clinicContextId.toString(),
+    ));
+  }
+
+  /// Production composition passes the tenant-bound local scope.
+  Future<ScopedSyncCounts> loadForContext(
+    OperationPayloadContext context, {
+    Set<String>? operationTypes,
+  }) async {
     final table = database.operationQueueEntry;
     final tally = table.operationId.count();
     final rows =
         await (database.selectOnly(table)
               ..addColumns([table.lifecycleState, tally])
               ..where(
-                table.ownerUserId.equals(userId.toString()) &
-                    table.clinicContextId.equals(clinicContextId.toString()),
+                table.ownerUserId.equals(context.userId) &
+                    table.clinicContextId.equals(context.clinicContextId) &
+                    (operationTypes == null ? const Constant(true) : table.operationType.isIn(operationTypes)),
               )
               ..groupBy([table.lifecycleState]))
             .get();
