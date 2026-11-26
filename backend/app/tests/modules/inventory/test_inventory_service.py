@@ -1482,7 +1482,7 @@ def test_create_transfer_rejects_insufficient_stock(monkeypatch):
     monkeypatch.setattr(
         service,
         "_get_active_clinic",
-        Mock(return_value=SimpleNamespace(id=10)),
+        Mock(side_effect=lambda clinic_id: SimpleNamespace(id=clinic_id, organization_id="same-test-owner")),
     )
 
     monkeypatch.setattr(
@@ -1508,6 +1508,10 @@ def test_create_transfer_rejects_insufficient_stock(monkeypatch):
 
 
 def test_approve_transfer_rejects_non_pending(monkeypatch):
+    monkeypatch.setattr(
+        service.db.session, "get",
+        Mock(side_effect=lambda model, clinic_id: SimpleNamespace(id=clinic_id, organization_id="same-test-owner")),
+    )
     monkeypatch.setattr(
         service,
         "_get_locked_transfer",
@@ -1535,6 +1539,10 @@ def test_approve_transfer_rejects_non_pending(monkeypatch):
 def test_approve_transfer_rejects_requester_as_approver(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        service.db.session, "get",
+        Mock(side_effect=lambda model, clinic_id: SimpleNamespace(id=clinic_id, organization_id="same-test-owner")),
+    )
     monkeypatch.setattr(
         service,
         "_get_locked_transfer",
@@ -1566,6 +1574,10 @@ def test_approve_transfer_rejects_requester_as_approver(
 
 
 def test_cancel_transfer_rejects_completed(monkeypatch):
+    monkeypatch.setattr(
+        service.db.session, "get",
+        Mock(side_effect=lambda model, clinic_id: SimpleNamespace(id=clinic_id, organization_id="same-test-owner")),
+    )
     monkeypatch.setattr(
         service,
         "_get_locked_transfer",

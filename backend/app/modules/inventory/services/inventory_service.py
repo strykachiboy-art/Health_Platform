@@ -222,6 +222,23 @@ def _get_active_clinic(
     return clinic
 
 
+def _ensure_same_organization(source: Clinic | None, destination: Clinic | None) -> None:
+    if (
+        source is None
+        or destination is None
+        or source.organization_id is None
+        or source.organization_id != destination.organization_id
+    ):
+        raise ValidationError("Inventory transfers require clinics in the same organization")
+
+
+def _ensure_transfer_organization(transfer: InventoryTransfer) -> None:
+    _ensure_same_organization(
+        db.session.get(Clinic, transfer.source_clinic_id),
+        db.session.get(Clinic, transfer.destination_clinic_id),
+    )
+
+
 def _ensure_same_clinic(
     *,
     expected_clinic_id: int,
@@ -458,12 +475,10 @@ def _ensure_supplier_mutation_clinic(
     supplier: InventorySupplier,
     clinic_id: int | None,
 ) -> int:
-    if clinic_id is None:
-        if supplier.clinic_id is None:
-            raise ValidationError(
-                "clinic_id is required when mutating a global supplier"
-            )
+    if supplier.clinic_id is None:
+        raise ValidationError("Shared inventory suppliers are read-only")
 
+    if clinic_id is None:
         clinic_id = supplier.clinic_id
 
     clinic_id = _validate_positive_id(
@@ -2052,6 +2067,12 @@ def record_stock_movement(
     reference_id: int | None = None,
     clinic_id: int | None = None,
 ) -> StockMovement:
+    # Transfer ledger entries are generated only by complete_inventory_transfer.
+    if movement_type in (StockMovementType.TRANSFER_IN, StockMovementType.TRANSFER_OUT):
+        raise ValidationError("Use the inventory transfer workflow for transfer movements")
+    if isinstance(reference_type, str) and reference_type.strip().lower() == "inventory_transfer":
+        raise ValidationError("Inventory transfer references are reserved for the transfer workflow")
+
     item = _get_locked_active_item(
         item_id
     )
@@ -2259,6 +2280,7 @@ def get_inventory_transfer(
                 f"is not associated with clinic {clinic_id}"
             )
 
+    _ensure_transfer_organization(transfer)
     return transfer
 
 
@@ -2283,9 +2305,14 @@ def list_inventory_transfers(
         clinic_id
     )
 
+    # Filter before pagination, including historical cross-tenant records.
+    organization = select(Clinic.organization_id).where(Clinic.id == clinic_id).correlate(None).scalar_subquery()
+    allowed_clinics = select(Clinic.id).where(Clinic.organization_id == organization)
     statement = select(
         InventoryTransfer
     ).where(
+        InventoryTransfer.source_clinic_id.in_(allowed_clinics),
+        InventoryTransfer.destination_clinic_id.in_(allowed_clinics),
         or_(
             InventoryTransfer.source_clinic_id
             == clinic_id,
@@ -2361,9 +2388,10 @@ def create_inventory_transfer(
         source_clinic_id
     )
 
-    _get_active_clinic(
+    destination_clinic = _get_active_clinic(
         destination_clinic_id
     )
+    _ensure_same_organization(source_clinic, destination_clinic)
 
     item = _get_locked_active_item(
         item_id
@@ -2470,6 +2498,7 @@ def approve_inventory_transfer(
     transfer = _get_locked_transfer(
         transfer_id
     )
+    _ensure_transfer_organization(transfer)
 
     _get_active_clinic(
         transfer.source_clinic_id
@@ -2706,6 +2735,7 @@ def complete_inventory_transfer(
     transfer = _get_locked_transfer(
         transfer_id
     )
+    _ensure_transfer_organization(transfer)
 
     _get_active_clinic(
         transfer.source_clinic_id
@@ -2957,6 +2987,7 @@ def cancel_inventory_transfer(
     transfer = _get_locked_transfer(
         transfer_id
     )
+    _ensure_transfer_organization(transfer)
 
     _get_active_clinic(
         transfer.source_clinic_id
