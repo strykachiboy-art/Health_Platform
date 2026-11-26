@@ -177,6 +177,10 @@ void main() {
         180,
         scrollable: find.byType(Scrollable).last,
       );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('wd04-module-radiology')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('wd04-module-radiology')));
       await tester.pumpAndSettle();
       expect(opened, <String>['/radiology']);

@@ -83,6 +83,58 @@ DeviceManagementRemoteDataSource p24eSource(
 }
 
 void main() {
+  for (final action in ['detail', 'rename', 'activate', 'foreign', 'stale', 'uncertain', 'invalidated']) {
+    test('remaining device contract $action', () async {
+      final guard = SessionNavigationGuard()..markSessionAvailable();
+      addTearDown(guard.dispose);
+      final device = ManagedDevice.fromJson(p24eDevice(active: false), expectedUserId: 41);
+      var gets = 0;
+      var writes = 0;
+      final client = MockClient((request) async {
+        expect(request.headers['Authorization'], 'Bearer p24e-access');
+        if (request.method == 'GET') {
+          gets++;
+          expect(request.url.path, '/api/v1/users/devices/7');
+          if (action == 'invalidated') guard.invalidate();
+          return http.Response(jsonEncode({'success': true, 'data': p24eDevice(userId: action == 'foreign' ? 999 : 41, active: action == 'stale')}), 200);
+        }
+        writes++;
+        final result = p24eDevice(active: action == 'activate');
+        if (action == 'activate') {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/api/v1/users/devices/7/activate');
+          expect(jsonDecode(request.body), <String, dynamic>{});
+        } else {
+          expect(request.method, 'PATCH');
+          expect(request.url.path, '/api/v1/users/devices/7');
+          expect(jsonDecode(request.body), {'device_name': 'Renamed'});
+          result['device_name'] = action == 'uncertain' ? 'Wrong' : 'Renamed';
+        }
+        return http.Response(jsonEncode({'success': true, 'data': result}), 200);
+      });
+      addTearDown(client.close);
+      final source = p24eSource(client, guard, P24EConnectivity(DeviceNetworkStatus.connected), session: () async => p24eReady(role: 'doctor'));
+      final revision = guard.revision;
+      switch (action) {
+        case 'detail':
+          expect((await source.detail(device)).id, 7);
+        case 'rename':
+          expect((await source.rename(device, 'Renamed', expectedRevision: revision)).name, 'Renamed');
+        case 'activate':
+          expect((await source.activate(device, expectedRevision: revision)).active, isTrue);
+        case 'foreign':
+        case 'stale':
+          await expectLater(source.rename(device, 'Renamed', expectedRevision: revision), throwsFormatException);
+        case 'invalidated':
+          await expectLater(source.rename(device, 'Renamed', expectedRevision: revision), throwsA(isA<DeviceRegistrationSessionUnavailable>()));
+        case 'uncertain':
+          await expectLater(source.rename(device, 'Renamed', expectedRevision: revision), throwsA(isA<DeviceManagementOutcomeUnknown>()));
+      }
+      expect(gets, 1);
+      expect(writes, ['rename', 'activate', 'uncertain'].contains(action) ? 1 : 0);
+    });
+  }
+
   test('GET keeps owner devices only, drops push identifier', () async {
     var reads = 0;
     final client = MockClient((request) async {

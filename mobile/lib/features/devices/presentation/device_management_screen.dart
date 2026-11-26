@@ -148,6 +148,54 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen> {
     }
   }
 
+  Future<void> _details(ManagedDevice device) async {
+    if (_busy || _uncertain) return;
+    final g = ++_generation;
+    setState(() { _busy = true; _status = null; });
+    try {
+      final record = await widget.source.detail(device);
+      if (!mounted || g != _generation) return;
+      setState(() {
+        _busy = false;
+        _status = 'Device #${record.id}: ${record.name ?? "Unnamed device"} · ${record.platform} · ${record.active ? "Active" : "Inactive"} · ${_lastSeen(record)}';
+      });
+    } on Object catch (e) {
+      if (mounted && g == _generation) setState(() { _busy = false; _status = _safeError(e); });
+    }
+  }
+
+  Future<void> _editDevice(ManagedDevice device, {required bool activate}) async {
+    if (_busy || _uncertain) return;
+    final revision = widget.source.registrationScope.sessionNavigationGuard.revision;
+    final g = _generation;
+    var name = device.name ?? '';
+    final accepted = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+      title: Text(activate ? 'Reactivate push delivery?' : 'Rename device?'),
+      content: activate ? const Text('Only confirm for a device you still control. This can resume push delivery; it does not create a login session.') : TextFormField(initialValue: name, maxLength: 100, onChanged: (v) => name = v, decoration: const InputDecoration(labelText: 'Device name')),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Confirm'))],
+    ));
+    if (!mounted || accepted != true || g != _generation || _busy || _uncertain ||
+        widget.source.registrationScope.sessionNavigationGuard.revision != revision) {
+      return;
+    }
+    final generation = ++_generation;
+    setState(() { _busy = true; _status = null; });
+    try {
+      if (activate) {
+        await widget.source.activate(device, expectedRevision: revision);
+      } else {
+        await widget.source.rename(device, name, expectedRevision: revision);
+      }
+      if (!mounted || generation != _generation) return;
+      setState(() { _busy = false; });
+      await _load(page: _page?.page ?? 1);
+    } on Object catch (error) {
+      if (!mounted || generation != _generation) return;
+      setState(() { _busy = false; _uncertain = error is DeviceManagementOutcomeUnknown; _status = _safeError(error); });
+    }
+  }
+
   String _lastSeen(ManagedDevice device) {
     final instant = device.lastSeenAt;
     if (instant == null) return 'Last seen: not recorded';
@@ -226,6 +274,22 @@ class _DeviceManagementScreenState extends State<DeviceManagementScreen> {
                         Wrap(
                           spacing: 8,
                           children: [
+                            OutlinedButton(
+                              key: ValueKey('device-detail-${device.id}'),
+                              onPressed: _busy || _uncertain || !activeGuard ? null : () => _details(device),
+                              child: const Text('Details'),
+                            ),
+                            OutlinedButton(
+                              key: ValueKey('device-rename-${device.id}'),
+                              onPressed: _busy || _uncertain || !activeGuard ? null : () => _editDevice(device, activate: false),
+                              child: const Text('Rename'),
+                            ),
+                            if (!device.active)
+                              OutlinedButton(
+                                key: ValueKey('device-activate-${device.id}'),
+                                onPressed: _busy || _uncertain || !activeGuard ? null : () => _editDevice(device, activate: true),
+                                child: const Text('Reactivate'),
+                              ),
                             OutlinedButton(
                               key: ValueKey('p24e-deactivate-${device.id}'),
                               onPressed:

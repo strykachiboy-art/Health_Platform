@@ -50,6 +50,66 @@ class DeviceManagementRemoteDataSource {
     );
   }
 
+  Future<ManagedDevice> _detailFor(ManagedDevice device, DeviceRegistrationSession before) async {
+    if (device.id <= 0 || device.userId != before.tokenSession.userId) {
+      throw const DeviceRegistrationSessionUnavailable();
+    }
+    await _online();
+    await registrationScope.assertSameSession(before);
+    final raw = await registrationScope.apiClient.getJson(
+      'api/v1/users/devices/${device.id}', bearerToken: before.tokenSession.accessToken,
+    );
+    await registrationScope.assertSameSession(before);
+    return _deviceReceipt(raw, before, device.id);
+  }
+
+  static ManagedDevice _deviceReceipt(Map<String, dynamic> raw, DeviceRegistrationSession before, int id) {
+    final data = raw['data'];
+    if (raw['success'] != true || data is! Map<String, dynamic>) throw const FormatException('Invalid device receipt.');
+    final result = ManagedDevice.fromJson(data, expectedUserId: before.tokenSession.userId);
+    if (result.id != id) throw const FormatException('Wrong device receipt.');
+    return result;
+  }
+
+  Future<ManagedDevice> detail(ManagedDevice device) async {
+    final before = await registrationScope.requireSession();
+    return _detailFor(device, before);
+  }
+
+  Future<ManagedDevice> rename(ManagedDevice device, String name, {required int expectedRevision}) async {
+    final cleaned = name.trim();
+    if (cleaned.isEmpty || cleaned.length > 100) throw const FormatException('Invalid device name.');
+    return _updateDevice(device, expectedRevision, name: cleaned);
+  }
+
+  Future<ManagedDevice> activate(ManagedDevice device, {required int expectedRevision}) =>
+      _updateDevice(device, expectedRevision);
+
+  Future<ManagedDevice> _updateDevice(ManagedDevice device, int expectedRevision, {String? name}) async {
+    final before = await registrationScope.requireSession(expectedRevision: expectedRevision);
+    final fresh = await _detailFor(device, before);
+    if (fresh.active != device.active || fresh.name != device.name ||
+        fresh.platform != device.platform || (name == null && fresh.active)) {
+      throw const FormatException('Device record changed; refresh before confirming.');
+    }
+    await registrationScope.assertSameSession(before);
+    try {
+      final raw = name == null
+          ? await registrationScope.apiClient.postJson('api/v1/users/devices/${device.id}/activate', body: const <String, dynamic>{}, bearerToken: before.tokenSession.accessToken)
+          : await registrationScope.apiClient.patchJson('api/v1/users/devices/${device.id}', body: {'device_name': name}, bearerToken: before.tokenSession.accessToken);
+      await registrationScope.assertSameSession(before);
+      final receipt = _deviceReceipt(raw, before, device.id);
+      if (receipt.platform != fresh.platform ||
+          (name == null ? (!receipt.active || receipt.name != fresh.name) : (receipt.name != name || receipt.active != fresh.active))) {
+        throw const FormatException('Device change not confirmed.');
+      }
+      return receipt;
+    } on Object {
+      // Any dispatched request may have committed. The screen must refresh.
+      throw const DeviceManagementOutcomeUnknown();
+    }
+  }
+
   Future<void> deactivate(ManagedDevice device) =>
       _mutate(device, delete: false);
 

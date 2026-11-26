@@ -129,6 +129,17 @@ List<Wd04ClinicalWorkflowLink> wd04ClinicalWorkflowLinks({
   if (normalizedRole == 'doctor') {
     links.add(
       const Wd04ClinicalWorkflowLink(
+        id: 'consultation_templates',
+        title: 'Consultation templates',
+        path: '/consultations/templates',
+        description: 'List and create reusable documentation templates through the backend.',
+        icon: Icons.description_outlined,
+      ),
+    );
+  }
+  if (normalizedRole == 'doctor') {
+    links.add(
+      const Wd04ClinicalWorkflowLink(
         id: 'radiology',
         title: 'Radiology RIS planning',
         path: '/radiology',

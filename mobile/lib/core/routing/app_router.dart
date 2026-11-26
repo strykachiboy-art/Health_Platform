@@ -48,6 +48,8 @@ import 'package:clinic_system_pro/features/emergency_access/presentation/emergen
 import 'package:clinic_system_pro/features/emergency_access/presentation/emergency_access_review_screen.dart';
 import 'package:clinic_system_pro/features/appointments/data/appointment_remote_data_source.dart';
 import 'package:clinic_system_pro/features/consultations/data/consultation_remote_data_source.dart';
+import 'package:clinic_system_pro/features/consultations/data/consultation_templates.dart';
+import 'package:clinic_system_pro/features/consultations/presentation/consultation_templates_screen.dart';
 import 'package:clinic_system_pro/features/clinical_orders/data/clinical_orders_remote_data_source.dart';
 import 'package:clinic_system_pro/features/clinical_orders/presentation/clinical_orders_workspace_screen.dart';
 import 'package:clinic_system_pro/features/clinical_orders/presentation/imaging_procedure_orders_screen.dart';
@@ -1873,6 +1875,19 @@ GoRouter createAppRouter({
                   '/clinical-orders/patient/$id/blood-products',
                 ),
               );
+            },
+          ),
+          GoRoute(
+            path: '/consultations/templates',
+            name: 'consultation-templates',
+            builder: (context, state) {
+              final source = consultationDataSource;
+              final guard = sessionNavigationGuard;
+              if (source == null || guard == null || !guard.canAccessProtectedRoutes ||
+                  !identical(source.sessionNavigationGuard, guard)) {
+                return const Scaffold(body: Center(child: Text('Consultation templates unavailable.')));
+              }
+              return ConsultationTemplatesScreen(source: ConsultationTemplateSource(source, wd09cfOneShotGate));
             },
           ),
           GoRoute(
