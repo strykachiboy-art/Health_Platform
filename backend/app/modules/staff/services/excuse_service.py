@@ -22,6 +22,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.utils.decorators import transactional
+from app.modules.staff.services.staff_service import require_platform_review_context
 
 from app.modules.staff.models.excuse_model import Excuse
 from app.modules.staff.models.staff_model import (
@@ -434,10 +435,11 @@ def _validate_reviewer(
         "clinic_id",
     )
 
-    reviewer = _get_user(
-        reviewer_user_id,
-        clinic_id=clinic_id,
-    )
+    reviewer = _get_user(reviewer_user_id)
+    if reviewer.role is Role.SUPER_ADMIN:
+        require_platform_review_context(reviewer, clinic_id)
+    else:
+        reviewer = _get_user(reviewer_user_id, clinic_id=clinic_id)
 
     if not reviewer.is_active:
         raise ValidationError(
@@ -450,7 +452,7 @@ def _validate_reviewer(
         reviewer.role,
     )
 
-    if role != Role.ADMIN.value:
+    if role not in (Role.ADMIN.value, Role.SUPER_ADMIN.value):
         raise ValidationError(
             "Only administrators can review excuses"
         )
@@ -834,12 +836,15 @@ def approve_excuse(
             "status": old_status.value,
         },
         new_value={
+            **({"clinic_id": clinic_id} if reviewer.role is Role.SUPER_ADMIN else {}),
             "status": excuse.status.value,
             "reviewed_by_user_id": reviewer.id,
             "reviewed_at": now.isoformat(),
             "rejection_reason": None,
         },
         user_id=reviewer.id,
+        **({"clinic_id": clinic_id if reviewer.clinic_id in (None, clinic_id) else None}
+           if reviewer.role is Role.SUPER_ADMIN else {}),
     )
 
     return excuse
@@ -916,12 +921,15 @@ def reject_excuse(
             "rejection_reason": None,
         },
         new_value={
+            **({"clinic_id": clinic_id} if reviewer.role is Role.SUPER_ADMIN else {}),
             "status": excuse.status.value,
             "reviewed_by_user_id": reviewer.id,
             "reviewed_at": now.isoformat(),
             "rejection_reason": reason,
         },
         user_id=reviewer.id,
+        **({"clinic_id": clinic_id if reviewer.clinic_id in (None, clinic_id) else None}
+           if reviewer.role is Role.SUPER_ADMIN else {}),
     )
 
     return excuse

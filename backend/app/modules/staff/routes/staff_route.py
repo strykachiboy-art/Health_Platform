@@ -209,15 +209,10 @@ def _current_staff_id(
     return staff_id
 
 
-def _is_admin(user: User) -> bool:
-    role = user.role
-
-    if isinstance(role, Role):
-        return role == Role.ADMIN
-
-    return str(
-        getattr(role, "value", role)
-    ) == Role.ADMIN.value
+def _is_review_manager(user: User) -> bool:
+    # The route's verified administrative context still constrains every row.
+    role = getattr(user.role, "value", user.role)
+    return role in (Role.ADMIN.value, Role.SUPER_ADMIN.value)
 
 
 def _validate_json(schema):
@@ -393,8 +388,11 @@ def _serialize_staff(
 
 def _serialize_leave(
     leave,
+    *,
+    clinic_id: int | None = None,
 ) -> dict:
     return {
+        **({"clinic_id": clinic_id} if clinic_id is not None else {}),
         "id": leave.id,
         "staff_id": leave.staff_id,
         "leave_type": (
@@ -447,6 +445,8 @@ def _serialize_leave(
 
 def _serialize_payroll(
     record,
+    *,
+    clinic_id: int | None = None,
 ) -> dict:
     paid_at = getattr(
         record,
@@ -455,6 +455,7 @@ def _serialize_payroll(
     )
 
     return {
+        **({"clinic_id": clinic_id} if clinic_id is not None else {}),
         "id": record.id,
         "staff_id": record.staff_id,
         "pay_period_start": (
@@ -898,7 +899,7 @@ def request_leave_route():
                         "Leave request submitted successfully"
                     ),
                     "data": _serialize_leave(
-                        leave
+                        leave, clinic_id=clinic_id
                     ),
                 }
             ),
@@ -925,7 +926,7 @@ def list_leave_route():
 
         staff_id = payload.staff_id
 
-        if not _is_admin(user):
+        if not _is_review_manager(user):
             staff_id = _current_staff_id(user)
 
         result = list_leave_requests(
@@ -941,7 +942,7 @@ def list_leave_route():
                 {
                     "data": _serialize_paginated(
                         result,
-                        _serialize_leave,
+                        lambda row: _serialize_leave(row, clinic_id=clinic_id),
                     ),
                 }
             ),
@@ -966,7 +967,7 @@ def get_leave_route(
             clinic_id=clinic_id,
         )
 
-        if not _is_admin(user):
+        if not _is_review_manager(user):
             staff_id = _current_staff_id(user)
 
             if leave.staff_id != staff_id:
@@ -978,7 +979,7 @@ def get_leave_route(
             jsonify(
                 {
                     "data": _serialize_leave(
-                        leave
+                        leave, clinic_id=clinic_id
                     ),
                 }
             ),
@@ -1018,7 +1019,7 @@ def approve_leave_route(
                         "Leave request approved successfully"
                     ),
                     "data": _serialize_leave(
-                        leave
+                        leave, clinic_id=clinic_id
                     ),
                 }
             ),
@@ -1059,7 +1060,7 @@ def reject_leave_route(
                         "Leave request rejected successfully"
                     ),
                     "data": _serialize_leave(
-                        leave
+                        leave, clinic_id=clinic_id
                     ),
                 }
             ),
@@ -1128,7 +1129,7 @@ def list_excuses_route():
 
         staff_id = payload.staff_id
 
-        if not _is_admin(user):
+        if not _is_review_manager(user):
             staff_id = _current_staff_id(user)
 
         result = list_excuses(
@@ -1207,7 +1208,7 @@ def get_excuse_route(
             clinic_id=clinic_id,
         )
 
-        if not _is_admin(user):
+        if not _is_review_manager(user):
             staff_id = _current_staff_id(user)
 
             if excuse.staff_id != staff_id:
@@ -1334,7 +1335,7 @@ def create_payroll_route():
                         "Payroll record created successfully"
                     ),
                     "data": _serialize_payroll(
-                        record
+                        record, clinic_id=clinic_id
                     ),
                 }
             ),
@@ -1372,7 +1373,7 @@ def generate_payroll_route():
                         "Payroll generated successfully"
                     ),
                     "data": [
-                        _serialize_payroll(record)
+                        _serialize_payroll(record, clinic_id=clinic_id)
                         for record in records
                     ],
                 }
@@ -1416,7 +1417,7 @@ def list_payroll_route():
                 {
                     "data": _serialize_paginated(
                         result,
-                        _serialize_payroll,
+                        lambda row: _serialize_payroll(row, clinic_id=clinic_id),
                     ),
                 }
             ),
@@ -1444,7 +1445,7 @@ def get_payroll_route(
             jsonify(
                 {
                     "data": _serialize_payroll(
-                        record
+                        record, clinic_id=clinic_id
                     ),
                 }
             ),
@@ -1475,7 +1476,7 @@ def mark_payroll_paid_route(
                         "Payroll marked as paid successfully"
                     ),
                     "data": _serialize_payroll(
-                        record
+                        record, clinic_id=clinic_id
                     ),
                 }
             ),

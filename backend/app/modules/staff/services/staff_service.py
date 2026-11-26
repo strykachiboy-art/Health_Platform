@@ -619,6 +619,24 @@ def change_staff_status(
     return staff
 
 
+def require_platform_review_context(reviewer: User, clinic_id: int) -> None:
+    """Super Admin review is platform administration, not clinical membership.
+
+    A service caller cannot manufacture a selected clinic or reviewer ID.
+    Ordinary Admin service authorization remains unchanged.
+    """
+    from flask import g, has_request_context
+    from app.core.utils.decorators import get_administrative_clinic_id
+
+    if reviewer.role is not Role.SUPER_ADMIN or not reviewer.is_active:
+        raise ValidationError("Active super administrator required")
+    if not has_request_context():
+        raise ValidationError("Verified platform clinic context required")
+    selected = get_administrative_clinic_id(required=True)
+    if g.current_user_id != reviewer.id or selected != clinic_id:
+        raise ValidationError("Verified platform clinic context required")
+
+
 def _get_leave_request(
     leave_id: int,
     clinic_id: Optional[int] = None,
@@ -957,15 +975,15 @@ def approve_leave_request(
             f"'{leave.status.value}'"
         )
 
-    reviewer = _get_user(
-        user_id=reviewer_user_id,
-        clinic_id=clinic_id,
-    )
-
-    if reviewer.role != Role.ADMIN:
-        raise ValidationError(
-            "Only an administrator can approve leave requests"
-        )
+    reviewer = _get_user(user_id=reviewer_user_id)
+    if reviewer.role is Role.SUPER_ADMIN:
+        require_platform_review_context(reviewer, clinic_id)
+    else:
+        reviewer = _get_user(user_id=reviewer_user_id, clinic_id=clinic_id)
+        if reviewer.role != Role.ADMIN:
+            raise ValidationError(
+                "Only an administrator can approve leave requests"
+            )
 
     if not getattr(
         reviewer,
@@ -1017,10 +1035,13 @@ def approve_leave_request(
             f"staff {leave.staff_id}"
         ),
         user_id=reviewer.id,
+        **({"clinic_id": clinic_id if reviewer.clinic_id in (None, clinic_id) else None}
+           if reviewer.role is Role.SUPER_ADMIN else {}),
         old_value={
             "status": old_status,
         },
         new_value={
+            **({"clinic_id": clinic_id} if reviewer.role is Role.SUPER_ADMIN else {}),
             "status": leave.status.value,
             "reviewed_by_user_id": reviewer.id,
         },
@@ -1052,15 +1073,15 @@ def reject_leave_request(
             f"'{leave.status.value}'"
         )
 
-    reviewer = _get_user(
-        user_id=reviewer_user_id,
-        clinic_id=clinic_id,
-    )
-
-    if reviewer.role != Role.ADMIN:
-        raise ValidationError(
-            "Only an administrator can reject leave requests"
-        )
+    reviewer = _get_user(user_id=reviewer_user_id)
+    if reviewer.role is Role.SUPER_ADMIN:
+        require_platform_review_context(reviewer, clinic_id)
+    else:
+        reviewer = _get_user(user_id=reviewer_user_id, clinic_id=clinic_id)
+        if reviewer.role != Role.ADMIN:
+            raise ValidationError(
+                "Only an administrator can reject leave requests"
+            )
 
     if not getattr(
         reviewer,
@@ -1113,10 +1134,13 @@ def reject_leave_request(
             f"staff {leave.staff_id}"
         ),
         user_id=reviewer.id,
+        **({"clinic_id": clinic_id if reviewer.clinic_id in (None, clinic_id) else None}
+           if reviewer.role is Role.SUPER_ADMIN else {}),
         old_value={
             "status": old_status,
         },
         new_value={
+            **({"clinic_id": clinic_id} if reviewer.role is Role.SUPER_ADMIN else {}),
             "status": leave.status.value,
             "reviewed_by_user_id": reviewer.id,
             "reason": normalized_reason,
