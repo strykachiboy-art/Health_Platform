@@ -70,6 +70,13 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
         description: 'Super Admin clinic list and gated root creation',
         icon: Icons.local_hospital_outlined,
       ),
+      const Wd05AdministrationLink(
+        id: 'sa_workspace',
+        title: 'Super Admin workspace',
+        path: '/administration/sa-workspace',
+        description: 'Platform rules, observability and selected-clinic staff reviews',
+        icon: Icons.admin_panel_settings_outlined,
+      ),
     ];
     if (selected) {
       links.addAll(const <Wd05AdministrationLink>[

@@ -108,6 +108,7 @@ void main() {
       'audit',
       'users',
       'clinics',
+      'sa_workspace',
     ]);
     expect(_ids('super_admin', clinic: 7), <String>[
       'dashboard',
@@ -115,10 +116,13 @@ void main() {
       'audit',
       'users',
       'clinics',
+      'sa_workspace',
       'staff',
       'departments',
       'operations',
     ]);
+    expect(_ids('admin'), isNot(contains('sa_workspace')));
+    expect(_ids('doctor'), isNot(contains('sa_workspace')));
     expect(_ids('doctor'), isNot(contains('assets')));
     expect(_ids('doctor'), isNot(contains('inventory')));
     for (final link in wd05AdministrationLinks(
@@ -289,6 +293,7 @@ void main() {
         '/administration/audit-logs',
         '/administration/users',
         '/administration/clinics',
+        '/administration/sa-workspace',
       ]) {
         router.go(path);
         await tester.pumpAndSettle();

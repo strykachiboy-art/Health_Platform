@@ -20,6 +20,8 @@ import 'package:clinic_system_pro/features/profile/presentation/account_clinic_s
 import 'package:clinic_system_pro/features/home/presentation/authenticated_home_screen.dart';
 import 'package:clinic_system_pro/features/home/presentation/wd04_clinical_workflow_hub.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd05_administration_hub.dart';
+import 'package:clinic_system_pro/features/administration/data/sa_workspace_remote.dart';
+import 'package:clinic_system_pro/features/administration/presentation/sa_workspace_screen.dart';
 import 'package:clinic_system_pro/features/administration/data/wd13_clinic_management_remote_data_source.dart';
 import 'package:clinic_system_pro/features/administration/presentation/wd13_clinic_management_screen.dart';
 import 'package:clinic_system_pro/features/coordination/presentation/wd06_coordination_hub.dart';
@@ -1286,6 +1288,32 @@ GoRouter createAppRouter({
                   loadSession: dashboard.loadSession,
                   sessionNavigationGuard: guard,
                   createGate: wd13RootClinicAttemptGate,
+                ),
+              );
+            },
+          ),
+          // Missing-only Super Admin workspace. Shared session and one-shot gate.
+          GoRoute(
+            path: '/administration/sa-workspace',
+            name: 'sa-workspace',
+            builder: (context, state) {
+              final guard = sessionNavigationGuard;
+              final dashboard = dashboardDataSource;
+              if (guard == null ||
+                  dashboard == null ||
+                  !guard.canAccessProtectedRoutes ||
+                  !identical(dashboard.sessionNavigationGuard, guard)) {
+                return const Scaffold(
+                  body: Center(child: Text('Administration unavailable.')),
+                );
+              }
+              return SaWorkspaceScreen(
+                source: SaWorkspaceRemote(
+                  apiClient: dashboard.apiClient,
+                  loadSession: dashboard.loadSession,
+                  guard: guard,
+                  gate: wd09cfOneShotGate,
+                  staging: const bool.fromEnvironment('CSP_SA_STAGING_WRITES'),
                 ),
               );
             },
