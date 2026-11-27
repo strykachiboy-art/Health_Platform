@@ -956,3 +956,65 @@ def _branding_cache_headers(response):
         response.headers['Cache-Control'] = 'private, no-store, max-age=0'
         response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
+
+
+# L05 Run 2D: scoped discovery, independent of branding mutations.
+def _branding_discovery_parameters(*, paginated=False):
+    _branding._enabled()
+    if (request.headers.get('Idempotency-Key') is not None
+            or request.content_length not in (None, 0)
+            or request.headers.get('Transfer-Encoding') is not None):
+        raise ValidationError('Unsupported branding discovery parameters')
+    if not paginated:
+        if request.args:
+            raise ValidationError('Unsupported branding discovery parameters')
+        return None
+    if set(request.args) - {'after'} or len(request.args.getlist('after')) > 1:
+        raise ValidationError('Unsupported branding discovery parameters')
+    return request.args.get('after')
+
+
+def _unscoped_platform_branding():
+    if any(key in get_jwt() for key in ('tenant_id', 'clinic_context_id', 'platform_clinic_id')):
+        raise NotFoundError('Branding unavailable')
+
+
+@clinic_bp.get('/branding/organizations')
+@role_required(Role.SUPER_ADMIN)
+def branding_organizations_route():
+    after = _branding_discovery_parameters(paginated=True)
+    _unscoped_platform_branding()
+    return _branding_response(_branding.list_branding_organizations(
+        user_id=g.current_user_id, after=after))
+
+
+@clinic_bp.get('/branding/organizations/<uuid:organization_id>')
+@role_required(Role.SUPER_ADMIN)
+def branding_organization_detail_route(organization_id):
+    _branding_discovery_parameters()
+    _unscoped_platform_branding()
+    return _branding_response(_branding.read_branding_organization(
+        user_id=g.current_user_id, organization_id=organization_id))
+
+
+@clinic_bp.get('/branding/capabilities')
+@login_required
+def branding_capabilities_route():
+    _branding_discovery_parameters()
+    from app.modules.clinic.services.session_authority import context_from_claims
+    organization_id, clinic_id = context_from_claims(g.current_user_id, get_jwt())
+    if clinic_id != g.current_clinic_id:
+        raise NotFoundError('Branding unavailable')
+    return _branding_response(_branding.read_branding_capabilities(
+        user_id=g.current_user_id, organization_id=organization_id, clinic_id=clinic_id))
+
+
+@clinic_bp.after_request
+def _branding_discovery_cache_headers(response):
+    # Apply to authorization failures as well as successful responses.
+    if request.endpoint in {'clinic.branding_organizations_route',
+                            'clinic.branding_organization_detail_route',
+                            'clinic.branding_capabilities_route'}:
+        response.headers['Cache-Control'] = 'private, no-store, max-age=0'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response

@@ -341,3 +341,103 @@ def read_branding(*, user_id, organization_id, clinic_id=None, logo=False):
         return _bytes(row) if logo else dict(_metadata(row), organization_id=str(org.id), organization_name=org.name, clinic_override_allowed=_allowed(row), effective_primary_color=_effective_palette(row)[0], effective_secondary_color=_effective_palette(row)[1], palette_source=_effective_palette(row)[2])
     snap = _snapshot(org, db.session.get(Clinic, clinic_id))
     return snap.logo_png if logo else dict(snap.metadata, branding_sha256=snap.branding_sha256)
+
+
+# L05 Run 2D: read-only discovery. These responses confer no authorization.
+_DISCOVERY_PAGE_SIZE = 50
+
+
+def _platform_discovery_actor(user_id):
+    _enabled()
+    user = _actor(user_id)
+    if user.role is not Role.SUPER_ADMIN or user.clinic_id is not None:
+        _deny()
+
+
+def _directory_query():
+    # Select only the identity and entitlement columns. Never load logo bytes,
+    # colours, membership records, clinic data or clinical records.
+    return select(
+        HospitalOrganization.id, HospitalOrganization.name,
+        OrganizationBranding.version, OrganizationBranding.clinic_override_allowed,
+    ).select_from(HospitalOrganization).outerjoin(OrganizationBranding,
+                OrganizationBranding.organization_id == HospitalOrganization.id)
+
+
+def _directory_item(row):
+    oid, name, version, allowed = row
+    return {'organization_id': str(oid), 'organization_name': name,
+            'version': version if version is not None else 0,
+            'clinic_override_allowed': allowed is True}
+
+
+@transactional
+def list_branding_organizations(*, user_id, after=None):
+    _platform_discovery_actor(user_id)
+    query = _directory_query()
+    if after is not None:
+        try:
+            cursor = _parse_organization_id(after)
+        except TenantAccessDenied as exc:
+            raise ValidationError('Invalid organization cursor') from exc
+        if not isinstance(after, str) or after != str(cursor):
+            raise ValidationError('Invalid organization cursor')
+        query = query.where(HospitalOrganization.id > cursor)
+    rows = db.session.execute(query.order_by(HospitalOrganization.id).limit(
+        _DISCOVERY_PAGE_SIZE + 1)).all()
+    items = [_directory_item(row) for row in rows[:_DISCOVERY_PAGE_SIZE]]
+    return {'items': items, 'next_cursor': items[-1]['organization_id']
+            if len(rows) > _DISCOVERY_PAGE_SIZE else None}
+
+
+@transactional
+def read_branding_organization(*, user_id, organization_id):
+    _platform_discovery_actor(user_id)
+    try:
+        oid = _parse_organization_id(organization_id)
+    except TenantAccessDenied:
+        _deny()
+    row = db.session.execute(_directory_query().where(
+        HospitalOrganization.id == oid)).one_or_none()
+    if row is None:
+        _deny()
+    return _directory_item(row)
+
+
+@transactional
+def read_branding_capabilities(*, user_id, organization_id, clinic_id):
+    _enabled()
+    user = _actor(user_id)
+    if user.role is Role.SUPER_ADMIN or organization_id is None:
+        _deny()
+    try:
+        membership = require_tenant_membership(user_id=user.id,
+                                               organization_id=organization_id)
+    except TenantAccessDenied:
+        _deny()
+    org = _org(organization_id)
+
+    def can_manage(target):
+        # Reuse the exact mutation authorization, including the existing
+        # home-organization audit boundary and active selected-clinic check.
+        try:
+            _authorize(user.id, org, target)
+        except NotFoundError:
+            return False
+        return True
+
+    organization_access = can_manage(None)
+    clinic_access = clinic_id is not None and can_manage(clinic_id)
+    # Revocation prevents new overrides but still permits a legitimate clinic
+    # admin to clear a dormant override, exactly as in change_logo/colors.
+    customize = clinic_access and db.session.execute(select(
+        OrganizationBranding.clinic_override_allowed).where(
+        OrganizationBranding.organization_id == org.id)).scalar_one_or_none() is True
+    return {
+        'organization_id': str(org.id), 'organization_name': org.name,
+        'membership_role': membership.role, 'clinic_id': clinic_id,
+        'can_manage_organization_branding': organization_access,
+        'can_manage_clinic_branding': clinic_access,
+        'can_customize_clinic_branding': customize,
+        'can_reset_clinic_branding': clinic_access,
+    }

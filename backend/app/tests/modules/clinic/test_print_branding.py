@@ -233,3 +233,203 @@ def test_selected_clinic_grant_and_no_body_override(client, world):
     assert client.get(CLINIC,headers=forged).status_code in (401,403,404)
     assert client.delete(CLINIC,headers=switched,json={'expected_version':1,'clinic_id':w['ca'].id}).status_code==422
     assert data(client.get(CLINIC,headers=switched))['logo_source']=='clinic'
+
+
+DIRECTORY = '/api/v1/clinics/branding/organizations'
+CAPABILITIES = '/api/v1/clinics/branding/capabilities'
+
+
+def test_l05r2d_platform_directory_minimal_projection(client, world, db):
+    w = world
+    assert upload(client, ORG, w['h'], 0).status_code == 200
+    assert grant(client, w, 1).status_code == 200
+    result = data(client.get(DIRECTORY, headers=w['sa']))
+    assert set(result) == {'items', 'next_cursor'}
+    items = {item['organization_id']: item for item in result['items']}
+    assert items[str(w['a'].id)] == {'organization_id': str(w['a'].id),
+        'organization_name': w['a'].name, 'version': 2, 'clinic_override_allowed': True}
+    assert items[str(w['b'].id)]['version'] == 0
+    assert all(set(item) == {'organization_id', 'organization_name', 'version',
+                             'clinic_override_allowed'} for item in result['items'])
+    assert data(client.get(DIRECTORY+'/'+str(w['a'].id), headers=w['sa'])) == items[str(w['a'].id)]
+    assert client.get(ORG+'/logo', headers=w['sa']).status_code == 404
+    assert db.session.query(OrganizationBranding).count() == 1
+
+
+def test_l05r2d_directory_cursor_bounded_no_duplicates(client, world, db):
+    from uuid import UUID
+    w = world
+    db.session.add_all([HospitalOrganization(id=UUID(f'abcdef00-1234-4000-8000-{i+1:012x}'), name=f'Synthetic {i}')
+                        for i in range(103)])
+    db.session.commit()
+    expected = sorted(str(row.id) for row in db.session.query(HospitalOrganization).all())
+    observed = []
+    path = DIRECTORY
+    for _ in range(10):
+        result = data(client.get(path, headers=w['sa']))
+        page = [item['organization_id'] for item in result['items']]
+        assert 0 < len(page) <= 50
+        observed.extend(page)
+        cursor = result['next_cursor']
+        if cursor is None:
+            break
+        assert len(page) == 50 and cursor == page[-1]
+        path = DIRECTORY+'?after='+cursor
+    else:
+        pytest.fail('Directory did not terminate')
+    assert observed == expected and len(set(observed)) == len(expected)
+    assert data(client.get(DIRECTORY+'?after='+expected[-1], headers=w['sa'])) == {'items': [], 'next_cursor': None}
+
+
+def test_l05r2d_platform_directory_role_denials(client, world):
+    w = world
+    for h in (w['h'], w['branch'], w['other_h'], w['doc_h'], w['billing_h']):
+        for path in (DIRECTORY, DIRECTORY+'/'+str(w['a'].id)):
+            r = client.get(path, headers=h)
+            assert r.status_code == 403
+            assert 'no-store' in r.headers['Cache-Control']
+            assert r.headers['X-Content-Type-Options'] == 'nosniff'
+            assert 'data' not in r.get_json()
+    assert client.get(DIRECTORY).status_code == 401
+
+
+def test_l05r2d_platform_selected_clinic_denied(client, world, app):
+    w = world
+    with app.test_request_context():
+        token = create_access_token(identity=str(w['platform'].id), additional_claims={
+            'role': w['platform'].role.value, 'token_version': w['platform'].token_version,
+            'platform_clinic_id': w['ca'].id})
+    h = {'Authorization': 'Bearer '+token}
+    for path in (DIRECTORY, DIRECTORY+'/'+str(w['a'].id)):
+        assert client.get(path, headers=h).status_code == 404
+
+
+def test_l05r2d_directory_invalid_parameters(client, world):
+    w = world
+    for query in ('?after=', '?after=not-a-uuid', '?after='+str(w['a'].id)+'&after='+str(w['b'].id),
+                  '?limit=999999', '?organization_id='+str(w['b'].id)):
+        assert client.get(DIRECTORY+query, headers=w['sa']).status_code == 422
+    path = DIRECTORY+'/'+str(w['a'].id)
+    assert client.get(path+'?after='+str(w['b'].id), headers=w['sa']).status_code == 422
+    assert client.get(path, headers=dict(w['sa'], **{'Idempotency-Key':'x'})).status_code == 422
+    assert client.get(path, headers=w['sa'], json={'organization_id':str(w['b'].id)}).status_code == 422
+    assert client.get(DIRECTORY+'/'+str(uuid4()), headers=w['sa']).status_code == 404
+
+
+def test_l05r2d_owner_capabilities_tenant_and_clinic(client, world):
+    w = world
+    expected = {'organization_id':str(w['a'].id), 'organization_name':w['a'].name,
+                'membership_role':'organization_admin', 'clinic_id':None,
+                'can_manage_organization_branding':True, 'can_manage_clinic_branding':False,
+                'can_customize_clinic_branding':False, 'can_reset_clinic_branding':False}
+    assert data(client.get(CAPABILITIES, headers=w['tenant_only'])) == expected
+    expected.update(clinic_id=w['ca'].id, can_manage_clinic_branding=True, can_reset_clinic_branding=True)
+    assert data(client.get(CAPABILITIES, headers=w['h'])) == expected
+    assert grant(client, w, 0).status_code == 200
+    expected['can_customize_clinic_branding'] = True
+    assert data(client.get(CAPABILITIES, headers=w['h'])) == expected
+
+
+def test_l05r2d_branch_entitlement_revoke_keeps_reset(client, world):
+    w = world
+    expected = {'organization_id':str(w['a'].id), 'organization_name':w['a'].name,
+                'membership_role':'member', 'clinic_id':w['cb'].id,
+                'can_manage_organization_branding':False, 'can_manage_clinic_branding':True,
+                'can_customize_clinic_branding':False, 'can_reset_clinic_branding':True}
+    assert data(client.get(CAPABILITIES, headers=w['branch'])) == expected
+    assert grant(client, w, 0).status_code == 200
+    assert upload(client, CLINIC, w['branch'], 0).status_code == 200
+    expected['can_customize_clinic_branding'] = True
+    assert data(client.get(CAPABILITIES, headers=w['branch'])) == expected
+    assert grant(client, w, 1, False).status_code == 200
+    expected['can_customize_clinic_branding'] = False
+    assert data(client.get(CAPABILITIES, headers=w['branch'])) == expected
+    assert upload(client, CLINIC, w['branch'], 1).status_code == 404
+    assert client.delete(CLINIC, headers=w['branch'], json={'expected_version':1}).status_code == 200
+
+
+def test_l05r2d_ordinary_members_no_branding_authority(client, world):
+    w = world
+    for header, role in ((w['doc_h'], 'member'), (w['billing_h'], 'billing_admin')):
+        result = data(client.get(CAPABILITIES, headers=header))
+        assert result['membership_role'] == role
+        assert result['organization_id'] == str(w['a'].id)
+        assert all(result[k] is False for k in ('can_manage_organization_branding',
+            'can_manage_clinic_branding', 'can_customize_clinic_branding', 'can_reset_clinic_branding'))
+    assert client.get(CAPABILITIES, headers=w['sa']).status_code == 404
+    assert client.get(CAPABILITIES, headers=w['headers'](w['owner'])).status_code == 404
+
+
+def test_l05r2d_membership_role_change_is_live(client, world, db):
+    w = world
+    row = db.session.query(TenantMembership).filter_by(user_id=w['owner'].id, organization_id=w['a'].id).one()
+    row.role = 'member'
+    db.session.commit()
+    result = data(client.get(CAPABILITIES, headers=w['h']))
+    assert result['membership_role'] == 'member'
+    assert result['can_manage_organization_branding'] is False
+    assert result['can_manage_clinic_branding'] is True
+    assert client.get(ORG, headers=w['h']).status_code == 404
+    row.status = 'revoked'; row.is_active = False; db.session.commit()
+    assert client.get(CAPABILITIES, headers=w['h']).status_code in (401,403,404)
+
+
+def test_l05r2d_forged_scope_and_parameters_denied(client, world):
+    w = world
+    for query in ('?organization_id='+str(w['b'].id), '?clinic_id='+str(w['cc'].id), '?role=organization_admin'):
+        assert client.get(CAPABILITIES+query, headers=w['h']).status_code == 422
+    assert client.get(CAPABILITIES, headers=dict(w['h'], **{'Idempotency-Key':'x'})).status_code == 422
+    for h in (w['headers'](w['owner'], w['a'], w['cc']), w['headers'](w['admin'], w['a'], w['ca']),
+              w['headers'](w['owner'], w['b'])):
+        assert client.get(CAPABILITIES, headers=h).status_code in (401,403,404)
+    result = data(client.get(CAPABILITIES, headers=w['other_h']))
+    assert result['organization_id'] == str(w['b'].id) and result['clinic_id'] == w['cc'].id
+
+
+def test_l05r2d_home_organization_boundary(client, world, db):
+    w = world
+    db.session.add(TenantMembership(user_id=w['owner'].id, organization_id=w['b'].id,
+                                   role='organization_admin', is_active=True, status='active'))
+    db.session.flush()
+    db.session.add(ClinicMembership(user_id=w['owner'].id, organization_id=w['b'].id,
+                                   clinic_id=w['cc'].id, role=Role.ADMIN.value, is_active=True))
+    db.session.commit()
+    h = w['headers'](w['owner'], w['b'], w['cc'])
+    result = data(client.get(CAPABILITIES, headers=h))
+    assert result['membership_role'] == 'organization_admin'
+    assert result['can_manage_organization_branding'] is False
+    assert result['can_manage_clinic_branding'] is False
+    assert result['can_customize_clinic_branding'] is False
+    assert result['can_reset_clinic_branding'] is False
+    assert client.get(ORG, headers=h).status_code == 404
+    assert client.get(CLINIC, headers=h).status_code == 404
+
+
+def test_l05r2d_discovery_read_only_no_audit_or_branding_rows(client, world, db):
+    w = world
+    before = db.session.query(AuditLog).count()
+    for path, h in ((DIRECTORY,w['sa']), (DIRECTORY+'/'+str(w['a'].id),w['sa']),
+                    (CAPABILITIES,w['h']), (CAPABILITIES,w['branch'])):
+        r = client.get(path, headers=h)
+        data(r)
+        assert r.headers['X-Content-Type-Options'] == 'nosniff'
+        assert 'no-store' in r.headers['Cache-Control']
+        assert client.post(path, headers=h, json={}).status_code == 405
+    assert db.session.query(OrganizationBranding).count() == 0
+    assert db.session.query(ClinicBranding).count() == 0
+    assert db.session.query(AuditLog).count() == before
+
+
+def test_l05r2d_disabled_and_non_testing(client, world, app):
+    w = world
+    pairs = ((DIRECTORY,w['sa']), (DIRECTORY+'/'+str(w['a'].id),w['sa']), (CAPABILITIES,w['h']))
+    app.config['PRINT_BRANDING_STAGED_ENABLED'] = False
+    for path,h in pairs:
+        assert client.get(path, headers=h).status_code == 404
+    app.config['PRINT_BRANDING_STAGED_ENABLED'] = True
+    app.config['TESTING'] = False
+    try:
+        for path,h in pairs:
+            assert client.get(path, headers=h).status_code == 404
+    finally:
+        app.config['TESTING'] = True
