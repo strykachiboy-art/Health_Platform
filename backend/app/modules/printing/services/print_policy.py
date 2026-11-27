@@ -87,6 +87,37 @@ def authorize(*, kind: str, actor_clinic_id: int, record_clinic_id: int,
             raise PrintDenied('Print unavailable')
 
 
+def _validate_invoice_extension(source):
+    import json, re
+    from decimal import Decimal
+    raw=source['invoice_items']
+    if not isinstance(raw,str) or len(raw.encode('utf8'))>12000:
+        raise PrintDenied('Invalid invoice items')
+    try:
+        rows=json.loads(raw)
+    except (TypeError,ValueError) as exc:
+        raise PrintDenied('Invalid invoice items') from exc
+    if not isinstance(rows,list) or len(rows)>100 or json.dumps(rows,ensure_ascii=False,separators=(',',':'))!=raw:
+        raise PrintDenied('Invalid invoice items')
+    def amount(value):
+        if not isinstance(value,str) or re.fullmatch(r'[0-9]{1,8}\.[0-9]{2}',value) is None:
+            raise PrintDenied('Invalid invoice amount')
+        return Decimal(value)
+    subtotal=Decimal('0')
+    for row in rows:
+        if not isinstance(row,list) or len(row)!=4 or any(not isinstance(v,str) for v in row):
+            raise PrintDenied('Invalid invoice item')
+        description,quantity,price,total=row
+        if not description.strip() or len(description)>255 or any(ord(c)<32 or ord(c)==127 for c in description) or re.fullmatch(r'[1-9][0-9]{0,9}',quantity) is None or int(quantity)>2147483647:
+            raise PrintDenied('Invalid invoice item')
+        if amount(price)*int(quantity)!=amount(total):
+            raise PrintDenied('Invalid invoice subtotal')
+        subtotal+=amount(total)
+    total,paid,balance=map(amount,(source['total_amount'],source['amount_paid'],source['outstanding_balance']))
+    if paid>total or balance!=total-paid or (rows and subtotal!=total):
+        raise PrintDenied('Invalid invoice totals')
+
+
 def build_document(*, kind: str, clinic_id: int, record_id: int,
                    source_version: int, source: Mapping[str, object]) -> PrintDocument:
     # No user identity, role or clinic from HTTP is used here; route calls
@@ -96,11 +127,16 @@ def build_document(*, kind: str, clinic_id: int, record_id: int,
     _positive(clinic_id); _positive(record_id)
     if type(source_version) is not int or source_version < 0 or (kind in ('radiology_draft','released_lab_result','staged_radiology_copy') and source_version==0):
         raise PrintDenied('Unknown source version')
-    if set(source) != set(_FIELDS[kind]):
+    names = _FIELDS[kind]
+    if kind == 'invoice' and set(source) == set(names) | {'invoice_items', 'outstanding_balance'}:
+        names = (*names, 'invoice_items', 'outstanding_balance')
+    if set(source) != set(names):
         raise PrintDenied('Unexpected or missing source fields')
+    if 'invoice_items' in names:
+        _validate_invoice_extension(source)
     fields = tuple((key.replace('_', ' ').title(),
-                    _safe_text(source[key], _MAX_TEXT[kind] if key == 'report_text' else 300))
-                   for key in _FIELDS[kind])
+                    _safe_text(source[key], _MAX_TEXT[kind] if key == 'report_text' else 12000 if key == 'invoice_items' else 300))
+                   for key in names)
     canonical = '|'.join(f'{len(k)}:{k}:{len(v)}:{v}' for k,v in fields)
     digest = sha256((f'{kind}|{clinic_id}|{record_id}|{source_version}|'+canonical).encode('utf8')).hexdigest()
     return PrintDocument(kind, clinic_id, record_id, source_version,

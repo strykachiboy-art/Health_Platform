@@ -644,3 +644,24 @@ def test_l05r2_real_branded_lab(scenario,db,app,tmp_path):
     app.config['PRINT_BRANDING_STAGED_ENABLED']=False
     legacy=s['client'].get(path,headers=s['patient_headers']);assert legacy.status_code==200 and legacy.headers['X-Source-SHA256']==r.headers['X-Source-SHA256']
     write_artifact(tmp_path,'l05r2_legacy_lab',legacy.data,{'source_digest':legacy.headers['X-Source-SHA256']})
+
+
+def test_l05r2b_real_structured_lab_release(scenario,db,app,tmp_path):
+    from hashlib import sha256
+    from app.core.audit.models.audit_model import AuditLog
+    from app.tests.modules.printing.test_branded_rendering import seed_logo,write_artifact
+    from app.modules.clinic.models.branding_model import OrganizationBranding
+    from app.modules.clinic.models.clinic_model import Clinic
+    from app.modules.clinic.services.branding_service import resolve_branding
+    s=scenario;s['test'].name='Synthetic Café - ‐ −';s['test'].unit='μg/L';db.session.commit();finalize(s);release_valid(s)
+    clinic=db.session.get(Clinic,s['order'].clinic_id);seed_logo(clinic,'#176B65')
+    row=db.session.query(OrganizationBranding).filter_by(organization_id=clinic.organization_id).one();row.primary_color='#176B65';row.secondary_color='#283548';row.version+=1;db.session.commit()
+    app.config.update(RAD6_PRINTING_ENABLED=True,PRINT_BRANDING_STAGED_ENABLED=True)
+    path=f"/api/v1/lab/me/released-results/{s['order'].id}/pdf"
+    brand=resolve_branding(owning_clinic_id=clinic.id)
+    r=s['client'].get(path,headers=s['patient_headers']);assert r.status_code==200 and r.headers['X-Clinical-Release']=='patient-copy'
+    a=db.session.query(AuditLog).filter_by(entity_type='LabOrder',entity_id=s['order'].id,user_id=s['patient_user'].id,description='Patient downloaded current approved laboratory report copy').one().new_value
+    assert a['branding_sha256']==brand.branding_sha256 and a['pdf_sha256']==sha256(r.data).hexdigest() and a['source_digest']==r.headers['X-Source-SHA256']
+    write_artifact(tmp_path,'l05r2b_real_lab',r.data,{'report':own_detail(s).get_json()['data'],'branding':dict(brand.metadata),'audit':a,'clinic_id':clinic.id,'record_id':s['order'].id,'patient_id':s['patient'].id})
+    assert s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-withdrawal",json={'reason_code':'clinical_correction'},headers=s['doctor_headers']).status_code==200
+    assert s['client'].get(path,headers=s['patient_headers']).status_code==404

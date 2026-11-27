@@ -21,10 +21,14 @@ class PrintBranding:
     rgb: bytes | None
     width: int = 0
     height: int = 0
+    primary_color: str = "#17354A"
+    secondary_color: str = "#475569"
+    lab_rows: tuple | None = None
+    correction: str | None = None
 
     def wire(self):
         return {'clinic_id': self.clinic_id, 'lines': list(self.lines),
-                'branding_sha256': self.branding_sha256,
+                'branding_sha256': self.branding_sha256, 'primary_color': self.primary_color, 'secondary_color': self.secondary_color,
                 'logo': None if self.rgb is None else {'width': self.width, 'height': self.height, 'rgb_hex': self.rgb.hex()}}
 
     def png(self):
@@ -84,7 +88,7 @@ def prepare_branding(doc, *, owning_clinic_id):
         except Exception as exc:
             raise PrintDenied('Branding asset unavailable') from exc
     return PrintBranding(owning_clinic_id, lines, snap.branding_sha256, m['logo_sha256'], m['logo_source'],
-        m['organization_version'], m['clinic_version'], rgb, w, h)
+        m['organization_version'], m['clinic_version'], rgb, w, h, m['primary_color'], m['secondary_color'])
 
 
 def brand_lines(branding):
@@ -93,10 +97,16 @@ def brand_lines(branding):
     return (*branding.lines, 'CONTROLLED DOCUMENT COPY', 'BRANDING SHA-256: '+branding.branding_sha256)
 
 
-def render_authorized(doc, renderer, *, owning_clinic_id):
+def render_authorized(doc, renderer, *, owning_clinic_id, lab_rows=None, correction=None):
     branding = prepare_branding(doc, owning_clinic_id=owning_clinic_id)
     if branding is None:
         return renderer(doc), {}
+    if lab_rows is not None:
+        from dataclasses import replace
+        from .polished_patient import canonical_lab_text
+        if doc.kind != 'released_lab_result' or canonical_lab_text(lab_rows, correction) != dict(doc.fields)['Report Text']:
+            raise PrintDenied('Structured laboratory source mismatch')
+        branding = replace(branding, lab_rows=lab_rows, correction=correction)
     data = renderer(doc, branding=branding)
     if not isinstance(data, bytes) or not data.startswith(b'%PDF-') or not data.rstrip().endswith(b'%%EOF') or len(data)>3*1024*1024:
         raise PrintDenied('Print renderer unavailable')

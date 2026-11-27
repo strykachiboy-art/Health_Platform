@@ -33,9 +33,40 @@ def snapshot(*, kind: str, record_id: int, clinic_id: int,
         row=_row(Invoice, record_id=record_id, clinic_id=clinic_id)
         authorize(kind=kind,actor_clinic_id=clinic_id,record_clinic_id=row.clinic_id,
                   actor_role=actor_role)
+        from flask import current_app
+        if current_app.config.get('PRINT_BRANDING_STAGED_ENABLED') is True:
+            if not current_app.testing:
+                raise PrintDenied('Branding unavailable')
+            row=db.session.execute(select(Invoice).where(Invoice.id==record_id,Invoice.clinic_id==clinic_id).with_for_update().execution_options(populate_existing=True)).scalar_one_or_none()
+            if row is None:
+                raise PrintDenied('Print unavailable')
         fields={'invoice_number':str(row.invoice_number),'patient_id':row.patient_id,
                 'status':_text(row.status),'currency':row.currency or 'NOT RECORDED',
                 'total_amount':str(row.total_amount),'amount_paid':str(row.amount_paid)}
+        from flask import current_app
+        if current_app.config.get('PRINT_BRANDING_STAGED_ENABLED') is True:
+            if not current_app.testing:
+                raise PrintDenied('Branding unavailable')
+            from app.modules.billing.models.billing_model import InvoiceItem
+            from decimal import Decimal
+            import json
+            # Use actual canonical invoice children, never caller-provided charges.
+            # No changes to the legacy snapshot when staged branding is disabled.
+            items = db.session.execute(select(InvoiceItem).where(InvoiceItem.invoice_id==row.id).order_by(InvoiceItem.id).limit(101).with_for_update()).scalars().all()
+            if len(items)>100:
+                raise PrintDenied('Invoice item limit exceeded')
+            cells=[]
+            for item in items:
+                text=item.description
+                if not isinstance(text,str) or not text.strip() or len(text)>255 or any(ord(c)<32 or ord(c)==127 for c in text):
+                    raise PrintDenied('Invalid invoice item description')
+                if type(item.quantity) is not int or item.quantity<=0:
+                    raise PrintDenied('Invalid invoice item quantity')
+                cells.append([text,str(item.quantity),format(item.unit_price,'.2f'),format(item.subtotal,'.2f')])
+            if items and sum((item.subtotal for item in items), Decimal('0')) != row.total_amount:
+                raise PrintDenied('Itemized invoice total mismatch')
+            fields.update(total_amount=format(row.total_amount,'.2f'),amount_paid=format(row.amount_paid,'.2f'),invoice_items=json.dumps(cells,ensure_ascii=False,separators=(',',':')),
+                          outstanding_balance=format(row.total_amount-row.amount_paid,'.2f'))
         return build_document(kind=kind,clinic_id=clinic_id,record_id=row.id,
                               source_version=0,source=fields)
     if kind=='appointment':

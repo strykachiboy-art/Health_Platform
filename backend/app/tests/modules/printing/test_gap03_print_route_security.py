@@ -208,3 +208,37 @@ def test_l05r2_real_branded_invoice(app,client,clinic,make_authenticated_staff,m
     write_artifact(tmp_path,'l05r2_real_invoice',r.data,{'doc':asdict(doc),'branding':brand_meta(brand),'audit':audit})
     assert client.get(path+'?clinic_id=999',headers=headers).status_code==404
     assert db.session.query(AuditLog).filter_by(entity_type='PrintedDocument',entity_id=invoice.id,user_id=staff.user_id).count()==1
+
+
+def test_l05r2b_real_itemized_invoice(app,client,clinic,make_authenticated_staff,make_patient,make_invoice,tmp_path,db):
+    from decimal import Decimal
+    from hashlib import sha256
+    from dataclasses import asdict
+    import json
+    from app.core.audit.models.audit_model import AuditLog
+    from app.modules.billing.models.billing_model import InvoiceItem
+    from app.modules.clinic.models.branding_model import OrganizationBranding
+    from app.modules.clinic.services.branding_service import resolve_branding
+    from app.tests.modules.printing.test_branded_rendering import seed_logo,brand_meta,write_artifact
+    from app.modules.printing.services.branding_payload import prepare_branding
+    from app.modules.printing.services.source_adapters import snapshot
+    staff,headers=make_authenticated_staff(clinic,Role.ADMIN)
+    invoice=make_invoice(clinic,make_patient(clinic),invoice_number='POLISH-REAL-SYNTHETIC',currency='NGN',total_amount=Decimal('15000.00'),amount_paid=Decimal('2500.00'))
+    db.session.add_all([InvoiceItem(invoice_id=invoice.id,description='Synthetic consultation',quantity=1,unit_price=Decimal('5000.00'),subtotal=Decimal('5000.00')),InvoiceItem(invoice_id=invoice.id,description='Synthetic tests',quantity=2,unit_price=Decimal('5000.00'),subtotal=Decimal('10000.00'))]);db.session.commit()
+    seed_logo(clinic)
+    row=db.session.query(OrganizationBranding).filter_by(organization_id=clinic.organization_id).one();row.primary_color='#214E91';row.secondary_color='#283548';row.version+=1;db.session.commit()
+    app.config.update(RAD6_PRINTING_ENABLED=True,PRINT_BRANDING_STAGED_ENABLED=True)
+    d=snapshot(kind='invoice',record_id=invoice.id,clinic_id=clinic.id,actor_role='ADMIN',actor_staff_id=staff.id)
+    f=dict(d.fields);assert json.loads(f['Invoice Items'])==[['Synthetic consultation','1','5000.00','5000.00'],['Synthetic tests','2','5000.00','10000.00']]
+    assert f['Outstanding Balance']=='12500.00'
+    brand=prepare_branding(d,owning_clinic_id=clinic.id);snap=resolve_branding(owning_clinic_id=clinic.id)
+    path=f'/api/v1/printing/invoice/{invoice.id}.pdf';r=client.get(path,headers=headers)
+    assert r.status_code==200 and r.headers['X-Source-SHA256']==d.source_digest and 'no-store' in r.headers['Cache-Control']
+    a=db.session.query(AuditLog).filter_by(entity_type='PrintedDocument',entity_id=invoice.id,user_id=staff.user_id).one().new_value
+    assert a['pdf_sha256']==sha256(r.data).hexdigest() and a['branding_sha256']==brand.branding_sha256
+    bm=brand_meta(brand);bm.update(primary_color=brand.primary_color,secondary_color=brand.secondary_color,metadata=dict(snap.metadata))
+    write_artifact(tmp_path,'l05r2b_real_invoice',r.data,{'doc':asdict(d),'branding':bm,'audit':a})
+    # Invalid billing total must not silently render an apparently reconciled invoice.
+    invoice.total_amount=Decimal('16000.00');db.session.commit()
+    assert client.get(path,headers=headers).status_code==404
+    assert db.session.query(AuditLog).filter_by(entity_type='PrintedDocument',entity_id=invoice.id,user_id=staff.user_id).count()==1

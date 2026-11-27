@@ -921,10 +921,38 @@ def branding_entitlement_route(organization_id):
     return _branding_response(result)
 
 
+
+
+def _branding_colors(scope):
+    _branding._enabled()
+    if request.args or request.headers.get('Idempotency-Key') is not None:
+        raise ValidationError('Unsupported branding parameters')
+    oid = get_jwt().get('tenant_id')
+    cid = g.current_clinic_id if scope == 'clinic' else None
+    if not oid or (scope == 'clinic' and cid is None):
+        raise NotFoundError('Branding unavailable')
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) != {'expected_version','primary_color','secondary_color'}:
+        raise ValidationError('Expected version and both colors required')
+    return _branding_response(_branding.change_colors(user_id=g.current_user_id, organization_id=oid, clinic_id=cid, **body))
+
+
+@clinic_bp.put('/branding/organization/colors')
+@login_required
+def organization_branding_colors_route():
+    return _branding_colors('organization')
+
+
+@clinic_bp.put('/branding/clinic/colors')
+@role_required(Role.ADMIN)
+def clinic_branding_colors_route():
+    return _branding_colors('clinic')
+
+
 @clinic_bp.after_request
 def _branding_cache_headers(response):
     if request.endpoint in {'clinic.organization_branding_route', 'clinic.organization_branding_logo_route',
-                            'clinic.clinic_branding_route', 'clinic.clinic_branding_logo_route', 'clinic.branding_entitlement_route'}:
+                            'clinic.clinic_branding_route', 'clinic.clinic_branding_logo_route', 'clinic.branding_entitlement_route', 'clinic.organization_branding_colors_route', 'clinic.clinic_branding_colors_route'}:
         response.headers['Cache-Control'] = 'private, no-store, max-age=0'
         response.headers['X-Content-Type-Options'] = 'nosniff'
     return response

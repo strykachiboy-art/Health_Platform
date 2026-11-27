@@ -188,6 +188,9 @@ def render_pdf(doc: PrintDocument, *, branding=None) -> bytes:
         raise PrintDenied('Unsigned print policy required')
     if branding is not None and (not isinstance(branding, PrintBranding) or branding.clinic_id != doc.clinic_id):
         raise PrintDenied('Branding ownership mismatch')
+    if branding is not None and doc.kind in ('released_lab_result', 'staged_radiology_copy'):
+        from .polished_patient import render_polished_patient
+        return render_polished_patient(doc, branding, _lab_unicode_font)
     if doc.kind == 'released_lab_result':
         return _render_released_lab(doc, branding)
     if doc.kind == 'staged_radiology_copy':

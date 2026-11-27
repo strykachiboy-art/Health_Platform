@@ -39,7 +39,7 @@ def write_artifact(tmp_path, name, data, meta):
 
 def brand_meta(b):
     return {'lines':list(brand_lines(b)), 'branding_sha256':b.branding_sha256,'logo_sha256':b.logo_sha256,
-            'logo_source':b.logo_source,'width':b.width,'height':b.height,
+            'logo_source':b.logo_source,'width':b.width,'height':b.height,'primary_color':b.primary_color,'secondary_color':b.secondary_color,
             'rgb_sha256':sha256(b.rgb).hexdigest() if b.rgb is not None else None}
 
 

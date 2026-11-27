@@ -27,7 +27,9 @@ def released_pdf(*, order_id, clinic_id, user_id):
     def field(value):
         return 'Not recorded' if value is None else json.dumps(value, ensure_ascii=False)
     lines = []
+    structured = []
     for i, row in enumerate(report['results'], 1):
+        structured.append(tuple(field(row[key]) for key in ('test_name','loinc_code','result_value','unit','reference_range','flag','resulted_at')))
         lines.extend([f"{i}. Test: {field(row['test_name'])}", f"LOINC: {field(row['loinc_code'])}",
             f"Result: {field(row['result_value'])}   Unit: {field(row['unit'])}",
             f"Reference range: {field(row['reference_range'])}   Flag: {field(row['flag'])}",
@@ -38,7 +40,7 @@ def released_pdf(*, order_id, clinic_id, user_id):
     doc = build_document(kind='released_lab_result',clinic_id=clinic_id,record_id=order.id,
         source_version=report.get('record_version',1),source={'patient_id':patient.id,'verified_at':report['verified_at'],
         'completed_at':report['completed_at'],'released_at':report['released_at'],'report_text':text})
-    data, branding_audit = render_authorized(doc, render_pdf, owning_clinic_id=order.clinic_id)
+    data, branding_audit = render_authorized(doc, render_pdf, owning_clinic_id=order.clinic_id, lab_rows=tuple(structured), correction=field(report['correction_verified_at']) if report.get('correction_verified_at') is not None else None)
     create_audit_log(action=AuditAction.VIEW,entity_type='LabOrder',entity_id=order.id,clinic_id=clinic_id,patient_id=patient.id,user_id=user_id,
         description='Patient downloaded current approved laboratory report copy',new_value={'record_version':doc.source_version,'source_digest':doc.source_digest,**branding_audit})
     return data,doc

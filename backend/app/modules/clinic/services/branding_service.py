@@ -158,13 +158,79 @@ def _audit(user, org, row, clinic_id, before, action):
     create_audit_log(action=AuditAction.UPDATE, entity_type='OrganizationBranding' if clinic_id is None else 'ClinicBranding',
         entity_id=row.id, user_id=user.id, description=action,
         old_value=before, new_value={'organization_id': str(org.id), 'target_clinic_id': clinic_id,
-        'version': row.version, 'logo_sha256': row.logo_sha256,
+        'version': row.version, 'logo_sha256': row.logo_sha256, 'primary_color': row.primary_color, 'secondary_color': row.secondary_color,
         **({'clinic_override_allowed': row.clinic_override_allowed} if clinic_id is None else {})})
+
+
+
+DEFAULT_PALETTE = ('#17354A', '#475569')
+
+def validate_palette(primary, secondary):
+    """Canonical uppercase hex, dark enough for white paper and white text."""
+    import re
+    if primary is None and secondary is None:
+        return None, None
+    values = []
+    for value in (primary, secondary):
+        if not isinstance(value, str) or re.fullmatch(r'#[0-9A-Fa-f]{6}', value) is None:
+            raise ValidationError('Both branding colors must be six-digit hex values')
+        rgb = [int(value[i:i+2],16)/255 for i in (1,3,5)]
+        lum = sum(w*(x/12.92 if x <= .04045 else ((x+.055)/1.055)**2.4) for x,w in zip(rgb,(.2126,.7152,.0722)))
+        if 1.05/(lum+.05) < 4.5:
+            raise ValidationError('Branding colors need at least 4.5:1 contrast against white')
+        values.append(value.upper())
+    return tuple(values)
+
+
+def _stored_palette(row):
+    if row is None:
+        return None, None
+    try:
+        values = validate_palette(row.primary_color,row.secondary_color)
+        if values != (row.primary_color,row.secondary_color):
+            raise ValidationError('Noncanonical branding colors')
+        return values
+    except ValidationError as exc:
+        raise ConflictError('Branding palette integrity unavailable') from exc
+
+
+def _effective_palette(default, override=None):
+    local = _stored_palette(override) if _allowed(default) else (None,None)
+    if local[0] is not None:
+        return (*local, 'clinic')
+    inherited = _stored_palette(default)
+    if inherited[0] is not None:
+        return (*inherited, 'organization')
+    return (*DEFAULT_PALETTE, 'default')
+
+
+@transactional
+def change_colors(*, user_id, organization_id, clinic_id=None, expected_version, primary_color, secondary_color):
+    _enabled()
+    org = _org(organization_id)
+    user = _authorize(user_id, org, clinic_id)
+    palette = validate_palette(primary_color, secondary_color)
+    if clinic_id is not None and palette[0] is not None and not _allowed(_row(org)):
+        _deny()
+    row = _row(org, clinic_id)
+    _check_version(row, expected_version)
+    before = _metadata(row)
+    if _stored_palette(row) == palette:
+        return before
+    if row is None:
+        row = OrganizationBranding(organization_id=org.id,version=1) if clinic_id is None else ClinicBranding(organization_id=org.id,clinic_id=clinic_id,version=1)
+        db.session.add(row)
+    else:
+        row.version += 1
+    row.primary_color, row.secondary_color = palette
+    db.session.flush()
+    _audit(user, org, row, clinic_id, before, 'Branding colors updated')
+    return _metadata(row)
 
 
 def _metadata(row):
     return {'version': _version(row), 'logo_sha256': row.logo_sha256 if row else None,
-            'has_logo': _bytes(row) is not None}
+            'has_logo': _bytes(row) is not None, 'primary_color': _stored_palette(row)[0], 'secondary_color': _stored_palette(row)[1]}
 
 
 @transactional
@@ -245,6 +311,8 @@ def _snapshot(org, clinic):
             'phone': clinic.phone, 'email': clinic.email, 'organization_version': _version(default),
             'clinic_version': _version(override), 'clinic_override_allowed': _allowed(default),
             'logo_source': source, 'logo_sha256': sha256(logo).hexdigest() if logo else None}
+    primary, secondary, palette_source = _effective_palette(default, override)
+    meta.update(primary_color=primary, secondary_color=secondary, palette_source=palette_source, clinic_primary_color=_stored_palette(override)[0], clinic_secondary_color=_stored_palette(override)[1])
     digest = sha256(json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     return BrandingSnapshot(MappingProxyType(meta), logo, digest)
 
@@ -270,6 +338,6 @@ def read_branding(*, user_id, organization_id, clinic_id=None, logo=False):
     _authorize(user_id, org, clinic_id)
     if clinic_id is None:
         row = _row(org)
-        return _bytes(row) if logo else dict(_metadata(row), organization_id=str(org.id), organization_name=org.name, clinic_override_allowed=_allowed(row))
+        return _bytes(row) if logo else dict(_metadata(row), organization_id=str(org.id), organization_name=org.name, clinic_override_allowed=_allowed(row), effective_primary_color=_effective_palette(row)[0], effective_secondary_color=_effective_palette(row)[1], palette_source=_effective_palette(row)[2])
     snap = _snapshot(org, db.session.get(Clinic, clinic_id))
     return snap.logo_png if logo else dict(snap.metadata, branding_sha256=snap.branding_sha256)

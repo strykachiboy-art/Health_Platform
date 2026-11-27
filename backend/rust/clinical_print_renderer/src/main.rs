@@ -35,6 +35,10 @@ struct Branding {
     lines: Vec<String>,
     branding_sha256: String,
     logo: Option<Logo>,
+    #[serde(default="default_primary")]
+    primary_color:String,
+    #[serde(default="default_secondary")]
+    secondary_color:String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,10 +47,149 @@ struct Logo {
     height: u32,
     rgb_hex: String,
 }
+
+fn palette_rgb(s: &str) -> Result<(u8,u8,u8), &'static str> {
+    if s.len()!=7 || !s.starts_with('#') || !s.as_bytes()[1..].iter().all(|b| matches!(*b,b'0'..=b'9'|b'A'..=b'F')) { return Err("invalid palette"); }
+    let r=u8::from_str_radix(&s[1..3],16).map_err(|_| "invalid palette")?;
+    let g=u8::from_str_radix(&s[3..5],16).map_err(|_| "invalid palette")?;
+    let b=u8::from_str_radix(&s[5..7],16).map_err(|_| "invalid palette")?;
+    let f=|x:u8| { let n=x as f64/255.0; if n<=0.04045 { n/12.92 } else { ((n+0.055)/1.055).powf(2.4) } };
+    let lum=0.2126*f(r)+0.7152*f(g)+0.0722*f(b);
+    if 1.05/(lum+0.05)<4.5 { return Err("invalid palette contrast"); }
+    Ok((r,g,b))
+}
+fn default_primary()->String { "#17354A".into() }
+fn default_secondary()->String { "#475569".into() }
+fn invoice_cells(value:&str)->Result<Vec<[String;4]>, &'static str> {
+    let rows:Vec<[String;4]>=serde_json::from_str(value).map_err(|_| "invalid invoice rows")?;
+    if rows.len()>100 { return Err("too many invoice rows"); }
+    for row in &rows {
+        check_str(&row[0],1020)?;
+        if row[0].chars().count()>255 || row[0].chars().any(|c| c.is_control()) { return Err("invalid invoice description"); }
+        if row[1].parse::<u32>().ok().filter(|n| *n>0).is_none() || row[1].len()>10 { return Err("invalid invoice quantity"); }
+        for value in &row[2..] { if !money(value) { return Err("invalid invoice amount"); } }
+    }
+    Ok(rows)
+}
+fn money(s:&str)->bool {
+    if let Some((a,b))=s.split_once('.') {
+        !a.is_empty() && a.len()<=8 && a.bytes().all(|v| v.is_ascii_digit()) && b.len()==2 && b.bytes().all(|v| v.is_ascii_digit())
+    } else { false }
+}
+const INVOICE_HEADERS:[&str;4]=["Description","Quantity","Unit price","Subtotal"];
+fn shown_invoice(value:&str, headers:&[usize])->String {
+    let rows=invoice_cells(value).unwrap_or_default();
+    if rows.is_empty() { return "No itemized charges recorded".into(); }
+    let mut text=String::new();
+    for (i,r) in rows.iter().enumerate() {
+        if headers.contains(&i) { text.push(' '); text.push_str(&INVOICE_HEADERS.join(" ")); }
+        for v in r { text.push(' '); text.push_str(v); }
+    }
+    text
+}
+fn shown_value(label:&str,value:&str,headers:&[usize])->String {
+    if label=="Invoice Items" { shown_invoice(value,headers) } else { value.to_string() }
+}
+fn valid_rgb_op(op:&lopdf::content::Operation)->bool {
+    op.operands.len()==3 && op.operands.iter().all(|v| match v {
+        lopdf::Object::Integer(n)=>*n==0||*n==1,
+        lopdf::Object::Real(n)=>n.is_finite() && *n>=0.0 && *n<=1.0,
+        _=>false,
+    })
+}
+fn styled_text(text:String, size:u8, color:(u8,u8,u8))->elements::StyledElement<elements::Paragraph> {
+    use genpdf::style::{Style,Color};
+    // The outer style controls both baseline and reserved line height in genpdf.
+    elements::StyledElement::new(elements::Paragraph::new(text),
+        Style::new().with_font_size(size).with_color(Color::Rgb(color.0,color.1,color.2)))
+}
+fn push_styled(doc:&mut Document,font:&rusttype::Font<'_>,text:&str,size:u8,color:(u8,u8,u8))->Result<(), &'static str> {
+    for line in wrap_lines(text, |c| font.glyph(c).scaled(rusttype::Scale::uniform((size as f32)*1.2+2.0)).h_metrics().advance_width.max(0.0)+1.5)? {
+        doc.push(styled_text(line,size,color));
+    }
+    Ok(())
+}
+type InvoiceHeaders=std::rc::Rc<std::cell::RefCell<Vec<usize>>>;
+fn row_fits(available:genpdf::Mm, row:genpdf::Mm, heading:genpdf::Mm)->bool {
+    available >= row + heading
+}
+struct AtomicInvoiceTable {
+    rows: Vec<[String;4]>,
+    next: usize,
+    headers: InvoiceHeaders,
+    color: (u8,u8,u8),
+}
+impl genpdf::Element for AtomicInvoiceTable {
+    fn render(&mut self, context:&genpdf::Context, mut area:genpdf::render::Area<'_>, style:genpdf::style::Style)
+        ->Result<genpdf::RenderResult,genpdf::error::Error> {
+        use genpdf::{Mm,Position,RenderResult};
+        use genpdf::style::{Style,Color};
+        use genpdf::error::{Error,ErrorKind};
+        let fail=|| Error::new("invoice row cannot be laid out safely",ErrorKind::InvalidData);
+        let cache=&context.font_cache;
+        let body:Style=style.and(Style::new().with_font_size(10).with_color(Color::Rgb(24,37,47)));
+        let head:Style=style.and(Style::new().with_font_size(10).with_color(Color::Rgb(self.color.0,self.color.1,self.color.2)));
+        let width=area.size().width;
+        let widths=[width*0.49,width*0.13,width*0.19,width*0.19];
+        let xs=[Mm::from(0.0),widths[0],widths[0]+widths[1],widths[0]+widths[1]+widths[2]];
+        let gap=Mm::from(3.0);
+        let step=body.line_height(cache)*1.18;
+        let header_h=head.line_height(cache)*1.55;
+        let mut result=RenderResult::default();
+        let mut first=true;
+        while self.next<self.rows.len() {
+            let row=&self.rows[self.next];
+            let cap=widths[0]-gap;
+            let lines=wrap_lines(&row[0],|c| ((f64::from(body.char_width(cache,c))+0.25)/f64::from(cap)*400.0) as f32).map_err(|_|fail())?;
+            if lines.is_empty() || lines.iter().all(|v|v.trim().is_empty()) { return Err(fail()); }
+            let row_h=step*(lines.len() as f64)+Mm::from(1.1);
+            // Preflight all columns before writing any glyph for the row.
+            if lines.iter().any(|v|body.str_width(cache,v)>cap) || (1..4).any(|i|body.str_width(cache,&row[i])>widths[i]-gap) {
+                return Err(fail());
+            }
+            if !row_fits(area.size().height,row_h,if first{header_h}else{Mm::from(0.0)}) {break;}
+            if first {
+                for i in 0..4 {
+                    let w=head.str_width(cache,INVOICE_HEADERS[i]);
+                    if w>widths[i]-gap {return Err(fail());}
+                    let x=if i==0 {xs[i]} else {xs[i]+widths[i]-gap-w};
+                    if !area.print_str(cache,Position::new(x,0),head,INVOICE_HEADERS[i])? {return Err(fail());}
+                }
+                self.headers.borrow_mut().push(self.next);
+                result.size.height+=header_h;
+                area.add_offset(Position::new(0,header_h));
+                first=false;
+            }
+            for (j,line) in lines.iter().enumerate() {
+                if !area.print_str(cache,Position::new(0,step*(j as f64)),body,line)? {return Err(fail());}
+            }
+            // Numbers stay with their description on the same page and are right aligned.
+            for i in 1..4 {
+                let w=body.str_width(cache,&row[i]);
+                let x=xs[i]+widths[i]-gap-w;
+                if !area.print_str(cache,Position::new(x,0),body,&row[i])? {return Err(fail());}
+            }
+            result.size.height+=row_h;
+            area.add_offset(Position::new(0,row_h));
+            self.next+=1;
+        }
+        if result.size.height>Mm::from(0.0) {result.size.width=width;}
+        result.has_more=self.next<self.rows.len();
+        Ok(result)
+    }
+}
+fn push_invoice_table(doc:&mut Document,font:&rusttype::Font<'_>,value:&str,color:(u8,u8,u8),headers:InvoiceHeaders)->Result<(), &'static str> {
+    let rows=invoice_cells(value)?;
+    if rows.is_empty() { return push_wrapped(doc,font,"No itemized charges recorded"); }
+    doc.push(AtomicInvoiceTable{rows,next:0,headers,color});
+    Ok(())
+}
+
 fn check_branding(d: &PrintRequest) -> Result<(), &'static str> {
     match (&d.branding, d.protocol) {
         (None, 1) => Ok(()),
         (Some(b), 2) => {
+            palette_rgb(&b.primary_color)?; palette_rgb(&b.secondary_color)?;
             if b.clinic_id != d.clinic_id || b.lines.len() < 2 || b.lines.len() > 7
                 || !b.lines[0].starts_with("Organisation: ") || !b.lines[1].starts_with("Clinic: ")
                 || b.branding_sha256.len() != 64 || !b.branding_sha256.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -133,6 +276,43 @@ fn add_brand_logo(input: &[u8], logo: &Logo) -> Result<Vec<u8>, &'static str> {
     Ok(result)
 }
 
+
+fn add_brand_decoration(input: &[u8], d:&PrintRequest, brand:&Branding) -> Result<Vec<u8>, &'static str> {
+    use lopdf::{Dictionary,Object,Stream};
+    const BAD:&str="invalid decorated PDF";
+    let (r,g,b)=palette_rgb(&brand.primary_color)?;
+    let (r2,g2,b2)=palette_rgb(&brand.secondary_color)?;
+    let rgb=|v:u8| v as f64/255.0;
+    let mut pdf=lopdf::Document::load_mem(input).map_err(|_| BAD)?;
+    let mut fd=Dictionary::new();
+    fd.set("Type",Object::Name(b"Font".to_vec()));fd.set("Subtype",Object::Name(b"Type1".to_vec()));
+    fd.set("BaseFont",Object::Name(b"Helvetica".to_vec()));fd.set("Encoding",Object::Name(b"WinAnsiEncoding".to_vec()));
+    let fid=pdf.add_object(Object::Dictionary(fd));
+    let pages=pdf.get_pages();let total=pages.len();
+    if total==0 || total>100 {return Err(BAD);}
+    for (index,(_,pid)) in pages.into_iter().enumerate() {
+        let page=pdf.get_object(pid).and_then(Object::as_dict).map_err(|_| BAD)?;
+        let old=page.get(b"Contents").map_err(|_| BAD)?.clone();
+        let rid=page.get(b"Resources").and_then(Object::as_reference).map_err(|_| BAD)?;
+        let fonts_id=pdf.get_object(rid).and_then(Object::as_dict).and_then(|v| v.get(b"Font")).and_then(Object::as_reference).map_err(|_| BAD)?;
+        let fonts=pdf.get_object_mut(fonts_id).and_then(Object::as_dict_mut).map_err(|_| BAD)?;
+        if let Ok(v)=fonts.get(b"CSPFooter") { if v.as_reference().map_err(|_| BAD)?!=fid {return Err(BAD);} }
+        else {fonts.set("CSPFooter",Object::Reference(fid));}
+        // Every page is A4 from the pinned generator. Footer and rules are
+        // wholly outside the content frame (top 18/39 mm, bottom 24 mm).
+        let foot=format!("Clinic reference: {} | Record reference: {} | Page {} of {}",d.clinic_id,d.record_id,index+1,total);
+        let overlay=format!("q\n{:.5} {:.5} {:.5} rg\n45 815 505 4 re f\n{:.5} {:.5} {:.5} RG\n0.8 w\n45 57 m 550 57 l S\n0.52 0.12 0.12 rg\nBT /CSPFooter 8 Tf 1 0 0 1 45 40 Tm ({}) Tj ET\n0.12 0.15 0.18 rg\nBT /CSPFooter 8 Tf 1 0 0 1 45 24 Tm ({}) Tj ET\nQ\n",rgb(r),rgb(g),rgb(b),rgb(r2),rgb(g2),rgb(b2),d.watermark,foot);
+        // Fixed warnings contain no PDF string metacharacters; numeric refs only.
+        if d.watermark.contains('(')||d.watermark.contains(')')||d.watermark.contains('\\') {return Err(BAD);}
+        let oid=pdf.add_object(Stream::new(Dictionary::new(),overlay.into_bytes()));
+        let mut contents=match old {Object::Reference(id)=>vec![Object::Reference(id)],Object::Array(v)=>v,_=>return Err(BAD)};
+        if contents.is_empty()||contents.len()>2||contents.iter().any(|v| v.as_reference().is_err()) {return Err(BAD);}
+        contents.push(Object::Reference(oid));
+        pdf.get_object_mut(pid).and_then(Object::as_dict_mut).map_err(|_| BAD)?.set("Contents",Object::Array(contents));
+    }
+    pdf.compress();let mut out=Vec::new();pdf.save_to(&mut out).map_err(|_| BAD)?;Ok(out)
+}
+
 fn check_str(s: &str, max: usize) -> Result<(), &'static str> {
     if s.is_empty()
         || s.len() > max
@@ -212,14 +392,18 @@ fn validate(d: &PrintRequest) -> Result<(), &'static str> {
     if d.source_digest.len() != 64 || !d.source_digest.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("invalid digest");
     }
-    if d.fields.len() != names.len() {
-        return Err("invalid source fields");
+    let extended=d.kind=="invoice" && d.protocol==2 && d.fields.len()==names.len()+2;
+    if d.fields.len()!=names.len() && !extended { return Err("invalid source fields"); }
+    for ((label,text),expected) in d.fields.iter().zip(names) {
+        if label!=expected { return Err("unexpected source fields"); }
+        check_str(text,if label=="Report Text" {12_000} else {300})?;
     }
-    for ((label, text), expected) in d.fields.iter().zip(names) {
-        if label != expected {
-            return Err("unexpected source fields");
-        }
-        check_str(text, if label == "Report Text" { 12_000 } else { 300 })?;
+    if extended {
+        let (k,v)=&d.fields[names.len()];
+        if k!="Invoice Items" {return Err("invalid invoice items");}
+        check_str(v,12_000)?;invoice_cells(v)?;
+        let (k,v)=&d.fields[names.len()+1];
+        if k!="Outstanding Balance" || !money(v) {return Err("invalid outstanding balance");}
     }
     Ok(())
 }
@@ -428,10 +612,10 @@ fn simple_font_code(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
     }).collect()
 }
 
-fn expected_winansi(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
+fn expected_winansi(d: &PrintRequest, headers:&[usize]) -> Result<Vec<u8>, &'static str> {
     let mut text = format!("{} {} {} Clinic reference: {} Record reference: {} Source version: {} ",
         heading_lines(d).join(" "), d.title, d.watermark, d.clinic_id, d.record_id, d.source_version);
-    for (k, v) in &d.fields { text.push_str(k); text.push(':'); text.push_str(v); }
+    for (k, v) in &d.fields { text.push_str(k); text.push(':'); text.push_str(&shown_value(k,v,headers)); }
     text.push_str("SOURCE SHA-256:"); text.push_str(&d.source_digest);
     text.push_str("This copy does not prove payment, clinical verification, diagnosis, signature, delivery, or chart release.");
     text.chars().filter(|c| !c.is_whitespace()).map(|c| winansi_byte(c).ok_or("unsupported expected WinAnsi text")).collect()
@@ -495,6 +679,7 @@ fn correct_builtin_encoding(input: &[u8], expected: &[u8]) -> Result<Vec<u8>, &'
                     }
                 }
                 "TL" | "Td" if in_text => (),
+                "rg" | "RG" if valid_rgb_op(op) => (),
                 "BDC" | "EMC" | "q" | "Q" if !in_text => (),
                 _ => return Err(BAD),
             }
@@ -549,10 +734,10 @@ impl UnicodeCodes {
         out.into_bytes()
     }
 }
-fn source_unicode_chars(d: &PrintRequest) -> Vec<char> {
+fn source_unicode_chars(d: &PrintRequest, headers:&[usize]) -> Vec<char> {
     let mut text = format!("{} {} {} Clinic reference: {} Record reference: {} Source version: {} ",
         heading_lines(d).join(" "), d.title, d.watermark, d.clinic_id, d.record_id, d.source_version);
-    for (k, v) in &d.fields { text.push_str(k); text.push(':'); text.push_str(v); }
+    for (k, v) in &d.fields { text.push_str(k); text.push(':'); text.push_str(&shown_value(k,v,headers)); }
     text.push_str("SOURCE SHA-256:"); text.push_str(&d.source_digest);
     text.push_str("This copy does not prove payment, clinical verification, diagnosis, signature, delivery, or chart release.");
     text.chars().filter(|c| !c.is_whitespace()).collect()
@@ -591,13 +776,13 @@ fn embedded_widths(items: &[lopdf::Object]) -> Result<std::collections::BTreeMap
     }
     Ok(widths)
 }
-fn correct_embedded_encoding(input: &[u8], d: &PrintRequest, font: &rusttype::Font<'_>) -> Result<Vec<u8>, &'static str> {
+fn correct_embedded_encoding(input: &[u8], d: &PrintRequest, font: &rusttype::Font<'_>, headers:&[usize]) -> Result<Vec<u8>, &'static str> {
     use lopdf::{content::Content, Dictionary, Object, Stream};
     const BAD: &str = "invalid generated embedded font PDF";
     // Bounded internal representation only. The public output cap stays 3 MiB.
     if input.len() > 8 * 1024 * 1024 { return Err(BAD); }
     let mut pdf = lopdf::Document::load_mem(input).map_err(|_| BAD)?;
-    let source = source_unicode_chars(d);
+    let source = source_unicode_chars(d,headers);
     let mut expected = source.into_iter();
     let glyph = |c: char| font.glyph(c).id().0;
     let space = glyph(' ');
@@ -652,6 +837,7 @@ fn correct_embedded_encoding(input: &[u8], d: &PrintRequest, font: &rusttype::Fo
                     }
                 }
                 "TL" | "Td" if in_text => (),
+                "rg" | "RG" if valid_rgb_op(op) => (),
                 "BDC" | "EMC" | "q" | "Q" if !in_text => (),
                 _ => return Err(BAD),
             }
@@ -706,9 +892,11 @@ fn correct_embedded_encoding(input: &[u8], d: &PrintRequest, font: &rusttype::Fo
 
 fn render(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
     let headings = heading_lines(d);
+    let invoice_headers:InvoiceHeaders=Default::default();
+    let display:Vec<(String,String)>=d.fields.iter().map(|(k,v)|(k.clone(),shown_value(k,v,&[0]))).collect();
     let requested_texts: Vec<&str> = headings.iter().map(|v| v.as_str()).chain(std::iter::once(d.title.as_str()))
         .chain(std::iter::once(d.watermark.as_str()))
-        .chain(d.fields.iter().flat_map(|(k, v)| [k.as_str(), v.as_str()]))
+        .chain(display.iter().flat_map(|(k, v)| [k.as_str(), v.as_str()]))
         .collect();
     let metric_fonts = if requested_texts
         .iter()
@@ -750,22 +938,38 @@ fn render(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
     doc.set_minimal_conformance();
     doc.set_font_size(10);
     let mut decorator = SimplePageDecorator::new();
-    if d.branding.as_ref().and_then(|b| b.logo.as_ref()).is_some() {
-        decorator.set_margins(genpdf::Margins::trbl(39, 14, 14, 14));
-    } else {
-        decorator.set_margins(14);
-    }
+    if let Some(b)=&d.branding {
+        decorator.set_margins(genpdf::Margins::trbl(if b.logo.is_some(){39}else{18},14,24,14));
+    } else { decorator.set_margins(14); }
     doc.set_page_decorator(decorator);
-    for line in &headings { push_wrapped(&mut doc, &check_font, line)?; }
-    push_wrapped(&mut doc, &check_font, d.title.as_str())?;
-    push_wrapped(&mut doc, &check_font, d.watermark.as_str())?;
+    if let Some(b)=&d.branding {
+        let primary=palette_rgb(&b.primary_color)?;let secondary=palette_rgb(&b.secondary_color)?;
+        for (i,line) in headings.iter().enumerate() {
+            push_styled(&mut doc,&check_font,line,if i==0{15}else if i==1{12}else{9},if i==0{primary}else{secondary})?;
+        }
+        doc.push(elements::Break::new(0.35));
+        push_styled(&mut doc,&check_font,d.title.as_str(),20,primary)?;
+        push_styled(&mut doc,&check_font,d.watermark.as_str(),9,(132,32,32))?;
+    } else {
+        for line in &headings { push_wrapped(&mut doc,&check_font,line)?; }
+        push_wrapped(&mut doc,&check_font,d.title.as_str())?;
+        push_wrapped(&mut doc,&check_font,d.watermark.as_str())?;
+    }
     push_wrapped(&mut doc, &check_font, &format!(
         "Clinic reference: {}   Record reference: {}", d.clinic_id, d.record_id
     ))?;
     push_wrapped(&mut doc, &check_font, &format!("Source version: {}", d.source_version))?;
-    for (label, value) in &d.fields {
-        push_wrapped(&mut doc, &check_font, &format!("{}:", label))?;
-        push_wrapped(&mut doc, &check_font, value)?;
+    for (label,value) in &d.fields {
+        if let Some(b)=&d.branding {
+            let secondary=palette_rgb(&b.secondary_color)?;
+            push_styled(&mut doc,&check_font,&format!("{}:",label),9,secondary)?;
+            if label=="Invoice Items" { push_invoice_table(&mut doc,&check_font,value,secondary,invoice_headers.clone())?; }
+            else if label=="Outstanding Balance" {push_styled(&mut doc,&check_font,value,16,palette_rgb(&b.primary_color)?)?;}
+            else {push_styled(&mut doc,&check_font,value,10,(24,37,47))?;}
+        } else {
+            push_wrapped(&mut doc,&check_font,&format!("{}:",label))?;
+            push_wrapped(&mut doc,&check_font,value)?;
+        }
     }
     // Preserve the complete digest; validate() requires exactly 64 ASCII hex bytes.
     push_wrapped(&mut doc, &check_font, "SOURCE SHA-256:")?;
@@ -775,14 +979,20 @@ fn render(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
     push_wrapped(&mut doc, &check_font, "This copy does not prove payment, clinical verification, diagnosis, signature, delivery, or chart release.")?;
     let mut result = Vec::new();
     doc.render(&mut result).map_err(|_| "pdf render failed")?;
+    let headers=invoice_headers.borrow();
+    if let Some((_,value))=d.fields.iter().find(|(k,_)|k=="Invoice Items") {
+        let count=invoice_cells(value)?.len();
+        if count>0 && (headers.first()!=Some(&0) || headers.windows(2).any(|p|p[0]>=p[1]) || headers.last().map_or(true,|v|*v>=count)) {return Err("invalid invoice page inventory");}
+    }
     if use_builtin {
-        result = correct_builtin_encoding(&result, &expected_winansi(d)?)?;
+        result = correct_builtin_encoding(&result, &expected_winansi(d,&headers)?)?;
     } else {
-        result = correct_embedded_encoding(&result, d, &check_font)?;
+        result = correct_embedded_encoding(&result, d, &check_font,&headers)?;
     }
     if let Some(logo) = d.branding.as_ref().and_then(|b| b.logo.as_ref()) {
         result = add_brand_logo(&result, logo)?;
     }
+    if let Some(b)=&d.branding { result=add_brand_decoration(&result,d,b)?; }
     if !result.starts_with(b"%PDF-") || result.len() > MAX_PDF {
         return Err("invalid pdf output");
     }
@@ -817,6 +1027,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn invoice_row_and_heading_must_fit_together() {
+        use genpdf::Mm;
+        assert!(!row_fits(Mm::from(20.0),Mm::from(16.0),Mm::from(5.0)));
+        assert!(row_fits(Mm::from(21.0),Mm::from(16.0),Mm::from(5.0)));
+        assert!(!row_fits(Mm::from(15.0),Mm::from(16.0),Mm::from(0.0)));
+    }
+    #[test]
+    fn invoice_encoding_expectation_includes_each_repeated_heading() {
+        let rows=r#"[["First","1","1.00","1.00"],["Second","2","2.00","4.00"]]"#;
+        let got=shown_invoice(rows,&[0,1]);
+        assert_eq!(got.split_whitespace().collect::<Vec<_>>().join(" "),"Description Quantity Unit price Subtotal First 1 1.00 1.00 Description Quantity Unit price Subtotal Second 2 2.00 4.00");
+    }
     #[test]
     fn rejects_nonclinical_kind_and_signed() {
         let mut d = PrintRequest {
