@@ -43,6 +43,12 @@ struct Branding {
     primary_color:String,
     #[serde(default="default_secondary")]
     secondary_color:String,
+    #[serde(default)]
+    verification_url:Option<String>,
+    #[serde(default)]
+    issued_at:Option<String>,
+    #[serde(default)]
+    verification_rows:Option<Vec<String>>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -194,6 +200,16 @@ fn check_branding(d: &PrintRequest) -> Result<(), &'static str> {
         (None, 1) => Ok(()),
         (Some(b), 2 | 3) => {
             palette_rgb(&b.primary_color)?; palette_rgb(&b.secondary_color)?;
+            match (&b.verification_url,&b.issued_at,&b.verification_rows) {
+                (None,None,None)=>(),
+                (Some(url),Some(stamp),Some(rows)) if d.protocol==3 => {
+                    let n=rows.len();
+                    if !(29..=65).contains(&n)||rows.iter().any(|r|r.len()!=n||!r.bytes().all(|c|matches!(c,b'0'|b'1')))||rows.iter().enumerate().any(|(i,r)|r.bytes().enumerate().any(|(j,c)|(i<4||j<4||i>=n-4||j>=n-4)&&c==b'1')){return Err("invalid verification matrix");}
+                    let (origin,token)=url.split_once("/api/v1/printing/verify/").ok_or("invalid verification URL")?;
+                    let host=origin.strip_prefix("https://").ok_or("invalid verification origin")?;
+                    if host.is_empty() || host.len()>100 || !host.bytes().all(|c|c.is_ascii_alphanumeric()||matches!(c,b'.'|b'-'|b':')) || token.len()!=32 || !token.bytes().all(|c|matches!(c,b'0'..=b'9'|b'a'..=b'f')) || stamp.is_empty() || stamp.len()>100 || stamp.chars().any(|c|c.is_control()) {return Err("invalid verification metadata");}
+                },_=>return Err("invalid verification metadata"),
+            }
             if b.clinic_id != d.clinic_id || b.lines.len() < 2 || b.lines.len() > 7
                 || !b.lines[0].starts_with("Organisation: ") || !b.lines[1].starts_with("Clinic: ")
                 || b.branding_sha256.len() != 64 || !b.branding_sha256.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -398,7 +414,17 @@ fn validate(d: &PrintRequest) -> Result<(), &'static str> {
         return Err("invalid digest");
     }
     let extended=d.kind=="invoice" && matches!(d.protocol,2|3) && d.fields.len()==names.len()+2;
-    if d.fields.len()!=names.len() && !extended { return Err("invalid source fields"); }
+    let extra: &[&str] = match d.kind.as_str() {
+        "invoice" => &["Patient Name", "Created Date"],
+        "appointment" => &["Patient Name", "Assigned Staff Name"],
+        "lab_order" => &["Patient Name", "Age At Order", "Recorded Gender", "Ordered By", "Ordered Tests"],
+        "radiology_draft" => &["Patient Name", "Modality", "Body Part", "Report Author", "Signature Status"],
+        _ => &[],
+    };
+    let enriched = d.protocol==3 && d.fields.len()==names.len()+extra.len()+(if d.kind=="invoice" {2} else {0});
+    let extended = extended || (enriched && d.kind=="invoice");
+    if d.fields.len()!=names.len() && !extended && !enriched { return Err("invalid source fields"); }
+    if extended && d.fields.len()!=names.len()+2 && !enriched { return Err("invalid source fields"); }
     for ((label,text),expected) in d.fields.iter().zip(names) {
         if label!=expected { return Err("unexpected source fields"); }
         check_str(text,if label=="Report Text" {12_000} else {300})?;
@@ -410,7 +436,26 @@ fn validate(d: &PrintRequest) -> Result<(), &'static str> {
         let (k,v)=&d.fields[names.len()+1];
         if k!="Outstanding Balance" || !money(v) {return Err("invalid outstanding balance");}
     }
+    if enriched {
+        let offset=names.len()+(if extended {2} else {0});
+        for ((label,value),expected) in d.fields[offset..].iter().zip(extra) {
+            if label!=expected { return Err("invalid enriched source field"); }
+            check_str(value,if label=="Ordered Tests" {12000} else {300})?;
+            if label=="Ordered Tests" { ordered_tests(value)?; }
+            if label=="Signature Status" && value!="Unsigned controlled copy" { return Err("invalid signature status"); }
+        }
+    }
     Ok(())
+}
+
+fn ordered_tests(value:&str)->Result<Vec<[String;3]>, &'static str> {
+    let rows:Vec<[String;3]>=serde_json::from_str(value).map_err(|_|"invalid ordered tests")?;
+    if rows.is_empty() || rows.len()>100 { return Err("invalid ordered tests"); }
+    for row in &rows {
+        if row[2]!="Not recorded" {return Err("unrecorded lab priority");}
+        for cell in row {check_str(cell,600)?;if cell.trim().is_empty()||cell.chars().count()>150||cell.chars().any(|c|c.is_control()){return Err("invalid ordered test cell");}}
+    }
+    Ok(rows)
 }
 
 fn font_paths() -> Result<[PathBuf; 4], &'static str> {

@@ -498,3 +498,6 @@ __all__ = [
     # Department
     "Department",
 ]
+
+from app.modules.printing.services.verification import PrintIssuance
+__all__.append("PrintIssuance")

@@ -1,7 +1,7 @@
 //! Native painter for the bounded server-generated professional presentation plan.
 //! The legacy protocol and L02 correction routines are unchanged. This path
 //! allocates distinct source-Unicode CIDs from the outset for both font faces.
-use super::{PrintRequest, UnicodeCodes, check_str, palette_rgb, invoice_cells, MAX_PDF};
+use super::{PrintRequest, UnicodeCodes, check_str, palette_rgb, invoice_cells, ordered_tests, MAX_PDF};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 use serde::Deserialize;
 use std::fmt::Write as _;
@@ -38,7 +38,10 @@ fn color_ok(s:&str,p:&str,q:&str)->bool {s==p||s==q||matches!(s,"#142A3A"|"#5365
 fn box_ok(x:f64,y:f64,w:f64,h:f64)->bool {x.is_finite()&&y.is_finite()&&w.is_finite()&&h.is_finite()&&x>=44.8&&y>=21.8&&w>0.&&h>0.&&x+w<=W-44.8&&y+h<=H-17.8}
 fn fields_expected(d:&PrintRequest)->Result<String,&'static str>{
     let mut body=String::new();
-    for(k,v) in &d.fields {if !matches!(k.as_str(),"Invoice Items"|"Outstanding Balance"|"Report Text"){body.push_str(k);body.push_str(v);}}
+    let enriched=d.fields.iter().any(|(k,_)|k=="Patient Name");
+    let mut pairs=d.fields.iter().filter(|(k,_)|!matches!(k.as_str(),"Invoice Items"|"Outstanding Balance"|"Report Text"|"Ordered Tests")).collect::<Vec<_>>();
+    if enriched {pairs.sort_by_key(|(k,_)|if k=="Patient Name" {0} else if k=="Patient Id" {1} else {2});}
+    for(k,v) in pairs {body.push_str(k);body.push_str(v);}
     let _=write!(body,"Clinic reference{}Record reference{}Source version{}",d.clinic_id,d.record_id,d.source_version);
     if let Some((_,items))=d.fields.iter().find(|(k,_)|k=="Invoice Items") {
         body.push_str("Invoice Items");let rows=invoice_cells(items)?;
@@ -46,7 +49,15 @@ fn fields_expected(d:&PrintRequest)->Result<String,&'static str>{
         for row in rows {for cell in row {body.push_str(&cell);}}
         let amount=d.fields.iter().find(|(k,_)|k=="Outstanding Balance").ok_or(BAD)?;
         let currency=d.fields.iter().find(|(k,_)|k=="Currency").ok_or(BAD)?;
-        body.push_str("Outstanding Balance");body.push_str(&currency.1);body.push_str(&amount.1);
+        body.push_str(if enriched {"Balance Due"} else {"Outstanding Balance"});body.push_str(&currency.1);
+        if enriched {
+            let (whole,cents)=amount.1.split_once('.').ok_or(BAD)?;let whole=whole.trim_start_matches('0');let whole=if whole.is_empty(){"0"}else{whole};
+            for (i,c) in whole.chars().enumerate(){if i>0&&(whole.len()-i)%3==0{body.push(',');}body.push(c);}
+            body.push('.');body.push_str(cents);
+        } else {body.push_str(&amount.1);}
+    }
+    if let Some((_,items))=d.fields.iter().find(|(k,_)|k=="Ordered Tests") {
+        body.push_str("Ordered Tests"); for row in ordered_tests(items)? { for cell in row {body.push_str(&cell);} }
     }
     if let Some((_,report))=d.fields.iter().find(|(k,_)|k=="Report Text") {body.push_str("Report Text");body.push_str(report);}
     Ok(norm(&body))
@@ -59,6 +70,7 @@ fn validate_plan(d:&PrintRequest,plan:&Plan)->Result<(),&'static str>{
     let header=norm(&format!("{}{}{}{}{}CONTROLLED DOCUMENT COPY",org,clinic,b.lines[2..].join(" | "),d.title,d.watermark));
     let mut body=String::new();let mut n=0;
     let has_items=match d.fields.iter().find(|(k,_)|k=="Invoice Items") {Some((_,v))=>!invoice_cells(v)?.is_empty(),None=>false};
+    let has_tests=d.fields.iter().any(|(k,_)|k=="Ordered Tests");
     let mut table_seen=false;
     for (i,page) in plan.pages.iter().enumerate(){
         if page.text.is_empty()||page.text.len()>1500||page.rects.len()>1000{return Err(BAD)}
@@ -78,17 +90,32 @@ fn validate_plan(d:&PrintRequest,plan:&Plan)->Result<(),&'static str>{
                 "header" if phase==0&&t.color!="#FFFFFF"&&t.y<H-137.=>head.push_str(&t.text),
                 "warning" if phase==0&&t.color=="#842020"&&t.y<H-137.=>{head.push_str(&t.text);warning.push_str(&t.text);},
                 "body" if phase<=1&&t.color!="#FFFFFF"&&t.y<H-137.=>{phase=1;body.push_str(&t.text);},
-                "table_header" if phase<=1&&has_items&&t.color=="#FFFFFF"&&t.y<H-137.=>{phase=1;tab.push_str(&t.text);},
+                "table_header" if phase<=1&&(has_items||has_tests)&&t.color=="#FFFFFF"&&t.y<H-137.=>{phase=1;tab.push_str(&t.text);},
                 "footer" if t.color!="#FFFFFF"&&t.y>=H-132.=>{phase=2;foot.push_str(&t.text);},
                 "disclaimer" if t.color=="#842020"&&t.y>=H-132.=>{phase=2;foot.push_str(&t.text);disclaimer.push_str(&t.text);},_=>return Err(BAD),
             }
         }
-        if !tab.is_empty(){if norm(&tab)!="DescriptionQuantityUnitpriceSubtotal" {return Err(BAD)}table_seen=true;}
-        let expected_footer=norm(&format!("SOURCE SHA-256: {} BRANDING SHA-256: {} {} Page {} of {}",d.source_digest,b.branding_sha256,DISCLAIMER,i+1,plan.pages.len()));
+        if !tab.is_empty(){if norm(&tab)!=(if has_tests {"TestSpecimenPriority"} else {"DescriptionQuantityUnitpriceSubtotal"}) {return Err(BAD)}table_seen=true;}
+        let extra=match (&b.verification_url,&b.issued_at) {
+            (Some(url),Some(stamp))=>format!("Generated: {} Verification: {} Powered by Stryka-Max",stamp,url.rsplit('/').next().ok_or(BAD)?),
+            (None,None)=>String::new(),_=>return Err(BAD),
+        };
+        let expected_footer=norm(&format!("SOURCE SHA-256: {} BRANDING SHA-256: {} {} {} Page {} of {}",d.source_digest,b.branding_sha256,DISCLAIMER,extra,i+1,plan.pages.len()));
         if norm(&head)!=header||norm(&foot)!=expected_footer||norm(&warning)!=norm(&d.watermark)||norm(&disclaimer)!=norm(DISCLAIMER){return Err(BAD)}
-        for r in &page.rects {if !box_ok(r.x,r.y,r.w,r.h)||!color_ok(&r.color,&b.primary_color,&b.secondary_color){return Err(BAD)}}
+        let mut qr_rects=Vec::new();
+        for r in &page.rects {
+            if !box_ok(r.x,r.y,r.w,r.h)||!color_ok(&r.color,&b.primary_color,&b.secondary_color){return Err(BAD)}
+            if r.y>H-132.+1. {qr_rects.push(r);}
+        }
+        if let Some(rows)=&b.verification_rows {
+            let x=W-45.-84.;let y=H-120.;let step=84./rows.len() as f64;
+            let mut expected=vec![(x,y,84.,84.,"#FFFFFF")];
+            for (i,row) in rows.iter().enumerate(){let bytes=row.as_bytes();let mut j=0;while j<bytes.len(){if bytes[j]==b'0'{j+=1;continue;}let start=j;while j<bytes.len()&&bytes[j]==b'1'{j+=1;}expected.push((x+start as f64*step,y+i as f64*step,(j-start) as f64*step,step,"#142A3A"));}}
+            if qr_rects.len()!=expected.len()||expected.len()<50{return Err(BAD)}
+            for (r,(x,y,w,h,c)) in qr_rects.iter().zip(expected){if (r.x-x).abs()>0.001||(r.y-y).abs()>0.001||(r.w-w).abs()>0.001||(r.h-h).abs()>0.001||r.color!=c{return Err(BAD)}}
+        }else if !qr_rects.is_empty(){return Err(BAD)}
     }
-    if table_seen!=has_items||norm(&body)!=fields_expected(d)?{return Err(BAD)}
+    if table_seen!=(has_items||has_tests)||norm(&body)!=fields_expected(d)?{return Err(BAD)}
     Ok(())
 }
 struct Face {raw:Vec<u8>,font:rusttype::Font<'static>,codes:UnicodeCodes,ps:&'static str,bold:bool}

@@ -34,6 +34,34 @@ _FIELDS = {
     'staged_radiology_copy': ('patient_id','released_at','report_text'),
     'radiology_draft': ('imaging_order_id', 'accession_number', 'report_revision', 'report_text'),
 }
+_ENRICHED = {
+    'invoice': ('patient_name', 'created_date'),
+    'appointment': ('patient_name', 'assigned_staff_name'),
+    'lab_order': ('patient_name', 'age_at_order', 'recorded_gender', 'ordered_by', 'ordered_tests'),
+    'radiology_draft': ('patient_name', 'modality', 'body_part', 'report_author', 'signature_status'),
+    'released_lab_result': ('patient_name',),
+    'staged_radiology_copy': ('patient_name', 'modality', 'body_part', 'report_author', 'signature_status'),
+}
+
+
+def ordered_test_rows(raw):
+    import json
+    if not isinstance(raw, str) or len(raw.encode('utf8')) > 12000:
+        raise PrintDenied('Invalid ordered test inventory')
+    try:
+        rows = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise PrintDenied('Invalid ordered test inventory') from exc
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 100 or json.dumps(rows, ensure_ascii=False, separators=(',', ':')) != raw:
+        raise PrintDenied('Invalid ordered test inventory')
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 3 or any(not isinstance(v, str) or not v.strip() or len(v) > 150 or any(ord(c)<32 or ord(c)==127 for c in v) for v in row):
+            raise PrintDenied('Invalid ordered test row')
+        if row[2] != 'Not recorded':
+            raise PrintDenied('Unrecorded lab priority')
+    return rows
+
+
 _MAX_TEXT = {'invoice': 300, 'appointment': 300, 'lab_order': 300, 'radiology_draft': 12000, 'released_lab_result': 12000, 'staged_radiology_copy': 12000}
 
 class PrintDenied(ValueError):
@@ -128,14 +156,22 @@ def build_document(*, kind: str, clinic_id: int, record_id: int,
     if type(source_version) is not int or source_version < 0 or (kind in ('radiology_draft','released_lab_result','staged_radiology_copy') and source_version==0):
         raise PrintDenied('Unknown source version')
     names = _FIELDS[kind]
-    if kind == 'invoice' and set(source) == set(names) | {'invoice_items', 'outstanding_balance'}:
+    if kind == 'invoice' and {'invoice_items', 'outstanding_balance'} <= set(source):
         names = (*names, 'invoice_items', 'outstanding_balance')
+    if set(source) == set(names) | set(_ENRICHED[kind]):
+        if kind == 'invoice' and 'invoice_items' not in names:
+            raise PrintDenied('Enriched invoice requires canonical amounts')
+        names = (*names, *_ENRICHED[kind])
     if set(source) != set(names):
         raise PrintDenied('Unexpected or missing source fields')
     if 'invoice_items' in names:
         _validate_invoice_extension(source)
+    if 'ordered_tests' in names:
+        ordered_test_rows(source['ordered_tests'])
+    if 'signature_status' in names and source['signature_status'] != 'Unsigned controlled copy':
+        raise PrintDenied('Invalid signature status')
     fields = tuple((key.replace('_', ' ').title(),
-                    _safe_text(source[key], _MAX_TEXT[kind] if key == 'report_text' else 12000 if key == 'invoice_items' else 300))
+                    _safe_text(source[key], _MAX_TEXT[kind] if key == 'report_text' else 12000 if key in ('invoice_items', 'ordered_tests') else 300))
                    for key in names)
     canonical = '|'.join(f'{len(k)}:{k}:{len(v)}:{v}' for k,v in fields)
     digest = sha256((f'{kind}|{clinic_id}|{record_id}|{source_version}|'+canonical).encode('utf8')).hexdigest()

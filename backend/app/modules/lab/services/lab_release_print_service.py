@@ -37,9 +37,11 @@ def released_pdf(*, order_id, clinic_id, user_id):
     if report.get('correction_verified_at') is not None:
         lines.insert(0, 'Correction verified at: '+field(report['correction_verified_at']))
     text = '\n'.join(lines)
+    from app.modules.printing.services import hospital_grade as grade
+    extra = grade.patient_fields(patient.id, clinic_id) if grade.enabled() else {}
     doc = build_document(kind='released_lab_result',clinic_id=clinic_id,record_id=order.id,
         source_version=report.get('record_version',1),source={'patient_id':patient.id,'verified_at':report['verified_at'],
-        'completed_at':report['completed_at'],'released_at':report['released_at'],'report_text':text})
+        'completed_at':report['completed_at'],'released_at':report['released_at'],'report_text':text,**extra})
     data, branding_audit = render_authorized(doc, render_pdf, owning_clinic_id=order.clinic_id, lab_rows=tuple(structured), correction=field(report['correction_verified_at']) if report.get('correction_verified_at') is not None else None)
     create_audit_log(action=AuditAction.VIEW,entity_type='LabOrder',entity_id=order.id,clinic_id=clinic_id,patient_id=patient.id,user_id=user_id,
         description='Patient downloaded current approved laboratory report copy',new_value={'record_version':doc.source_version,'source_digest':doc.source_digest,**branding_audit})

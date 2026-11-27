@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.extensions import db
 from app.modules.printing.services.print_policy import authorize, build_document, PrintDenied
+from . import hospital_grade as grade
 
 
 def _row(model, *, record_id: int, clinic_id: int):
@@ -67,6 +68,8 @@ def snapshot(*, kind: str, record_id: int, clinic_id: int,
                 raise PrintDenied('Itemized invoice total mismatch')
             fields.update(total_amount=format(row.total_amount,'.2f'),amount_paid=format(row.amount_paid,'.2f'),invoice_items=json.dumps(cells,ensure_ascii=False,separators=(',',':')),
                           outstanding_balance=format(row.total_amount-row.amount_paid,'.2f'))
+        if grade.enabled():
+            fields.update(grade.patient_fields(row.patient_id, clinic_id), created_date=grade.stamp(row.created_at))
         return build_document(kind=kind,clinic_id=clinic_id,record_id=row.id,
                               source_version=0,source=fields)
     if kind=='appointment':
@@ -78,6 +81,9 @@ def snapshot(*, kind: str, record_id: int, clinic_id: int,
         fields={'patient_id':row.patient_id,'assigned_staff_id':row.staff_id,
                 'status':_text(row.status),'scheduled_start':str(row.scheduled_start),
                 'scheduled_end':str(row.scheduled_end)}
+        if grade.enabled():
+            fields.update(grade.patient_fields(row.patient_id, clinic_id), assigned_staff_name=grade.staff_name(row.staff_id, clinic_id),
+                          scheduled_start=grade.stamp(row.scheduled_start), scheduled_end=grade.stamp(row.scheduled_end))
         return build_document(kind=kind,clinic_id=clinic_id,record_id=row.id,
                               source_version=0,source=fields)
     if kind=='lab_order':
@@ -88,6 +94,9 @@ def snapshot(*, kind: str, record_id: int, clinic_id: int,
         fields={'patient_id':row.patient_id,'status':_text(row.status),
                 'created_at':str(row.created_at),
                 'sample_collected_at':str(row.sample_collected_at) if row.sample_collected_at else 'NOT COLLECTED'}
+        if grade.enabled():
+            fields.update(grade.patient_fields(row.patient_id, clinic_id, row.created_at), ordered_by=grade.staff_name(row.ordered_by_id, clinic_id),
+                          ordered_tests=grade.lab_tests(row), created_at=grade.stamp(row.created_at), sample_collected_at=grade.stamp(row.sample_collected_at))
         return build_document(kind=kind,clinic_id=clinic_id,record_id=row.id,
                               source_version=0,source=fields)
     if kind=='radiology_draft':
@@ -115,6 +124,8 @@ def snapshot(*, kind: str, record_id: int, clinic_id: int,
             raise PrintDenied('Draft version integrity unavailable')
         fields={'imaging_order_id':order.id,'accession_number':exam.accession_number,
                 'report_revision':version.revision,'report_text':version.content}
+        if grade.enabled():
+            fields.update(grade.radiology_fields(order, report.author_staff_id))
         return build_document(kind=kind,clinic_id=clinic_id,record_id=exam.id,
                               source_version=version.revision,source=fields)
     raise PrintDenied('Unknown print source')

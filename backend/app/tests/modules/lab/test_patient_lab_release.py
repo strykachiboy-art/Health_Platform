@@ -665,3 +665,21 @@ def test_l05r2b_real_structured_lab_release(scenario,db,app,tmp_path):
     write_artifact(tmp_path,'l05r2b_real_lab',r.data,{'report':own_detail(s).get_json()['data'],'branding':dict(brand.metadata),'audit':a,'clinic_id':clinic.id,'record_id':s['order'].id,'patient_id':s['patient'].id})
     assert s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-withdrawal",json={'reason_code':'clinical_correction'},headers=s['doctor_headers']).status_code==200
     assert s['client'].get(path,headers=s['patient_headers']).status_code==404
+
+
+
+def test_l05r2e_real_released_lab_issuance(scenario,db,app,monkeypatch,tmp_path):
+    from app.modules.printing.services.verification import PrintIssuance
+    from app.tests.modules.printing.test_hospital_grade_printing import activate,captured_reservations,receipt
+    from app.tests.modules.printing.test_branded_rendering import seed_logo
+    from app.modules.clinic.models.clinic_model import Clinic
+    s=scenario;finalize(s);release_valid(s)
+    seed_logo(db.session.get(Clinic,s['order'].clinic_id));activate(app);reserved=captured_reservations(monkeypatch)
+    path=f"/api/v1/lab/me/released-results/{s['order'].id}/pdf"
+    r=s['client'].get(path,headers=s['patient_headers']);assert r.headers.get('X-Clinical-Release')=='patient-copy'
+    receipt(s['client'],r,reserved[-1],'r2e_real_released_lab',tmp_path)
+    assert db.session.query(PrintIssuance).count()==1
+    assert s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-withdrawal",json={'reason_code':'clinical_correction'},headers=s['doctor_headers']).status_code==200
+    assert s['client'].get(path,headers=s['patient_headers']).status_code==404
+    # Previously issued bytes remain historical evidence, NOT current release.
+    assert s['client'].get('/api/v1/printing/verify/'+reserved[0][0]).get_json()['data']['status']=='historical_issuance_only'

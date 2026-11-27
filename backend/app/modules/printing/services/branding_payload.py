@@ -25,11 +25,17 @@ class PrintBranding:
     secondary_color: str = "#475569"
     lab_rows: tuple | None = None
     correction: str | None = None
+    verification_url: str | None = None
+    issued_at: str | None = None
 
     def wire(self):
-        return {'clinic_id': self.clinic_id, 'lines': list(self.lines),
+        result = {'clinic_id': self.clinic_id, 'lines': list(self.lines),
                 'branding_sha256': self.branding_sha256, 'primary_color': self.primary_color, 'secondary_color': self.secondary_color,
                 'logo': None if self.rgb is None else {'width': self.width, 'height': self.height, 'rgb_hex': self.rgb.hex()}}
+        if self.verification_url is not None:
+            from .verification_qr import rows_for
+            result.update(verification_url=self.verification_url, issued_at=self.issued_at, verification_rows=list(rows_for(self.verification_url)))
+        return result
 
     def png(self):
         if self.rgb is None:
@@ -99,6 +105,8 @@ def brand_lines(branding):
 
 def render_authorized(doc, renderer, *, owning_clinic_id, lab_rows=None, correction=None):
     branding = prepare_branding(doc, owning_clinic_id=owning_clinic_id)
+    from . import verification
+    verify = verification.enabled()
     if branding is None:
         return renderer(doc), {}
     if lab_rows is not None:
@@ -107,9 +115,15 @@ def render_authorized(doc, renderer, *, owning_clinic_id, lab_rows=None, correct
         if doc.kind != 'released_lab_result' or canonical_lab_text(lab_rows, correction) != dict(doc.fields)['Report Text']:
             raise PrintDenied('Structured laboratory source mismatch')
         branding = replace(branding, lab_rows=lab_rows, correction=correction)
+    if verify:
+        from dataclasses import replace
+        from .hospital_grade import stamp
+        token, url, issued = verification.reserve()
+        branding = replace(branding, verification_url=url, issued_at=stamp(issued))
     data = renderer(doc, branding=branding)
     if not isinstance(data, bytes) or not data.startswith(b'%PDF-') or not data.rstrip().endswith(b'%%EOF') or len(data)>3*1024*1024:
         raise PrintDenied('Print renderer unavailable')
-    return data, {'branding_sha256': branding.branding_sha256, 'logo_sha256': branding.logo_sha256,
+    issuance = {'verification_token_sha256': verification.store(doc, token, data, issued)} if verify else {}
+    return data, {**issuance, 'branding_sha256': branding.branding_sha256, 'logo_sha256': branding.logo_sha256,
                   'logo_source': branding.logo_source, 'organization_branding_version': branding.organization_version,
                   'clinic_branding_version': branding.clinic_version, 'pdf_sha256': sha256(data).hexdigest()}

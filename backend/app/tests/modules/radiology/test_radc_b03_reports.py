@@ -236,3 +236,22 @@ def test_l05r2_real_branded_radiology(ready,app,client,tmp_path):
     legacy=client.get(url,headers=s['patient_headers']);assert legacy.status_code==200 and legacy.headers['X-Source-SHA256']==r.headers['X-Source-SHA256']
     write_artifact(tmp_path,'l05r2_legacy_rad',legacy.data,{'source_digest':legacy.headers['X-Source-SHA256']})
     report.withdraw(**args(s),expected_version=1);assert client.get(url,headers=s['patient_headers']).status_code==404
+
+
+
+def test_l05r2e_real_radiology_issuance(ready,app,client,monkeypatch,tmp_path):
+    from app.modules.printing.services.verification import PrintIssuance
+    from app.tests.modules.printing.test_hospital_grade_printing import activate,captured_reservations,receipt
+    from app.tests.modules.printing.test_branded_rendering import seed_logo
+    s,_,_=ready;seed_logo(s['clinic']);activate(app);reserved=captured_reservations(monkeypatch)
+    eid=s['args']['exam_id'];cid=s['clinic'].id
+    doc=snapshot(kind='radiology_draft',record_id=eid,clinic_id=cid,actor_role='DOCTOR',actor_staff_id=s['doctor'].id)
+    f=dict(doc.fields);assert f['Patient Name'] and f['Modality'] and f['Report Author'] and f['Signature Status']=='Unsigned controlled copy'
+    r=client.get(f'/api/v1/printing/radiology_draft/{eid}.pdf',headers=s['headers']);receipt(client,r,reserved[-1],'r2e_real_radiology_draft',tmp_path,doc)
+    freeze(s);publish(s)
+    url=f'/api/v1/radiology/me/staged-reports/{eid}/pdf'
+    r=client.get(url,headers=s['patient_headers']);assert r.headers.get('X-Radiology-Scope')=='synthetic-nondiagnostic-only'
+    receipt(client,r,reserved[-1],'r2e_real_staged_radiology',tmp_path)
+    assert db.session.query(PrintIssuance).count()==2
+    report.withdraw(**args(s),expected_version=1);assert client.get(url,headers=s['patient_headers']).status_code==404
+    assert client.get('/api/v1/printing/verify/'+reserved[-1][0]).get_json()['data']['status']=='historical_issuance_only'

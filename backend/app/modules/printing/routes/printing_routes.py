@@ -6,7 +6,7 @@ Flask alone resolves identity and clinic. Source adapters never trust request PH
 from __future__ import annotations
 
 from io import BytesIO
-from flask import Blueprint, current_app, g, send_file, request, abort
+from flask import Blueprint, current_app, g, send_file, request, abort, jsonify
 from flask_jwt_extended import get_jwt
 from sqlalchemy import select
 
@@ -16,7 +16,7 @@ from app.core.enums.role_enums import Role
 from app.core.enums.staff_enums import StaffStatus
 from app.core.audit.services.audit_service import create_audit_log
 from app.core.utils.decorators import get_current_clinic_id, role_required
-from app.extensions import db
+from app.extensions import db, limiter
 from app.modules.staff.models.staff_model import Staff
 from app.modules.printing.services.print_policy import PrintDenied, supported_kinds
 from app.modules.printing.services.rust_print_bridge import render_pdf
@@ -90,3 +90,43 @@ def print_document(kind: str,record_id:int):
     resp.headers['X-Source-SHA256']=doc.source_digest
     resp.headers['X-Clinical-Release']='none'
     return resp
+
+
+@printing_bp.route('/verify/<token>', methods=['GET','POST'])
+@limiter.limit('30 per minute')
+def verify_issued_document(token):
+    from app.modules.printing.services.verification import lookup
+    try:
+        if request.query_string or request.headers.get('Idempotency-Key') is not None:
+            raise PrintDenied('Verification unavailable')
+        candidate = None
+        if request.method == 'POST':
+            if request.content_length is None or request.content_length>512 or not request.is_json:
+                raise PrintDenied('Verification unavailable')
+            body=request.get_json(silent=True)
+            if not isinstance(body,dict) or set(body)!={'pdf_sha256'} or not isinstance(body['pdf_sha256'],str):
+                raise PrintDenied('Verification unavailable')
+            candidate=body['pdf_sha256']
+        return jsonify({'data':lookup(token,candidate)})
+    except PrintDenied:
+        abort(404)
+
+
+@printing_bp.get('/thermal/<int:paper>/payment/<int:payment_id>.escpos')
+@role_required(Role.ADMIN,Role.ACCOUNTANT)
+def thermal_payment_copy(paper,payment_id):
+    from hashlib import sha256
+    from app.modules.printing.services.thermal import render_payment
+    if not current_app.config.get('RAD6_PRINTING_ENABLED',False) or request.query_string or request.headers.get('Idempotency-Key') is not None:
+        abort(404)
+    try:
+        user,staff,clinic_id=_actor()
+        data=render_payment(payment_id=payment_id,clinic_id=clinic_id,paper=paper)
+        create_audit_log(action=AuditAction.VIEW,entity_type='Payment',entity_id=payment_id,user_id=user.id,clinic_id=clinic_id,
+            description='Authorized staged thermal payment-record copy',new_value={'paper_mm':paper,'stream_sha256':sha256(data).hexdigest()})
+        db.session.commit()
+    except PrintDenied:
+        db.session.rollback();abort(404)
+    except Exception:
+        db.session.rollback();raise
+    return send_file(BytesIO(data),mimetype='application/octet-stream',as_attachment=True,download_name=f'payment-{payment_id}.escpos',max_age=0)

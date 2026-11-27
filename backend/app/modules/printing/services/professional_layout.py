@@ -16,7 +16,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.lib.colors import HexColor
 from reportlab.lib.utils import ImageReader
-from .print_policy import PrintDenied, PrintDocument, build_document
+from .print_policy import PrintDenied, PrintDocument, build_document, ordered_test_rows
 
 W, H = 595.2756, 841.8898
 L, R = 45., W-45.
@@ -108,6 +108,8 @@ def _wrap(s, width, font, size):
 class Layout:
     def __init__(self, doc, branding, faces):
         self.doc=doc;self.b=branding;self.faces=faces;self.pages=[]
+        self.enriched = "Patient Name" in dict(doc.fields)
+        self.verification = branding.verification_url is not None
         self.primary=_contrast(branding.primary_color);self.secondary=_contrast(branding.secondary_color)
         self.logo=None
         if branding.rgb is not None:
@@ -142,17 +144,18 @@ class Layout:
         top=self.paragraph(self.b.lines[1].removeprefix('Clinic: '),x,top,hw,11,True,INK,'header')+2
         if self.b.lines[2:]:
             top=self.paragraph('  |  '.join(self.b.lines[2:]),x,top,hw,8,False,GRAY,'header',11)
-        top=max(top,112 if self.logo else 88)+10
-        self.rect(L,top,WIDTH,.8,RULE);top+=14
+        compact=self.enriched and len(self.pages)>1
+        top=max(top,108 if compact and self.logo else 112 if self.logo else 82 if compact else 88)+(5 if compact else 10)
+        self.rect(L,top,WIDTH,.8,RULE);top+=8 if compact else 14
         title='Laboratory Results' if self.doc.kind=='released_lab_result' else self.doc.title
-        title_size=25 if len(self.pages)==1 else 14
-        top=self.paragraph(title,L,top,WIDTH,title_size,True,INK,'header',title_size+5)+6
+        title_size=25 if len(self.pages)==1 else 12 if compact else 14
+        top=self.paragraph(title,L,top,WIDTH,title_size,True,INK,'header',title_size+5)+(3 if compact else 6)
         warning=self.lines(self.doc.watermark,WIDTH-20,8,True)
-        h=max(28,len(warning)*11+14)
+        h=max(22 if compact else 28,len(warning)*11+(10 if compact else 14))
         self.rect(L,top,WIDTH,h,WARN_BG)
-        self.paragraph(self.doc.watermark,L+10,top+7,WIDTH-20,8,True,WARN,'warning',11)
-        top+=h+12
-        top=self.paragraph('CONTROLLED DOCUMENT COPY',L,top,WIDTH,8,True,GRAY,'header',11)+8
+        self.paragraph(self.doc.watermark,L+10,top+(5 if compact else 7),WIDTH-20,8,True,WARN,'warning',11)
+        top+=h+(6 if compact else 12)
+        top=self.paragraph('CONTROLLED DOCUMENT COPY',L,top,WIDTH,8,True,GRAY,'header',11)+(4 if compact else 8)
         self.y=top;self.body_start=top
         if self.body_start>H-FOOT_TOP-145: raise PrintDenied('Letterhead exceeds printable page')
     def ensure(self,h):
@@ -161,18 +164,18 @@ class Layout:
     def grid(self, pairs):
         gap=24.;cw=(WIDTH-gap)/2
         for i in range(0,len(pairs),2):
-            values=pairs[i:i+2];heights=[len(self.lines(k,cw,8,True))*11+3+len(self.lines(v,cw,11))*15+9 for k,v in values]
+            values=pairs[i:i+2];heights=[len(self.lines(k,cw,8,True))*11+3+len(self.lines(v,cw,11,k=="Patient Name"))*15+9 for k,v in values]
             self.ensure(max(heights))
             for j,(k,v) in enumerate(values):
                 x=L+j*(cw+gap)
                 yy=self.paragraph(k,x,self.y,cw,8,True,GRAY,lead=11)+3
-                self.paragraph(v,x,yy,cw,11,False,INK,lead=15)
+                self.paragraph(v,x,yy,cw,11,k=="Patient Name",INK,lead=15)
             self.y+=max(heights)
     def section(self,label):
         self.ensure(35);self.y=self.paragraph(label,L,self.y,WIDTH,11,True,self.secondary,lead=15)+5
         self.rect(L,self.y,WIDTH,.7,RULE);self.y+=10
-    def table(self,headers,rows,fractions,numeric=(),alerts=()):
-        widths=[WIDTH*f for f in fractions];pad=7.;lead=13.;font_size=9
+    def table(self,headers,rows,fractions,numeric=(),alerts=(),reserve_last=0):
+        widths=[WIDTH*f for f in fractions];pad=5. if self.enriched else 7.;lead=12. if self.enriched else 13.;font_size=9
         def measure(row,bold):return max(len(self.lines(v,w-2*pad,font_size,bold)) for v,w in zip(row,widths))*lead+2*pad
         def draw(row,h,bold,bg,tag):
             self.rect(L,self.y,WIDTH,h,bg);x=L
@@ -186,9 +189,10 @@ class Layout:
         for i,row in enumerate(rows):
             if len(row)!=len(headers):raise PrintDenied('Invalid presentation row')
             h=measure(row,False)
-            if self.y+h+(header_h if first else 0)>H-FOOT_TOP-10:
+            reserve=reserve_last if i==len(rows)-1 else 0
+            if self.y+h+reserve+(header_h if first else 0)>H-FOOT_TOP-10:
                 self.new_page();first=True
-            self.ensure(h+(header_h if first else 0))
+            self.ensure(h+reserve+(header_h if first else 0))
             if first:draw(headers,header_h,True,self.primary,'table_header');first=False
             draw(row,h,False,PALE if i%2==0 else '#FFFFFF','body')
         self.y+=12
@@ -198,15 +202,35 @@ class Layout:
     def balance(self,value):
         lines=self.lines(value,WIDTH-28,20,True);h=32+len(lines)*26+10
         self.ensure(h);self.rect(L,self.y,WIDTH,h,PALE)
-        self.text('Outstanding Balance',L+14,self.y+10,9,True,GRAY)
-        self.paragraph(value,L+14,self.y+28,WIDTH-28,20,True,self.primary,lead=26);self.y+=h+10
+        self.text('Balance Due' if self.enriched else 'Outstanding Balance',L+14,self.y+10,9,True,GRAY)
+        color = WARN if self.enriched and not value.endswith(' 0.00') else self.primary
+        self.paragraph(value,L+14,self.y+28,WIDTH-28,20,True,color,lead=26);self.y+=h+10
+    def qr(self, url):
+        from .verification_qr import rows_for
+        matrix=rows_for(url)
+        size=84.;step=size/len(matrix);x=R-size;top=H-FOOT_TOP+12
+        self.rect(x,top,size,size,'#FFFFFF')
+        for i,row in enumerate(matrix):
+            j=0
+            while j<len(row):
+                if row[j]!='1':j+=1;continue
+                start=j
+                while j<len(row) and row[j]=='1':j+=1
+                self.rect(x+start*step,top+i*step,(j-start)*step,step,INK)
+
     def finish(self):
         for index,page in enumerate(self.pages):
             self.page=page;top=H-FOOT_TOP
             self.rect(L,top,WIDTH,.8,RULE);top+=8
-            top=self.paragraph('SOURCE SHA-256: '+self.doc.source_digest,L,top,WIDTH,7,False,GRAY,'footer',10)+2
-            top=self.paragraph('BRANDING SHA-256: '+self.b.branding_sha256,L,top,WIDTH,7,False,GRAY,'footer',10)+4
-            top=self.paragraph(DISCLAIMER,L,top,WIDTH,8,False,WARN,'disclaimer',11)+5
+            fw=WIDTH-96 if self.verification else WIDTH
+            top=self.paragraph('SOURCE SHA-256: '+self.doc.source_digest,L,top,fw,7,False,GRAY,'footer',10)+2
+            top=self.paragraph('BRANDING SHA-256: '+self.b.branding_sha256,L,top,fw,7,False,GRAY,'footer',10)+4
+            top=self.paragraph(DISCLAIMER,L,top,fw,7 if self.verification else 8,False,WARN,'disclaimer',9 if self.verification else 11)+(3 if self.verification else 5)
+            if self.verification:
+                top=self.paragraph('Generated: '+self.b.issued_at,L,top,fw,7,False,GRAY,'footer',9)
+                top=self.paragraph('Verification: '+self.b.verification_url.rsplit('/',1)[1],L,top,fw,7,False,GRAY,'footer',9)
+                top=self.paragraph('Powered by Stryka-Max',L,top,fw,8,True,GRAY,'footer',10)
+                self.qr(self.b.verification_url)
             self.text(f'Page {index+1} of {len(self.pages)}',L,H-34,8,False,GRAY,'footer','right',WIDTH)
             if top>H-42:raise PrintDenied('Presentation footer overflow')
         return {'family':self.faces.family,'pages':self.pages}
@@ -217,7 +241,7 @@ def make_plan(doc,branding):
     if not isinstance(doc,PrintDocument) or doc.is_signed or doc.released_to_chart or branding.clinic_id!=doc.clinic_id:raise PrintDenied('Unauthorized presentation')
     rebuilt=build_document(kind=doc.kind,clinic_id=doc.clinic_id,record_id=doc.record_id,source_version=doc.source_version,source={k.lower().replace(' ','_'):v for k,v in doc.fields})
     if rebuilt!=doc:raise PrintDenied('Canonical source mismatch')
-    if doc.kind=='staged_radiology_copy' and not '\n'.join([doc.title,doc.watermark,*[s for pair in doc.fields for s in pair]]).isascii():raise PrintDenied('Unsupported staged radiology document characters')
+    if doc.kind=='staged_radiology_copy' and not ('\n'.join([doc.title,doc.watermark,*[s for pair in doc.fields for s in pair]]) if 'Patient Name' not in dict(doc.fields) else dict(doc.fields)['Report Text']).isascii():raise PrintDenied('Unsupported staged radiology document characters')
     if len(branding.lines)<2 or len(branding.lines)>7 or not re.fullmatch('[0-9a-f]{64}',branding.branding_sha256):raise PrintDenied('Invalid branding identity')
     labels=('Organisation: ','Clinic: ','Address: ','City: ','Country: ','Phone: ','Email: ')
     positions=[]
@@ -229,15 +253,27 @@ def make_plan(doc,branding):
     vals=dict(doc.fields)
     if branding.lab_rows is not None:
         if doc.kind!='released_lab_result' or canonical_lab_text(branding.lab_rows,branding.correction)!=vals.get('Report Text'):raise PrintDenied('Structured laboratory source mismatch')
-    text='\n'.join([*branding.lines,doc.title,doc.watermark,DISCLAIMER,doc.source_digest,branding.branding_sha256,*[s for pair in doc.fields for s in pair],*[display_lab_value(v) for row in (branding.lab_rows or ()) for v in row], 'Laboratory Results Clinic reference Record reference Source version CONTROLLED DOCUMENT COPY SOURCE SHA-256 BRANDING SHA-256 Description Quantity Unit price Subtotal Test LOINC Recorded at Result Unit Reference range Flag Page of 0123456789 No itemized charges recorded |'])
+    if (branding.verification_url is None) != (branding.issued_at is None):raise PrintDenied('Incomplete verification metadata')
+    if branding.verification_url is not None and (not re.fullmatch(r'https://[a-zA-Z0-9.-]+(?::[0-9]{1,5})?/api/v1/printing/verify/[0-9a-f]{32}',branding.verification_url) or not isinstance(branding.issued_at,str) or len(branding.issued_at)>100 or any(ord(c)<32 for c in branding.issued_at)):raise PrintDenied('Invalid verification metadata')
+    text='\n'.join([branding.issued_at or '', branding.verification_url or '', 'Generated: Verification: Powered by Stryka-Max', *branding.lines,doc.title,doc.watermark,DISCLAIMER,doc.source_digest,branding.branding_sha256,*[s for pair in doc.fields for s in pair],*[display_lab_value(v) for row in (branding.lab_rows or ()) for v in row], 'Laboratory Results Clinic reference Record reference Source version CONTROLLED DOCUMENT COPY SOURCE SHA-256 BRANDING SHA-256 Description Quantity Unit price Subtotal Test LOINC Recorded at Result Unit Reference range Flag Page of 0123456789 No itemized charges recorded Ordered Tests Specimen Priority Balance Due , |'])
     faces=faces_for(text);p=Layout(doc,branding,faces)
-    p.grid([(k,v) for k,v in doc.fields if k not in ('Invoice Items','Outstanding Balance','Report Text')]+[('Clinic reference',str(doc.clinic_id)),('Record reference',str(doc.record_id)),('Source version',str(doc.source_version))])
+    pairs=[(k,v) for k,v in doc.fields if k not in ('Invoice Items','Outstanding Balance','Report Text','Ordered Tests')]
+    if p.enriched:
+        pairs.sort(key=lambda pair: 0 if pair[0]=='Patient Name' else 1 if pair[0]=='Patient Id' else 2)
+    p.grid(pairs+[('Clinic reference',str(doc.clinic_id)),('Record reference',str(doc.record_id)),('Source version',str(doc.source_version))])
     if 'Invoice Items' in vals:
         p.section('Invoice Items')
         rows=json.loads(vals['Invoice Items'])
-        if rows:p.table(('Description','Quantity','Unit price','Subtotal'),rows,(.49,.13,.19,.19),numeric=(1,2,3))
+        if rows:p.table(('Description','Quantity','Unit price','Subtotal'),rows,(.49,.13,.19,.19),numeric=(1,2,3),reserve_last=90 if p.enriched else 0)
         else:p.block('No itemized charges recorded')
-        p.balance(vals['Currency']+' '+vals['Outstanding Balance'])
+        amount=vals['Outstanding Balance']
+        if p.enriched:
+            from decimal import Decimal
+            amount=format(Decimal(amount),',.2f')
+        p.balance(vals['Currency']+' '+amount)
+    if 'Ordered Tests' in vals:
+        p.section('Ordered Tests')
+        p.table(('Test','Specimen','Priority'),ordered_test_rows(vals['Ordered Tests']),(.54,.26,.20))
     if 'Report Text' in vals:
         p.section('Report Text')
         if doc.kind=='released_lab_result' and branding.lab_rows is not None:

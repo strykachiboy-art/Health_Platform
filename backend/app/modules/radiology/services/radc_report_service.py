@@ -256,7 +256,11 @@ def patient_pdf(*,user_id,clinic_id,exam_id):
     if current_app.config.get('RAD6_PRINTING_ENABLED') is not True: raise PrintDenied('Print unavailable')
     order,current,row=_patient_copy(user_id,clinic_id,exam_id)
     authorize(kind='staged_radiology_copy',actor_clinic_id=clinic_id,record_clinic_id=order.clinic_id,actor_role='PATIENT')
-    doc=build_document(kind='staged_radiology_copy',clinic_id=clinic_id,record_id=exam_id,source_version=current['record_version'],source={'patient_id':order.patient_id,'released_at':lab._time(row.released_at),'report_text':current['report_text']})
+    from app.modules.printing.services import hospital_grade as grade
+    extra = grade.radiology_fields(order, current['finalized_by_staff_id'], staged=True) if grade.enabled() else {}
+    if extra:
+        extra['report_author'] = 'Staged reviewer: ' + extra['report_author']
+    doc=build_document(kind='staged_radiology_copy',clinic_id=clinic_id,record_id=exam_id,source_version=current['record_version'],source={'patient_id':order.patient_id,'released_at':lab._time(row.released_at),'report_text':current['report_text'],**extra})
     data, branding_audit = render_authorized(doc, render_pdf, owning_clinic_id=order.clinic_id)
     from app.core.audit.services.audit_service import create_audit_log
     create_audit_log(action=AuditAction.VIEW,entity_type='RadiologyExam',entity_id=exam_id,clinic_id=clinic_id,patient_id=order.patient_id,user_id=user_id,description='Downloaded synthetic staged radiology copy',new_value={'record_version':doc.source_version,'source_digest':doc.source_digest,**branding_audit})
