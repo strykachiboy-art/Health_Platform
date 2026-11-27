@@ -21,8 +21,8 @@ def released_pdf(*, order_id, clinic_id, user_id):
         raise release._unavailable()
     report = release._released(order)
     authorize(kind='released_lab_result',actor_clinic_id=clinic_id,record_clinic_id=order.clinic_id,actor_role='PATIENT')
-    # Explicitly reject glyphs the existing Helvetica renderer cannot faithfully
-    # represent. Never silently replace or truncate a result or unit.
+    # The laboratory-specific renderer validates actual glyph coverage.
+    # Never silently replace or truncate a result or unit.
     def field(value):
         return 'Not recorded' if value is None else json.dumps(value, ensure_ascii=False)
     lines = []
@@ -34,8 +34,6 @@ def released_pdf(*, order_id, clinic_id, user_id):
     if report.get('correction_verified_at') is not None:
         lines.insert(0, 'Correction verified at: '+field(report['correction_verified_at']))
     text = '\n'.join(lines)
-    if not text.isascii():
-        raise PrintDenied('Unsupported laboratory document characters')
     doc = build_document(kind='released_lab_result',clinic_id=clinic_id,record_id=order.id,
         source_version=report.get('record_version',1),source={'patient_id':patient.id,'verified_at':report['verified_at'],
         'completed_at':report['completed_at'],'released_at':report['released_at'],'report_text':text})

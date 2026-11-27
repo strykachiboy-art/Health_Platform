@@ -510,8 +510,8 @@ def test_b03_released_pdf_current_owner_and_version(scenario,db,app,auth_headers
 
 
 def test_b03_pdf_unsupported_unit_held_not_truncated(scenario,db,app):
-    s=scenario;s['test'].unit='\u03bcg/L';db.session.commit();finalize(s);release_valid(s)
-    assert own_detail(s).get_json()['data']['results'][0]['unit']=='\u03bcg/L'
+    s=scenario;s['test'].unit='\u0378g/L';db.session.commit();finalize(s);release_valid(s)
+    assert own_detail(s).get_json()['data']['results'][0]['unit']=='\u0378g/L'
     app.config['RAD6_PRINTING_ENABLED']=True
     assert s['client'].get(f"/api/v1/lab/me/released-results/{s['order'].id}/pdf",headers=s['patient_headers']).status_code==404
 
@@ -532,3 +532,95 @@ def test_b03_supersession_does_not_inherit_rejected_values(scenario,db,auth_head
     assert [row['result_value'] for row in report['report']['results']]==['5','7']
     assert replacement_publish(s,report['preview_sha256']).status_code==200
     assert [row['result_value'] for row in own_detail(s).get_json()['data']['results']]==['5','7']
+
+# L03: preserve the existing denial contract for a genuinely unsupported
+# code point; separately prove the newly supported Unicode route.
+def test_l03_pdf_unicode_approved_owner_and_audit(scenario, db, app, tmp_path, auth_headers_for, make_clinic, make_user, make_patient):
+    import json
+    from app.core.audit.models.audit_model import AuditLog
+    s = scenario
+    s['test'].name = 'Synthetic Café - ‐ −'
+    s['test'].unit = 'μg/L'
+    db.session.commit()
+    finalize(s); release_valid(s)
+    app.config['RAD6_PRINTING_ENABLED'] = True
+    path = f"/api/v1/lab/me/released-results/{s['order'].id}/pdf"
+    detail = own_detail(s).get_json()['data']
+    assert detail['results'][0]['unit'] == 'μg/L'
+    assert detail['results'][0]['test_name'] == 'Synthetic Café - ‐ −'
+    other_clinic = make_clinic()
+    other = make_user(other_clinic, role=Role.PATIENT)
+    make_patient(other_clinic, user_id=other.id); db.session.commit()
+    assert s['client'].get(path, headers=auth_headers_for(other)).status_code == 404
+    assert s['client'].get(path+'?version=1', headers=s['patient_headers']).status_code == 404
+    assert s['client'].get(path, headers={**s['patient_headers'], 'Idempotency-Key':'synthetic'}).status_code == 404
+    app.config['TESTING'] = False
+    try:
+        assert s['client'].get(path, headers=s['patient_headers']).status_code == 404
+    finally:
+        app.config['TESTING'] = True
+    def download(version):
+        r = s['client'].get(path, headers=s['patient_headers'])
+        assert r.status_code == 200, r.get_json()
+        assert r.data.startswith(b'%PDF-') and r.data.rstrip().endswith(b'%%EOF')
+        assert len(r.data) <= 3*1024*1024
+        assert f'v{version}.pdf' in r.headers['Content-Disposition']
+        assert 'no-store' in r.headers['Cache-Control']
+        assert r.headers['X-Content-Type-Options'] == 'nosniff'
+        assert r.headers['X-Clinical-Release'] == 'patient-copy'
+        report = own_detail(s).get_json()['data']
+        digest = r.headers['X-Source-SHA256']
+        audits = db.session.execute(select(AuditLog).where(
+            AuditLog.entity_type=='LabOrder', AuditLog.entity_id==s['order'].id,
+            AuditLog.user_id==s['patient_user'].id,
+            AuditLog.description=='Patient downloaded current approved laboratory report copy')).scalars().all()
+        assert len(audits) == version
+        assert any(a.new_value == {'record_version':version,'source_digest':digest} for a in audits)
+        (tmp_path/f'l03_route_v{version}.pdf').write_bytes(r.data)
+        (tmp_path/f'l03_route_v{version}.json').write_text(json.dumps({
+            'report':report,'clinic_id':s['order'].clinic_id,'record_id':s['order'].id,
+            'patient_id':s['patient'].id,'version':version,'digest':digest}, ensure_ascii=True),encoding='utf-8')
+        return digest
+    first = download(1)
+    assert s['client'].post(f"/api/v1/lab/orders/{s['order'].id}/patient-release-withdrawal",json={'reason_code':'clinical_correction'},headers=s['doctor_headers']).status_code==200
+    assert s['client'].get(path,headers=s['patient_headers']).status_code==404
+    assert correct(s,auth_headers_for).status_code==200
+    assert s['client'].get(path,headers=s['patient_headers']).status_code==404
+    assert replacement_publish(s,replacement_preview(s).get_json()['data']['preview_sha256']).status_code==200
+    assert download(2) != first
+    assert own_detail(s).get_json()['data']['results'][0]['result_value']=='6'
+
+
+def test_l03_renderer_multipage_and_bounds(tmp_path, monkeypatch):
+    import json
+    from dataclasses import asdict
+    from pathlib import Path
+    from app.modules.printing.services.print_policy import build_document, PrintDenied
+    from app.modules.printing.services.print_renderer import render_pdf
+    block = ('{i}. Test: "Synthetic Café - ‐ − Ω"\nLOINC: "2345-7"\n'
+             'Result: "5.20"   Unit: "μg/L"\n'
+             'Reference range: "≥ 1.0; ≤ 10.0 µg/L"   Flag: "normal"\n'
+             'Recorded at: "2030-01-01T10:00:00+00:00"\n'
+             'Literal: <b>NOT MARKUP</b> & ₦ € °C')
+    source = {'patient_id':11, 'verified_at':'2030-01-01T10:05:00+00:00',
+              'completed_at':'2030-01-01T10:06:00+00:00',
+              'released_at':'2030-01-01T10:07:00+00:00',
+              'report_text':'\n\n'.join(block.format(i=i) for i in range(1,41))+'\nEND-OF-SYNTHETIC-LAB-REPORT'}
+    def doc(src):
+        return build_document(kind='released_lab_result',clinic_id=1,record_id=9,source_version=2,source=src)
+    d = doc(source)
+    pdf = render_pdf(d)
+    assert pdf.startswith(b'%PDF-') and pdf.rstrip().endswith(b'%%EOF') and len(pdf)<=3*1024*1024
+    (tmp_path/'l03_stress.pdf').write_bytes(pdf)
+    (tmp_path/'l03_stress.json').write_text(json.dumps(asdict(d),ensure_ascii=True),encoding='utf-8')
+    for bad in ('\u0378', '\U0001f9ec', '\u200b', '\u0301', '\u05d0'):
+        with pytest.raises(PrintDenied):
+            render_pdf(doc({**source,'report_text':'Unsupported '+bad}))
+    with pytest.raises(PrintDenied):
+        doc({**source,'report_text':'W'*12001})
+    original_is_file = Path.is_file
+    def missing_font(p):
+        return False if p.name.lower() in ('arial.ttf','segoeui.ttf','dejavusans.ttf') else original_is_file(p)
+    monkeypatch.setattr(Path, 'is_file', missing_font)
+    with pytest.raises(PrintDenied):
+        render_pdf(d)
