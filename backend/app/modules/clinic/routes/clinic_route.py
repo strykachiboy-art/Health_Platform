@@ -835,3 +835,96 @@ def regenerate_clinic_api_token_route(
                 "error": str(exc),
             }
         ), 422
+
+# L05 Run 1: separate staged branding management, no clinical or print grant.
+from flask import Response
+from flask_jwt_extended import get_jwt
+from app.core.utils.decorators import login_required
+from app.modules.clinic.services import branding_service as _branding
+
+
+def _branding_response(data, *, image=False):
+    if image:
+        if data is None:
+            raise NotFoundError('Branding logo unavailable')
+        response = Response(data, mimetype='image/png')
+    else:
+        response = jsonify({'data': data})
+    response.headers['Cache-Control'] = 'private, no-store, max-age=0'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+def _branding_request(scope, image=False):
+    _branding._enabled()
+    if request.args or request.headers.get('Idempotency-Key') is not None:
+        raise ValidationError('Unsupported branding parameters')
+    oid = get_jwt().get('tenant_id')
+    cid = g.current_clinic_id if scope == 'clinic' else None
+    if not oid or (scope == 'clinic' and cid is None):
+        raise NotFoundError('Branding unavailable')
+    kwargs = dict(user_id=g.current_user_id, organization_id=oid, clinic_id=cid)
+    if request.method == 'GET':
+        return _branding_response(_branding.read_branding(**kwargs, logo=image), image=image)
+    if request.method == 'PUT':
+        if request.content_length is None or request.content_length > _branding.MAX_UPLOAD + 65536:
+            raise ValidationError('Invalid logo upload size')
+        if set(request.files) != {'logo'} or len(request.files.getlist('logo')) != 1 or set(request.form) != {'expected_version'} or len(request.form.getlist('expected_version')) != 1:
+            raise ValidationError('Logo and expected_version required')
+        upload = request.files['logo']
+        version = request.form['expected_version']
+        if not version.isascii() or not version.isdecimal() or len(version)>10 or str(int(version))!=version:
+            raise ValidationError('Invalid branding version')
+        return _branding_response(_branding.change_logo(**kwargs, expected_version=int(version), raw=upload.stream.read(_branding.MAX_UPLOAD+1), mime=upload.mimetype))
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) != {'expected_version'}:
+        raise ValidationError('Expected version required')
+    return _branding_response(_branding.change_logo(**kwargs, expected_version=body['expected_version']))
+
+
+@clinic_bp.route('/branding/organization', methods=['GET', 'PUT', 'DELETE'])
+@login_required
+def organization_branding_route():
+    return _branding_request('organization')
+
+
+@clinic_bp.get('/branding/organization/logo')
+@login_required
+def organization_branding_logo_route():
+    return _branding_request('organization', image=True)
+
+
+@clinic_bp.route('/branding/clinic', methods=['GET', 'PUT', 'DELETE'])
+@role_required(Role.ADMIN)
+def clinic_branding_route():
+    return _branding_request('clinic')
+
+
+@clinic_bp.get('/branding/clinic/logo')
+@role_required(Role.ADMIN)
+def clinic_branding_logo_route():
+    return _branding_request('clinic', image=True)
+
+
+@clinic_bp.route('/organizations/<uuid:organization_id>/branding-entitlement', methods=['GET', 'PUT'])
+@role_required(Role.SUPER_ADMIN)
+def branding_entitlement_route(organization_id):
+    _branding._enabled()
+    if request.args or request.headers.get('Idempotency-Key') is not None:
+        raise ValidationError('Unsupported branding parameters')
+    if request.method == 'GET':
+        return _branding_response(_branding.read_override_entitlement(user_id=g.current_user_id, organization_id=organization_id))
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) != {'expected_version', 'clinic_override_allowed'} or type(body['clinic_override_allowed']) is not bool:
+        raise ValidationError('Invalid entitlement request')
+    result = _branding.set_override_entitlement(user_id=g.current_user_id, organization_id=organization_id, expected_version=body['expected_version'], allowed=body['clinic_override_allowed'])
+    return _branding_response(result)
+
+
+@clinic_bp.after_request
+def _branding_cache_headers(response):
+    if request.endpoint in {'clinic.organization_branding_route', 'clinic.organization_branding_logo_route',
+                            'clinic.clinic_branding_route', 'clinic.clinic_branding_logo_route', 'clinic.branding_entitlement_route'}:
+        response.headers['Cache-Control'] = 'private, no-store, max-age=0'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response

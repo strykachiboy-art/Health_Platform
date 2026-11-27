@@ -11,6 +11,7 @@ from app.core.offline_operations.models.offline_operation_disposition_model impo
 from app.modules.clinic.models.clinic_model import Clinic
 
 from app.modules.clinic.models.organization_model import HospitalOrganization, TenantMembership, ClinicMembership
+from app.modules.clinic.models.branding_model import OrganizationBranding, ClinicBranding
 
 # Patient
 from app.modules.patient.models.patient_model import (
@@ -322,6 +323,8 @@ __all__ = [
     "HospitalOrganization",
     "TenantMembership",
     "ClinicMembership",
+    "OrganizationBranding",
+    "ClinicBranding",
 
     # Patient
     "Patient",
