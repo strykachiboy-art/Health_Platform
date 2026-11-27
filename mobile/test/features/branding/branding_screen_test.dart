@@ -23,17 +23,18 @@ class _ScreenSource extends BrandingRemote {
   int reads = 0;
   int writes = 0;
   bool deny = false;
+  bool customize = false;
   @override
   Future<BrandingCapabilities> capabilities({
     required BrandingActive active,
-  }) async => const BrandingCapabilities(
+  }) async => BrandingCapabilities(
     organizationId: org,
     name: 'Clinic Organisation',
     membershipRole: 'organization_admin',
     clinicId: 2,
     organization: true,
     clinic: true,
-    customize: false,
+    customize: customize,
     reset: true,
   );
   @override
@@ -62,7 +63,7 @@ class _ScreenSource extends BrandingRemote {
         scope == BrandingScope.entitlement
             ? {'version': 0, 'clinic_override_allowed': false}
             : scope == BrandingScope.clinic
-            ? clinicState()
+            ? clinicState(allowed: customize)
             : orgState(),
         organizationId: organization ?? org,
         clinicId: 2,
@@ -243,6 +244,184 @@ void main() {
           .onPressed,
       isNull,
     );
+    expect(source.writes, 0);
+  });
+  testWidgets('visual picker drafts preset and confirms exactly one write', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 1500);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final source = _ScreenSource(api, guard);
+    await tester.pumpWidget(
+      MaterialApp(home: BrandingScreen(source: source, platform: false)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('branding-read-organization')));
+    await tester.pumpAndSettle();
+    final picker = find.byKey(const ValueKey('branding-picker-Primary colour'));
+    await tester.ensureVisible(picker);
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    final swatch = find.byKey(const ValueKey('branding-swatch-#1D4ED8'));
+    await tester.ensureVisible(swatch);
+    await tester.tap(swatch);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(source.writes, 0);
+    expect(
+      tester
+          .widget<TextField>(
+            find.ancestor(of: picker, matching: find.byType(TextField)),
+          )
+          .controller!
+          .text,
+      '#176B65',
+    );
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(swatch);
+    await tester.tap(swatch);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('branding-use-colour')));
+    await tester.pumpAndSettle();
+    expect(source.writes, 0);
+    expect(
+      tester
+          .widget<TextField>(
+            find.ancestor(of: picker, matching: find.byType(TextField)),
+          )
+          .controller!
+          .text,
+      '#1D4ED8',
+    );
+    expect(
+      tester.widget<Text>(find.text('Clinic Organisation').last).style?.color,
+      const Color(0xff1d4ed8),
+    );
+    final save = find.byKey(const ValueKey('branding-save-colors'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Confirm branding change'), findsOneWidget);
+    expect(source.writes, 0);
+    await tester.tap(find.text('Confirm'));
+    await tester.pumpAndSettle();
+    expect(source.writes, 1);
+    expect(
+      find.text('Server confirmed and read back the branding change.'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.ancestor(of: picker, matching: find.byType(TextField)),
+          )
+          .controller!
+          .text,
+      '#1D4ED8',
+    );
+  });
+  testWidgets(
+    'custom picker rejects white and cannot apply after invalidation',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 1500);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final source = _ScreenSource(api, guard);
+      await tester.pumpWidget(
+        MaterialApp(home: BrandingScreen(source: source, platform: false)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('branding-read-organization')),
+      );
+      await tester.pumpAndSettle();
+      final picker = find.byKey(
+        const ValueKey('branding-picker-Secondary colour'),
+      );
+      await tester.ensureVisible(picker);
+      await tester.tap(picker);
+      await tester.pumpAndSettle();
+      tester
+          .widget<Slider>(find.byKey(const ValueKey('branding-saturation')))
+          .onChanged!(0);
+      await tester.pumpAndSettle();
+      tester
+          .widget<Slider>(find.byKey(const ValueKey('branding-brightness')))
+          .onChanged!(1);
+      await tester.pumpAndSettle();
+      final use = find.byKey(const ValueKey('branding-use-colour'));
+      expect(tester.widget<FilledButton>(use).onPressed, isNull);
+      expect(
+        find.text('Too light for document headings. Reduce brightness.'),
+        findsOneWidget,
+      );
+      tester
+          .widget<Slider>(find.byKey(const ValueKey('branding-brightness')))
+          .onChanged!(0.25);
+      await tester.pumpAndSettle();
+      expect(tester.widget<FilledButton>(use).onPressed, isNotNull);
+      guard.invalidate();
+      await tester.pumpAndSettle();
+      expect(use, findsNothing);
+      expect(find.text('Colour selection unavailable'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(source.writes, 0);
+      expect(picker, findsNothing);
+    },
+  );
+  testWidgets('clinic picker respects entitlement independently of reset', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 1500);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final source = _ScreenSource(api, guard);
+    await tester.pumpWidget(
+      MaterialApp(home: BrandingScreen(source: source, platform: false)),
+    );
+    await tester.pumpAndSettle();
+    final clinic = find.byKey(const ValueKey('branding-read-clinic'));
+    await tester.tap(clinic);
+    await tester.pumpAndSettle();
+    final primary = find.byKey(
+      const ValueKey('branding-picker-Primary colour'),
+    );
+    final secondary = find.byKey(
+      const ValueKey('branding-picker-Secondary colour'),
+    );
+    expect(tester.widget<TextButton>(primary).onPressed, isNull);
+    expect(tester.widget<TextButton>(secondary).onPressed, isNull);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Reset colours'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    source.customize = true;
+    await tester.tap(clinic);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextButton>(primary).onPressed, isNotNull);
+    expect(tester.widget<TextButton>(secondary).onPressed, isNotNull);
+    await tester.ensureVisible(secondary);
+    await tester.tap(secondary);
+    await tester.pumpAndSettle();
+    final swatch = find.byKey(const ValueKey('branding-swatch-#8A4B26'));
+    await tester.ensureVisible(swatch);
+    await tester.tap(swatch);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('branding-use-colour')));
+    await tester.pumpAndSettle();
+    expect(find.text('#8A4B26'), findsOneWidget);
     expect(source.writes, 0);
   });
 }

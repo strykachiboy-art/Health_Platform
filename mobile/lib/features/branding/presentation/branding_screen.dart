@@ -361,21 +361,219 @@ class _BrandingScreenState extends State<BrandingScreen> {
 
   Color _color(String value) =>
       Color(0xff000000 | int.parse(value.substring(1), radix: 16));
+  Future<void> _chooseColour(
+    TextEditingController controller,
+    String label,
+  ) async {
+    final state = _view?.state;
+    if (_busy ||
+        widget.platform ||
+        !widget.source.staging ||
+        state == null ||
+        (state.scope == BrandingScope.clinic &&
+            (!state.overrideAllowed || _capabilities?.customize != true))) {
+      return;
+    }
+    final guard = widget.source.guard;
+    final generation = _generation;
+    final revision = guard.revision;
+    bool active() => _active(generation, revision) && !_busy;
+    if (!active()) {
+      return;
+    }
+    final current = controller.text.trim().toUpperCase();
+    final fallback = identical(controller, _primary)
+        ? state.primary!
+        : state.secondary!;
+    var hsv = HSVColor.fromColor(
+      _color(validBrandingColor(current) ? current : fallback),
+    );
+    String hex() =>
+        '#${(hsv.toColor().toARGB32() & 0xffffff).toRadixString(16).padLeft(6, '0').toUpperCase()}';
+    const presets = <String, String>{
+      'Hospital teal': '#176B65',
+      'Slate navy': '#243D54',
+      'Royal blue': '#1D4ED8',
+      'Forest green': '#166534',
+      'Deep cyan': '#155E75',
+      'Plum': '#6B21A8',
+      'Burgundy': '#881337',
+      'Warm brown': '#8A4B26',
+      'Charcoal': '#374151',
+      'Black': '#000000',
+    };
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) => ListenableBuilder(
+          listenable: guard,
+          builder: (context, child) {
+            if (!active()) {
+              return AlertDialog(
+                title: const Text('Colour selection unavailable'),
+                content: const Text(
+                  'Session context changed. Reopen branding.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Close'),
+                  ),
+                ],
+              );
+            }
+            final value = hex();
+            final valid = validBrandingColor(value);
+            return AlertDialog(
+              title: Text('Choose ${label.toLowerCase()}'),
+              scrollable: true,
+              content: SizedBox(
+                width: 360,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('Professional colours'),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final entry in presets.entries)
+                          OutlinedButton(
+                            key: ValueKey('branding-swatch-${entry.value}'),
+                            onPressed: () => update(
+                              () =>
+                                  hsv = HSVColor.fromColor(_color(entry.value)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.circle,
+                                  color: _color(entry.value),
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(entry.key),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text('Custom colour'),
+                    Text('Hue: ${hsv.hue.round()}°'),
+                    Slider(
+                      key: const ValueKey('branding-hue'),
+                      value: hsv.hue,
+                      max: 360,
+                      activeColor: HSVColor.fromAHSV(
+                        1,
+                        hsv.hue,
+                        1,
+                        1,
+                      ).toColor(),
+                      semanticFormatterCallback: (v) =>
+                          '${v.round()} degrees hue',
+                      onChanged: (v) => update(() => hsv = hsv.withHue(v)),
+                    ),
+                    Text('Saturation: ${(hsv.saturation * 100).round()}%'),
+                    Slider(
+                      key: const ValueKey('branding-saturation'),
+                      value: hsv.saturation,
+                      semanticFormatterCallback: (v) =>
+                          '${(v * 100).round()} percent saturation',
+                      onChanged: (v) =>
+                          update(() => hsv = hsv.withSaturation(v)),
+                    ),
+                    Text('Brightness: ${(hsv.value * 100).round()}%'),
+                    Slider(
+                      key: const ValueKey('branding-brightness'),
+                      value: hsv.value,
+                      semanticFormatterCallback: (v) =>
+                          '${(v * 100).round()} percent brightness',
+                      onChanged: (v) => update(() => hsv = hsv.withValue(v)),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: hsv.toColor(),
+                        border: Border.all(color: Colors.grey),
+                      ),
+                      child: Text(
+                        value,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: valid ? Colors.white : Colors.black,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      valid ? 'Readable on white (4.5:1 or higher).' : 'Too light for document headings. Reduce brightness.',
+                      key: const ValueKey('branding-picker-contrast'),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  key: const ValueKey('branding-use-colour'),
+                  onPressed: valid
+                      ? () => Navigator.pop(dialogContext, value)
+                      : null,
+                  child: const Text('Use colour'),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+    if (chosen == null || !active() || !validBrandingColor(chosen)) {
+      return;
+    }
+    setState(() {
+      controller.text = chosen;
+      _message = null;
+    });
+  }
+
   Widget _paletteField(
     TextEditingController controller,
     String label,
     bool enabled,
-  ) => TextField(
-    controller: controller,
-    enabled: enabled,
-    maxLength: 7,
-    decoration: InputDecoration(
-      labelText: label,
-      hintText: '#176B65',
-      border: const OutlineInputBorder(),
-    ),
-    onChanged: (_) => setState(() {}),
-  );
+  ) {
+    final value = controller.text.trim().toUpperCase();
+    final valid = validBrandingColor(value);
+    return TextField(
+      controller: controller,
+      enabled: enabled,
+      maxLength: 7,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: '#176B65',
+        border: const OutlineInputBorder(),
+        suffixIcon: TextButton.icon(
+          key: ValueKey('branding-picker-$label'),
+          onPressed: enabled
+              ? () => unawaited(_chooseColour(controller, label))
+              : null,
+          icon: Icon(
+            Icons.palette_outlined,
+            color: enabled && valid ? _color(value) : null,
+          ),
+          label: const Text('Pick'),
+        ),
+      ),
+      onChanged: (_) => setState(() {}),
+    );
+  }
 
   Widget _sample(BrandingState state) {
     final a = _primary.text.trim();
