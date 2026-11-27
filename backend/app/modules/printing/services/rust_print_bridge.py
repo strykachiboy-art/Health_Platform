@@ -52,11 +52,14 @@ def render_pdf(doc: PrintDocument, *, branding=None) -> bytes:
         from .branding_payload import PrintBranding
         if not isinstance(branding, PrintBranding) or branding.clinic_id != doc.clinic_id:
             raise PrintDenied("Branding ownership mismatch")
-        payload["protocol"] = 2
+        from .professional_layout import make_plan
+        plan, _ = make_plan(doc, branding)
+        payload["protocol"] = 3
         payload["branding"] = branding.wire()
+        payload["professional"] = plan
     try:
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        if len(encoded) > (_MAX_INPUT if branding is None else 512 * 1024):
+        if len(encoded) > (_MAX_INPUT if branding is None else 1024 * 1024):
             raise PrintDenied("Print renderer unavailable")
         result = subprocess.run(
             [str(_executable())],

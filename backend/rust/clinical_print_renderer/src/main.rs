@@ -7,7 +7,9 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 const LEGACY_MAX_INPUT: usize = 65_536;
-const MAX_INPUT: usize = 512 * 1024;
+const V2_MAX_INPUT: usize = 512 * 1024;
+const MAX_INPUT: usize = 1024 * 1024;
+mod professional;
 const MAX_PDF: usize = 3 * 1024 * 1024;
 
 #[derive(Deserialize)]
@@ -26,6 +28,8 @@ struct PrintRequest {
     fields: Vec<(String, String)>,
     #[serde(default)]
     branding: Option<Branding>,
+    #[serde(default)]
+    professional: Option<professional::Plan>,
 }
 
 #[derive(Deserialize)]
@@ -188,7 +192,7 @@ fn push_invoice_table(doc:&mut Document,font:&rusttype::Font<'_>,value:&str,colo
 fn check_branding(d: &PrintRequest) -> Result<(), &'static str> {
     match (&d.branding, d.protocol) {
         (None, 1) => Ok(()),
-        (Some(b), 2) => {
+        (Some(b), 2 | 3) => {
             palette_rgb(&b.primary_color)?; palette_rgb(&b.secondary_color)?;
             if b.clinic_id != d.clinic_id || b.lines.len() < 2 || b.lines.len() > 7
                 || !b.lines[0].starts_with("Organisation: ") || !b.lines[1].starts_with("Clinic: ")
@@ -328,6 +332,7 @@ fn check_str(s: &str, max: usize) -> Result<(), &'static str> {
 
 fn validate(d: &PrintRequest) -> Result<(), &'static str> {
     check_branding(d)?;
+    if (d.protocol == 3) != d.professional.is_some() { return Err("invalid professional protocol"); }
     if d.clinic_id == 0 || d.record_id == 0 || d.is_signed || d.released_to_chart
     {
         return Err("unauthorized print snapshot");
@@ -392,7 +397,7 @@ fn validate(d: &PrintRequest) -> Result<(), &'static str> {
     if d.source_digest.len() != 64 || !d.source_digest.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("invalid digest");
     }
-    let extended=d.kind=="invoice" && d.protocol==2 && d.fields.len()==names.len()+2;
+    let extended=d.kind=="invoice" && matches!(d.protocol,2|3) && d.fields.len()==names.len()+2;
     if d.fields.len()!=names.len() && !extended { return Err("invalid source fields"); }
     for ((label,text),expected) in d.fields.iter().zip(names) {
         if label!=expected { return Err("unexpected source fields"); }
@@ -891,6 +896,7 @@ fn correct_embedded_encoding(input: &[u8], d: &PrintRequest, font: &rusttype::Fo
 }
 
 fn render(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
+    if let Some(plan)=&d.professional {return professional::render(d,plan);}
     let headings = heading_lines(d);
     let invoice_headers:InvoiceHeaders=Default::default();
     let display:Vec<(String,String)>=d.fields.iter().map(|(k,v)|(k.clone(),shown_value(k,v,&[0]))).collect();
@@ -1009,7 +1015,7 @@ fn run() -> Result<(), &'static str> {
         return Err("input too large");
     }
     let d: PrintRequest = serde_json::from_slice(&bytes).map_err(|_| "invalid print protocol")?;
-    if d.protocol == 1 && bytes.len() > LEGACY_MAX_INPUT { return Err("input too large"); }
+    if (d.protocol == 1 && bytes.len() > LEGACY_MAX_INPUT) || (d.protocol == 2 && bytes.len() > V2_MAX_INPUT) { return Err("input too large"); }
     validate(&d)?;
     let pdf = render(&d)?;
     io::stdout().write_all(&pdf).map_err(|_| "write failed")?;
@@ -1044,6 +1050,7 @@ mod tests {
     fn rejects_nonclinical_kind_and_signed() {
         let mut d = PrintRequest {
             branding: None,
+            professional: None,
             protocol: 1,
             kind: "invoice".into(),
             clinic_id: 1,
