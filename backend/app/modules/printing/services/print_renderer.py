@@ -7,6 +7,7 @@ from hashlib import sha256
 from threading import RLock
 
 from .print_policy import PrintDenied, PrintDocument
+from .branding_payload import PrintBranding, brand_lines
 
 
 _LAB_FONT_LOCK = RLock()
@@ -54,20 +55,30 @@ def _lab_unicode_font(text):
             continue
     raise PrintDenied('Unsupported laboratory document characters')
 
-def _render_released_lab(doc):
+
+
+def _brand_logo(canvas, branding):
+    if branding is None or branding.rgb is None:
+        return
+    from reportlab.lib.utils import ImageReader
+    scale = min(150 / branding.width, 50 / branding.height)
+    w, h = branding.width*scale, branding.height*scale
+    canvas.drawImage(ImageReader(BytesIO(branding.png())), 45, 800-h, width=w, height=h)
+
+def _render_released_lab(doc, branding=None):
     """Bounded Unicode laboratory copy; no change to release policy."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib import colors
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, KeepTogether
 
-    heading = 'CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY'
+    headings = brand_lines(branding)
     disclaimer = ('This copy does not prove payment, clinical verification, '
                   'diagnosis, signature, delivery, or chart release.')
     metadata = [f'Clinic reference: {doc.clinic_id}   Record reference: {doc.record_id}',
                 f'Source version: {doc.source_version}']
     digest = 'SOURCE SHA-256: ' + doc.source_digest
-    font = _lab_unicode_font('\n'.join([heading, doc.title, doc.watermark, disclaimer,
+    font = _lab_unicode_font('\n'.join([*headings, doc.title, doc.watermark, disclaimer,
         *metadata, digest, 'Page 0123456789', *[s for pair in doc.fields for s in pair]]))
     row = ParagraphStyle('l03_row', fontName=font, fontSize=10, leading=14,
                          spaceAfter=3, splitLongWords=1)
@@ -77,7 +88,7 @@ def _render_released_lab(doc):
                           textColor=colors.HexColor('#842020'), spaceAfter=8)
     def para(value, style=row):
         return Paragraph(escape(value).replace('\n', '<br/>'), style)
-    story = [para(heading, title), para(doc.title, title), para(doc.watermark, note),
+    story = [*[para(line, title if i < 2 else row) for i, line in enumerate(headings)], para(doc.title, title), para(doc.watermark, note),
              *[para(v) for v in metadata], Spacer(1, 8)]
     for key, value in doc.fields:
         if key != 'Report Text':
@@ -93,6 +104,7 @@ def _render_released_lab(doc):
     stream = BytesIO()
     def footer(canvas, document):
         canvas.saveState()
+        _brand_logo(canvas, branding)
         canvas.setFont(font, 8)
         canvas.setFillColor(colors.HexColor('#842020'))
         canvas.drawString(45, 34, doc.watermark)
@@ -100,7 +112,7 @@ def _render_released_lab(doc):
         canvas.restoreState()
     try:
         SimpleDocTemplate(stream, pagesize=A4, rightMargin=45, leftMargin=45,
-                          topMargin=48, bottomMargin=56, pageCompression=1).build(
+                          topMargin=111 if branding is not None and branding.rgb is not None else 48, bottomMargin=56, pageCompression=1).build(
                               story, onFirstPage=footer, onLaterPages=footer)
     except Exception as exc:
         raise PrintDenied('Print renderer failed safely') from exc
@@ -110,24 +122,24 @@ def _render_released_lab(doc):
     return result
 
 
-def _render_staged_radiology(doc):
+def _render_staged_radiology(doc, branding=None):
     """L04: synthetic non-diagnostic patient copy, with bounded pagination."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib import colors
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 
-    heading = 'CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY'
+    headings = brand_lines(branding)
     disclaimer = ('This copy does not prove payment, clinical verification, '
                   'diagnosis, signature, delivery, or chart release.')
     metadata = [f'Clinic reference: {doc.clinic_id}   Record reference: {doc.record_id}',
                 f'Source version: {doc.source_version}']
     digest = 'SOURCE SHA-256: ' + doc.source_digest
-    text = '\n'.join([heading, doc.title, doc.watermark, disclaimer, *metadata,
+    text = '\n'.join([*headings, doc.title, doc.watermark, disclaimer, *metadata,
                      digest, 'Page 0123456789', *[s for pair in doc.fields for s in pair]])
     # The existing synthetic-only reporting lifecycle is ASCII-only. Do not
     # expand it here, even though the shared font helper supports more glyphs.
-    if not text.isascii():
+    if not '\n'.join([doc.title, doc.watermark, *[v for pair in doc.fields for v in pair]]).isascii():
         raise PrintDenied('Unsupported staged radiology document characters')
     font = _lab_unicode_font(text)
     row = ParagraphStyle('l04_row', fontName=font, fontSize=10, leading=14,
@@ -138,7 +150,7 @@ def _render_staged_radiology(doc):
                           textColor=colors.HexColor('#842020'), spaceAfter=8)
     def para(value, style=row):
         return Paragraph(escape(value), style)
-    story = [para(heading, title), para(doc.title, title), para(doc.watermark, note),
+    story = [*[para(line, title if i < 2 else row) for i, line in enumerate(headings)], para(doc.title, title), para(doc.watermark, note),
              *[para(v) for v in metadata], Spacer(1, 8)]
     for key, value in doc.fields:
         if key != 'Report Text':
@@ -153,6 +165,7 @@ def _render_staged_radiology(doc):
     stream = BytesIO()
     def footer(canvas, document):
         canvas.saveState()
+        _brand_logo(canvas, branding)
         canvas.setFont(font, 8)
         canvas.setFillColor(colors.HexColor('#842020'))
         canvas.drawString(45, 34, doc.watermark)
@@ -160,7 +173,7 @@ def _render_staged_radiology(doc):
         canvas.restoreState()
     try:
         SimpleDocTemplate(stream, pagesize=A4, rightMargin=45, leftMargin=45,
-                          topMargin=48, bottomMargin=56, pageCompression=1).build(
+                          topMargin=111 if branding is not None and branding.rgb is not None else 48, bottomMargin=56, pageCompression=1).build(
                               story, onFirstPage=footer, onLaterPages=footer)
     except Exception as exc:
         raise PrintDenied('Print renderer failed safely') from exc
@@ -170,13 +183,17 @@ def _render_staged_radiology(doc):
     return result
 
 
-def render_pdf(doc: PrintDocument) -> bytes:
+def render_pdf(doc: PrintDocument, *, branding=None) -> bytes:
     if not isinstance(doc, PrintDocument) or doc.is_signed or doc.released_to_chart:
         raise PrintDenied('Unsigned print policy required')
+    if branding is not None and (not isinstance(branding, PrintBranding) or branding.clinic_id != doc.clinic_id):
+        raise PrintDenied('Branding ownership mismatch')
     if doc.kind == 'released_lab_result':
-        return _render_released_lab(doc)
+        return _render_released_lab(doc, branding)
     if doc.kind == 'staged_radiology_copy':
-        return _render_staged_radiology(doc)
+        return _render_staged_radiology(doc, branding)
+    if branding is not None:
+        raise PrintDenied('Staff branding requires Rust renderer')
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors

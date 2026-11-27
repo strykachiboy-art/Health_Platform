@@ -32,7 +32,7 @@ def _executable() -> Path:
     return path
 
 
-def render_pdf(doc: PrintDocument) -> bytes:
+def render_pdf(doc: PrintDocument, *, branding=None) -> bytes:
     if not isinstance(doc, PrintDocument) or doc.is_signed or doc.released_to_chart:
         raise PrintDenied("Unsigned print policy required")
     payload = {
@@ -48,9 +48,15 @@ def render_pdf(doc: PrintDocument) -> bytes:
         "released_to_chart": doc.released_to_chart,
         "fields": [list(field) for field in doc.fields],
     }
+    if branding is not None:
+        from .branding_payload import PrintBranding
+        if not isinstance(branding, PrintBranding) or branding.clinic_id != doc.clinic_id:
+            raise PrintDenied("Branding ownership mismatch")
+        payload["protocol"] = 2
+        payload["branding"] = branding.wire()
     try:
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        if len(encoded) > _MAX_INPUT:
+        if len(encoded) > (_MAX_INPUT if branding is None else 512 * 1024):
             raise PrintDenied("Print renderer unavailable")
         result = subprocess.run(
             [str(_executable())],

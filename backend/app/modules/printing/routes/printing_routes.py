@@ -20,6 +20,7 @@ from app.extensions import db
 from app.modules.staff.models.staff_model import Staff
 from app.modules.printing.services.print_policy import PrintDenied, supported_kinds
 from app.modules.printing.services.rust_print_bridge import render_pdf
+from app.modules.printing.services.branding_payload import render_authorized
 from app.modules.printing.services.source_adapters import snapshot
 
 printing_bp = Blueprint('printing',__name__,url_prefix='/printing')
@@ -69,14 +70,14 @@ def print_document(kind: str,record_id:int):
         role=user.role.name
         doc=snapshot(kind=kind,record_id=record_id,clinic_id=clinic_id,
                      actor_role=role,actor_staff_id=staff.id)
-        data=render_pdf(doc)
+        data, branding_audit = render_authorized(doc, render_pdf, owning_clinic_id=clinic_id)
         # Print request is auditable and must commit successfully before release.
         # No raw PDF/text/PHI is written to audit payload.
         create_audit_log(action=AuditAction.VIEW,entity_type='PrintedDocument',
             entity_id=record_id,user_id=user.id,clinic_id=clinic_id,
             description='Authorized bounded document download',
             new_value={'kind':kind,'source_version':doc.source_version,
-                       'source_digest':doc.source_digest,'unsigned':True})
+                       'source_digest':doc.source_digest,'unsigned':True,**branding_audit})
         db.session.commit()
     except PrintDenied:
         db.session.rollback()

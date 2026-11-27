@@ -624,3 +624,23 @@ def test_l03_renderer_multipage_and_bounds(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, 'is_file', missing_font)
     with pytest.raises(PrintDenied):
         render_pdf(d)
+
+
+def test_l05r2_real_branded_lab(scenario,db,app,tmp_path):
+    from hashlib import sha256
+    from app.core.audit.models.audit_model import AuditLog
+    from app.tests.modules.printing.test_branded_rendering import seed_logo,write_artifact
+    from app.modules.clinic.services.branding_service import resolve_branding
+    from app.modules.clinic.models.clinic_model import Clinic
+    s=scenario; s['test'].unit='μg/L';db.session.commit();finalize(s);release_valid(s)
+    clinic=db.session.get(Clinic,s['order'].clinic_id);seed_logo(clinic,'#176B65')
+    app.config.update(RAD6_PRINTING_ENABLED=True,PRINT_BRANDING_STAGED_ENABLED=True)
+    path=f"/api/v1/lab/me/released-results/{s['order'].id}/pdf"
+    brand=resolve_branding(owning_clinic_id=clinic.id)
+    r=s['client'].get(path,headers=s['patient_headers']);assert r.status_code==200
+    audit=db.session.query(AuditLog).filter_by(entity_type='LabOrder',entity_id=s['order'].id,user_id=s['patient_user'].id,description='Patient downloaded current approved laboratory report copy').one().new_value
+    assert audit['branding_sha256']==brand.branding_sha256 and audit['pdf_sha256']==sha256(r.data).hexdigest() and audit['source_digest']==r.headers['X-Source-SHA256']
+    write_artifact(tmp_path,'l05r2_real_lab',r.data,{'report':own_detail(s).get_json()['data'],'branding':dict(brand.metadata),'audit':audit,'clinic_id':clinic.id,'record_id':s['order'].id,'patient_id':s['patient'].id})
+    app.config['PRINT_BRANDING_STAGED_ENABLED']=False
+    legacy=s['client'].get(path,headers=s['patient_headers']);assert legacy.status_code==200 and legacy.headers['X-Source-SHA256']==r.headers['X-Source-SHA256']
+    write_artifact(tmp_path,'l05r2_legacy_lab',legacy.data,{'source_digest':legacy.headers['X-Source-SHA256']})

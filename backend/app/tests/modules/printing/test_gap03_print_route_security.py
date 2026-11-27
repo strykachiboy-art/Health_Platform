@@ -185,3 +185,26 @@ def test_enabled_audit_failure_returns_500_without_pdf_delivery(
     source.assert_called_once()
     renderer.assert_called_once_with(doc)
     audit.assert_called_once()
+
+
+def test_l05r2_real_branded_invoice(app,client,clinic,make_authenticated_staff,make_patient,make_invoice,tmp_path,db):
+    from hashlib import sha256
+    from dataclasses import asdict
+    from app.core.audit.models.audit_model import AuditLog
+    from app.tests.modules.printing.test_branded_rendering import seed_logo,brand_meta,write_artifact
+    from app.modules.printing.services.branding_payload import prepare_branding
+    from app.modules.printing.services.source_adapters import snapshot
+    staff,headers=make_authenticated_staff(clinic,Role.ADMIN)
+    invoice=make_invoice(clinic,make_patient(clinic),invoice_number='L05-R2-SYNTHETIC-INVOICE',currency='NGN')
+    db.session.commit();seed_logo(clinic)
+    app.config.update(RAD6_PRINTING_ENABLED=True,PRINT_BRANDING_STAGED_ENABLED=True)
+    doc=snapshot(kind='invoice',record_id=invoice.id,clinic_id=clinic.id,actor_role='ADMIN',actor_staff_id=staff.id)
+    brand=prepare_branding(doc,owning_clinic_id=clinic.id)
+    path=f'/api/v1/printing/invoice/{invoice.id}.pdf'
+    r=client.get(path,headers=headers)
+    assert r.status_code==200 and r.headers['X-Source-SHA256']==doc.source_digest and 'no-store' in r.headers['Cache-Control']
+    audit=db.session.query(AuditLog).filter_by(entity_type='PrintedDocument',entity_id=invoice.id,user_id=staff.user_id).one().new_value
+    assert audit['branding_sha256']==brand.branding_sha256 and audit['pdf_sha256']==sha256(r.data).hexdigest() and audit['source_digest']==doc.source_digest
+    write_artifact(tmp_path,'l05r2_real_invoice',r.data,{'doc':asdict(doc),'branding':brand_meta(brand),'audit':audit})
+    assert client.get(path+'?clinic_id=999',headers=headers).status_code==404
+    assert db.session.query(AuditLog).filter_by(entity_type='PrintedDocument',entity_id=invoice.id,user_id=staff.user_id).count()==1

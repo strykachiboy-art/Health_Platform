@@ -19,6 +19,7 @@ from app.modules.radiology.models.ris_model import (RadiologyExam, RadiologyRepo
 from app.modules.radiology.services import radc_ct_service as ct, radc_worklist_service as local, ris_service as ris, radc_delivery_service as delivery
 from app.modules.printing.services.print_policy import authorize, build_document, PrintDenied
 from app.modules.printing.services.print_renderer import render_pdf
+from app.modules.printing.services.branding_payload import render_authorized
 
 TYPE=ClinicalRecordType.STAGED_RADIOLOGY_REPORT
 LIMIT=50
@@ -256,7 +257,7 @@ def patient_pdf(*,user_id,clinic_id,exam_id):
     order,current,row=_patient_copy(user_id,clinic_id,exam_id)
     authorize(kind='staged_radiology_copy',actor_clinic_id=clinic_id,record_clinic_id=order.clinic_id,actor_role='PATIENT')
     doc=build_document(kind='staged_radiology_copy',clinic_id=clinic_id,record_id=exam_id,source_version=current['record_version'],source={'patient_id':order.patient_id,'released_at':lab._time(row.released_at),'report_text':current['report_text']})
-    data=render_pdf(doc)
+    data, branding_audit = render_authorized(doc, render_pdf, owning_clinic_id=order.clinic_id)
     from app.core.audit.services.audit_service import create_audit_log
-    create_audit_log(action=AuditAction.VIEW,entity_type='RadiologyExam',entity_id=exam_id,clinic_id=clinic_id,patient_id=order.patient_id,user_id=user_id,description='Downloaded synthetic staged radiology copy',new_value={'record_version':doc.source_version,'source_digest':doc.source_digest})
+    create_audit_log(action=AuditAction.VIEW,entity_type='RadiologyExam',entity_id=exam_id,clinic_id=clinic_id,patient_id=order.patient_id,user_id=user_id,description='Downloaded synthetic staged radiology copy',new_value={'record_version':doc.source_version,'source_digest':doc.source_digest,**branding_audit})
     return data,doc

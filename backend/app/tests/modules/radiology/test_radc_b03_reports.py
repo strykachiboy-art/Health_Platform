@@ -217,3 +217,22 @@ def test_l04_renderer_bounds_and_source_hold():
     for bad in ('Not synthetic','SYNTHETIC \u03bc'):
         with pytest.raises(ValidationError):
             report._text(bad)
+
+
+def test_l05r2_real_branded_radiology(ready,app,client,tmp_path):
+    from hashlib import sha256
+    from app.core.audit.models.audit_model import AuditLog
+    from app.tests.modules.printing.test_branded_rendering import seed_logo,write_artifact
+    from app.modules.clinic.services.branding_service import resolve_branding
+    s,_,_=ready;freeze(s);publish(s);seed_logo(s['clinic'],'#235CA0')
+    app.config.update(RAD6_PRINTING_ENABLED=True,PRINT_BRANDING_STAGED_ENABLED=True)
+    url=f"/api/v1/radiology/me/staged-reports/{s['args']['exam_id']}/pdf"
+    brand=resolve_branding(owning_clinic_id=s['clinic'].id)
+    r=client.get(url,headers=s['patient_headers']);assert r.status_code==200 and r.headers['X-Radiology-Scope']=='synthetic-nondiagnostic-only'
+    audit=db.session.query(AuditLog).filter_by(entity_type='RadiologyExam',entity_id=s['args']['exam_id'],user_id=s['recipient']['user_id'],description='Downloaded synthetic staged radiology copy').one().new_value
+    assert audit['branding_sha256']==brand.branding_sha256 and audit['pdf_sha256']==sha256(r.data).hexdigest() and audit['source_digest']==r.headers['X-Source-SHA256']
+    write_artifact(tmp_path,'l05r2_real_rad',r.data,{'report':report.patient_detail(**s['recipient']),'branding':dict(brand.metadata),'audit':audit,'clinic_id':s['clinic'].id,'record_id':s['args']['exam_id'],'patient_id':s['patient'].id})
+    app.config['PRINT_BRANDING_STAGED_ENABLED']=False
+    legacy=client.get(url,headers=s['patient_headers']);assert legacy.status_code==200 and legacy.headers['X-Source-SHA256']==r.headers['X-Source-SHA256']
+    write_artifact(tmp_path,'l05r2_legacy_rad',legacy.data,{'source_digest':legacy.headers['X-Source-SHA256']})
+    report.withdraw(**args(s),expected_version=1);assert client.get(url,headers=s['patient_headers']).status_code==404

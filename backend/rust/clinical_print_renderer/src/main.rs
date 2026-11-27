@@ -6,7 +6,8 @@ use serde::Deserialize;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-const MAX_INPUT: usize = 65_536;
+const LEGACY_MAX_INPUT: usize = 65_536;
+const MAX_INPUT: usize = 512 * 1024;
 const MAX_PDF: usize = 3 * 1024 * 1024;
 
 #[derive(Deserialize)]
@@ -23,6 +24,113 @@ struct PrintRequest {
     is_signed: bool,
     released_to_chart: bool,
     fields: Vec<(String, String)>,
+    #[serde(default)]
+    branding: Option<Branding>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Branding {
+    clinic_id: u64,
+    lines: Vec<String>,
+    branding_sha256: String,
+    logo: Option<Logo>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Logo {
+    width: u32,
+    height: u32,
+    rgb_hex: String,
+}
+fn check_branding(d: &PrintRequest) -> Result<(), &'static str> {
+    match (&d.branding, d.protocol) {
+        (None, 1) => Ok(()),
+        (Some(b), 2) => {
+            if b.clinic_id != d.clinic_id || b.lines.len() < 2 || b.lines.len() > 7
+                || !b.lines[0].starts_with("Organisation: ") || !b.lines[1].starts_with("Clinic: ")
+                || b.branding_sha256.len() != 64 || !b.branding_sha256.bytes().all(|c| c.is_ascii_hexdigit()) {
+                return Err("invalid branding");
+            }
+            let labels = ["Organisation: ", "Clinic: ", "Address: ", "City: ", "Country: ", "Phone: ", "Email: "];
+            let mut last = None;
+            for line in &b.lines {
+                check_str(line, 1040)?;
+                if line.chars().any(|c| c.is_control()) { return Err("invalid branding identity"); }
+                let i = labels.iter().position(|p| line.starts_with(*p)).ok_or("invalid branding identity")?;
+                if last.map_or(false, |v| i <= v) || line[labels[i].len()..].trim().is_empty() { return Err("invalid branding identity"); }
+                last = Some(i);
+            }
+            if let Some(logo) = &b.logo {
+                if logo.width == 0 || logo.height == 0 || logo.width > 256 || logo.height > 256
+                    || logo.rgb_hex.len() != (logo.width as usize)*(logo.height as usize)*6
+                    || !logo.rgb_hex.bytes().all(|x| x.is_ascii_hexdigit()) { return Err("invalid logo"); }
+            }
+            Ok(())
+        }
+        _ => Err("invalid branding protocol"),
+    }
+}
+fn heading_lines(d: &PrintRequest) -> Vec<String> {
+    match &d.branding {
+        None => vec!["CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY".into()],
+        Some(b) => {
+            let mut v = b.lines.clone();
+            v.push("CONTROLLED DOCUMENT COPY".into());
+            v.push(format!("BRANDING SHA-256: {}", b.branding_sha256));
+            v
+        }
+    }
+}
+// Embed only bounded, already-normalized RGB pixels, after L02 text repair.
+// Each logo stream is prepended as a balanced graphics-state block; the original
+// corrected text stream remains byte-for-byte intact.
+fn add_brand_logo(input: &[u8], logo: &Logo) -> Result<Vec<u8>, &'static str> {
+    use lopdf::{Dictionary, Object, Stream};
+    const BAD: &str = "invalid branded pdf";
+    let mut pdf = lopdf::Document::load_mem(input).map_err(|_| BAD)?;
+    let rgb: Vec<u8> = (0..logo.rgb_hex.len()).step_by(2)
+        .map(|i| u8::from_str_radix(&logo.rgb_hex[i..i+2],16).map_err(|_| BAD))
+        .collect::<Result<_,_>>()?;
+    let mut dict = Dictionary::new();
+    dict.set("Type", Object::Name(b"XObject".to_vec()));
+    dict.set("Subtype", Object::Name(b"Image".to_vec()));
+    dict.set("Width", Object::Integer(logo.width.into()));
+    dict.set("Height", Object::Integer(logo.height.into()));
+    dict.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+    dict.set("BitsPerComponent", Object::Integer(8));
+    let image_id = pdf.add_object(Stream::new(dict, rgb));
+    let pages = pdf.get_pages();
+    if pages.is_empty() || pages.len()>100 { return Err(BAD); }
+    let scale = (150.0 / logo.width as f64).min(50.0 / logo.height as f64);
+    let w = logo.width as f64 * scale;
+    let h = logo.height as f64 * scale;
+    // A4 default page, top edge y=841.89. Top margin is 39 mm for logos.
+    let content = format!("q\n{:.5} 0 0 {:.5} 45 {:.5} cm\n/CSPBrandLogo Do\nQ\n", w, h, 800.0-h).into_bytes();
+    let overlay_id = pdf.add_object(Stream::new(Dictionary::new(), content));
+    // Pinned generator emits a single content stream and indirect resources.
+    // Do not replace the font dictionary or invoke a PDF text rewrite.
+    for (_, page_id) in pages {
+        let old = pdf.get_object(page_id).and_then(Object::as_dict).and_then(|p| p.get(b"Contents")).and_then(Object::as_reference).map_err(|_| BAD)?;
+        let rid = pdf.get_object(page_id).and_then(Object::as_dict).and_then(|p| p.get(b"Resources")).and_then(Object::as_reference).map_err(|_| BAD)?;
+        let resources = pdf.get_object_mut(rid).and_then(Object::as_dict_mut).map_err(|_| BAD)?;
+        // genpdf has no image resources. Resources can be shared across pages.
+        if resources.get(b"XObject").is_err() {
+            resources.set("XObject", Object::Dictionary(Dictionary::new()));
+        }
+        let xs = resources.get_mut(b"XObject").and_then(Object::as_dict_mut).map_err(|_| BAD)?;
+        if let Ok(existing) = xs.get(b"CSPBrandLogo") {
+            if existing.as_reference().map_err(|_| BAD)? != image_id { return Err(BAD); }
+        } else {
+            xs.set("CSPBrandLogo", Object::Reference(image_id));
+        }
+        let page = pdf.get_object_mut(page_id).and_then(Object::as_dict_mut).map_err(|_| BAD)?;
+        page.set("Contents", Object::Array(vec![Object::Reference(overlay_id),Object::Reference(old)]));
+    }
+    pdf.compress();
+    let mut result = Vec::new();
+    pdf.save_to(&mut result).map_err(|_| BAD)?;
+    Ok(result)
 }
 
 fn check_str(s: &str, max: usize) -> Result<(), &'static str> {
@@ -39,7 +147,8 @@ fn check_str(s: &str, max: usize) -> Result<(), &'static str> {
 }
 
 fn validate(d: &PrintRequest) -> Result<(), &'static str> {
-    if d.protocol != 1 || d.clinic_id == 0 || d.record_id == 0 || d.is_signed || d.released_to_chart
+    check_branding(d)?;
+    if d.clinic_id == 0 || d.record_id == 0 || d.is_signed || d.released_to_chart
     {
         return Err("unauthorized print snapshot");
     }
@@ -320,8 +429,8 @@ fn simple_font_code(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
 }
 
 fn expected_winansi(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
-    let mut text = format!("CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY {} {} Clinic reference: {} Record reference: {} Source version: {} ",
-        d.title, d.watermark, d.clinic_id, d.record_id, d.source_version);
+    let mut text = format!("{} {} {} Clinic reference: {} Record reference: {} Source version: {} ",
+        heading_lines(d).join(" "), d.title, d.watermark, d.clinic_id, d.record_id, d.source_version);
     for (k, v) in &d.fields { text.push_str(k); text.push(':'); text.push_str(v); }
     text.push_str("SOURCE SHA-256:"); text.push_str(&d.source_digest);
     text.push_str("This copy does not prove payment, clinical verification, diagnosis, signature, delivery, or chart release.");
@@ -441,8 +550,8 @@ impl UnicodeCodes {
     }
 }
 fn source_unicode_chars(d: &PrintRequest) -> Vec<char> {
-    let mut text = format!("CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY {} {} Clinic reference: {} Record reference: {} Source version: {} ",
-        d.title, d.watermark, d.clinic_id, d.record_id, d.source_version);
+    let mut text = format!("{} {} {} Clinic reference: {} Record reference: {} Source version: {} ",
+        heading_lines(d).join(" "), d.title, d.watermark, d.clinic_id, d.record_id, d.source_version);
     for (k, v) in &d.fields { text.push_str(k); text.push(':'); text.push_str(v); }
     text.push_str("SOURCE SHA-256:"); text.push_str(&d.source_digest);
     text.push_str("This copy does not prove payment, clinical verification, diagnosis, signature, delivery, or chart release.");
@@ -596,7 +705,8 @@ fn correct_embedded_encoding(input: &[u8], d: &PrintRequest, font: &rusttype::Fo
 }
 
 fn render(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
-    let requested_texts: Vec<&str> = std::iter::once(d.title.as_str())
+    let headings = heading_lines(d);
+    let requested_texts: Vec<&str> = headings.iter().map(|v| v.as_str()).chain(std::iter::once(d.title.as_str()))
         .chain(std::iter::once(d.watermark.as_str()))
         .chain(d.fields.iter().flat_map(|(k, v)| [k.as_str(), v.as_str()]))
         .collect();
@@ -636,13 +746,17 @@ fn render(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
             .map_err(|_| "invalid font")?,
     };
     let mut doc = Document::new(family);
-    doc.set_title("CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY");
+    doc.set_title(if d.branding.is_some() { "CONTROLLED DOCUMENT COPY" } else { "CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY" });
     doc.set_minimal_conformance();
     doc.set_font_size(10);
     let mut decorator = SimplePageDecorator::new();
-    decorator.set_margins(14);
+    if d.branding.as_ref().and_then(|b| b.logo.as_ref()).is_some() {
+        decorator.set_margins(genpdf::Margins::trbl(39, 14, 14, 14));
+    } else {
+        decorator.set_margins(14);
+    }
     doc.set_page_decorator(decorator);
-    push_wrapped(&mut doc, &check_font, "CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY")?;
+    for line in &headings { push_wrapped(&mut doc, &check_font, line)?; }
     push_wrapped(&mut doc, &check_font, d.title.as_str())?;
     push_wrapped(&mut doc, &check_font, d.watermark.as_str())?;
     push_wrapped(&mut doc, &check_font, &format!(
@@ -666,6 +780,9 @@ fn render(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
     } else {
         result = correct_embedded_encoding(&result, d, &check_font)?;
     }
+    if let Some(logo) = d.branding.as_ref().and_then(|b| b.logo.as_ref()) {
+        result = add_brand_logo(&result, logo)?;
+    }
     if !result.starts_with(b"%PDF-") || result.len() > MAX_PDF {
         return Err("invalid pdf output");
     }
@@ -682,6 +799,7 @@ fn run() -> Result<(), &'static str> {
         return Err("input too large");
     }
     let d: PrintRequest = serde_json::from_slice(&bytes).map_err(|_| "invalid print protocol")?;
+    if d.protocol == 1 && bytes.len() > LEGACY_MAX_INPUT { return Err("input too large"); }
     validate(&d)?;
     let pdf = render(&d)?;
     io::stdout().write_all(&pdf).map_err(|_| "write failed")?;
@@ -702,6 +820,7 @@ mod tests {
     #[test]
     fn rejects_nonclinical_kind_and_signed() {
         let mut d = PrintRequest {
+            branding: None,
             protocol: 1,
             kind: "invoice".into(),
             clinic_id: 1,
