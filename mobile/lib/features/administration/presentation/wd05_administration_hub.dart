@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:clinic_system_pro/features/branding/data/branding_remote.dart';
+
 import 'package:flutter/material.dart';
 
 import 'package:clinic_system_pro/core/session/session_navigation_guard.dart';
@@ -74,10 +76,22 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
         id: 'sa_workspace',
         title: 'Super Admin workspace',
         path: '/administration/sa-workspace',
-        description: 'Platform rules, observability and selected-clinic staff reviews',
+        description:
+            'Platform rules, observability and selected-clinic staff reviews',
         icon: Icons.admin_panel_settings_outlined,
       ),
     ];
+    if (brandingStaged && !selected) {
+      links.add(
+        const Wd05AdministrationLink(
+          id: 'branding_entitlements',
+          title: 'Branding entitlements',
+          path: '/administration/branding-entitlements',
+          description: 'Staged platform entitlement only; no logo access',
+          icon: Icons.verified_user_outlined,
+        ),
+      );
+    }
     if (selected) {
       links.addAll(const <Wd05AdministrationLink>[
         Wd05AdministrationLink(
@@ -105,6 +119,17 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
       ]);
     }
     return List<Wd05AdministrationLink>.unmodifiable(links);
+  }
+  if (brandingStaged && !selected && normalized == 'admin') {
+    return const [
+      Wd05AdministrationLink(
+        id: 'document_branding',
+        title: 'Document branding',
+        path: '/administration/document-branding',
+        description: 'Server-confirmed organisation permissions',
+        icon: Icons.palette_outlined,
+      ),
+    ];
   }
   if (!selected ||
       !const <String>{
@@ -152,6 +177,17 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
     );
   }
   if (normalized == 'admin') {
+    if (brandingStaged) {
+      links.add(
+        const Wd05AdministrationLink(
+          id: 'document_branding',
+          title: 'Document branding',
+          path: '/administration/document-branding',
+          description: 'Server-authorized organisation and clinic branding',
+          icon: Icons.palette_outlined,
+        ),
+      );
+    }
     links.add(
       const Wd05AdministrationLink(
         id: 'clinic_workspace',
@@ -205,6 +241,24 @@ List<Wd05AdministrationLink> wd05AdministrationLinks({
         path: '/reports',
         description: 'Verified current-clinic report metadata',
         icon: Icons.assessment_outlined,
+      ),
+    );
+  }
+  if (brandingStaged &&
+      const {
+        'admin',
+        'accountant',
+        'doctor',
+        'receptionist',
+        'lab_technician',
+      }.contains(normalized)) {
+    links.add(
+      const Wd05AdministrationLink(
+        id: 'print_tools',
+        title: 'Document verification and thermal proof',
+        path: '/administration/print-tools',
+        description: 'Historical issuance and staged stream validation; no silent dispatch',
+        icon: Icons.fact_check_outlined,
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -77,17 +78,27 @@ class ApiClient {
   /// Explicit local historical snapshot capture, never an ordinary GET cache.
   /// Refuse server no-store/no-cache instructions and oversized/non-JSON data.
   /// Endpoint eligibility and minimized projections belong to the typed adapter.
-  Future<Map<String, dynamic>> getJsonForOfflineSnapshot(String path, {
+  Future<Map<String, dynamic>> getJsonForOfflineSnapshot(
+    String path, {
     required String bearerToken,
-  }) => _requestJson(method: 'GET', path: path, bearerToken: bearerToken,
-    offlineSnapshot: true);
+  }) => _requestJson(
+    method: 'GET',
+    path: path,
+    bearerToken: bearerToken,
+    offlineSnapshot: true,
+  );
 
   /// FHIR-R02 local read-only projection. Require the FHIR JSON media type
   /// and UTF-8 rather than the HTTP client's legacy text encoding fallback.
-  Future<Map<String, dynamic>> getFhirJson(String path, {
+  Future<Map<String, dynamic>> getFhirJson(
+    String path, {
     required String bearerToken,
-  }) => _requestJson(method: 'GET', path: path, bearerToken: bearerToken,
-    fhirJson: true);
+  }) => _requestJson(
+    method: 'GET',
+    path: path,
+    bearerToken: bearerToken,
+    fhirJson: true,
+  );
 
   /// Performs a JSON POST request and requires a JSON object response.
   ///
@@ -244,7 +255,9 @@ class ApiClient {
     }
 
     final uri = config.endpoint(path);
-    final headers = <String, String>{'Accept': fhirJson ? 'application/fhir+json' : 'application/json'};
+    final headers = <String, String>{
+      'Accept': fhirJson ? 'application/fhir+json' : 'application/json',
+    };
 
     if (body != null) {
       headers['Content-Type'] = 'application/json';
@@ -336,23 +349,44 @@ class ApiClient {
 
     try {
       if (offlineSnapshot) {
-        final directives = (response.headers['cache-control'] ?? '').toLowerCase();
+        final directives = (response.headers['cache-control'] ?? '')
+            .toLowerCase();
         final pragma = (response.headers['pragma'] ?? '').toLowerCase();
-        final media = response.headers['content-type']?.split(';').first.trim().toLowerCase();
-        if (directives.contains('no-store') || directives.contains('no-cache') ||
-            directives.contains('max-age=0') || directives.contains('must-revalidate') ||
-            pragma.contains('no-cache') || media != 'application/json' ||
+        final media = response.headers['content-type']
+            ?.split(';')
+            .first
+            .trim()
+            .toLowerCase();
+        if (directives.contains('no-store') ||
+            directives.contains('no-cache') ||
+            directives.contains('max-age=0') ||
+            directives.contains('must-revalidate') ||
+            pragma.contains('no-cache') ||
+            media != 'application/json' ||
             response.bodyBytes.length > 512 * 1024) {
-          throw const FormatException('Server response is not eligible for local persistence.');
+          throw const FormatException(
+            'Server response is not eligible for local persistence.',
+          );
         }
       }
       if (fhirJson) {
-        final mediaType = response.headers['content-type']?.split(';').first.trim().toLowerCase();
-        if (mediaType != 'application/fhir+json' || response.bodyBytes.length > 5 * 1024 * 1024) {
-          throw const FormatException('Invalid FHIR response media type or size.');
+        final mediaType = response.headers['content-type']
+            ?.split(';')
+            .first
+            .trim()
+            .toLowerCase();
+        if (mediaType != 'application/fhir+json' ||
+            response.bodyBytes.length > 5 * 1024 * 1024) {
+          throw const FormatException(
+            'Invalid FHIR response media type or size.',
+          );
         }
       }
-      decoded = jsonDecode(fhirJson || offlineSnapshot ? utf8.decode(response.bodyBytes) : response.body);
+      decoded = jsonDecode(
+        fhirJson || offlineSnapshot
+            ? utf8.decode(response.bodyBytes)
+            : response.body,
+      );
     } on FormatException catch (error) {
       throw ApiException(
         kind: ApiFailureKind.invalidResponse,
@@ -371,6 +405,181 @@ class ApiClient {
     }
 
     return decoded;
+  }
+
+  /// Private, bounded staged branding transport. Reuses the configured client
+  /// (including its TLS policy); no redirects, queue, disk or retry.
+  Future<Uint8List> sendPrivateBranding(
+    http.BaseRequest request, {
+    required bool image,
+    required bool Function() active,
+  }) async {
+    final path = request.url.path;
+    final origin = config.baseUri;
+    final isScope = RegExp(
+      r'^/api/v1/clinics/branding/(organization|clinic)(/logo|/colors)?$',
+    ).hasMatch(path);
+    final isEntitlement = RegExp(
+      r'^/api/v1/clinics/organizations/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/branding-entitlement$',
+    ).hasMatch(path);
+    final isDirectory = RegExp(
+      r'^/api/v1/clinics/branding/organizations(?:/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})?$',
+    ).hasMatch(path);
+    final isCapabilities = path == '/api/v1/clinics/branding/capabilities';
+    final isVerify = RegExp(r'^/api/v1/printing/verify/[0-9a-f]{32}$')
+        .hasMatch(path);
+    final isThermal = RegExp(
+      r'^/api/v1/printing/thermal/(58|80)/payment/[1-9][0-9]{0,9}\.escpos$',
+    ).hasMatch(path);
+    final validQuery =
+        !request.url.hasQuery ||
+        (path == '/api/v1/clinics/branding/organizations' &&
+            RegExp(r'^after=[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$')
+                .hasMatch(request.url.query));
+    if (!active() ||
+        request.url.origin != origin.origin ||
+        request.url.userInfo.isNotEmpty ||
+        !validQuery ||
+        request.url.hasFragment ||
+        (!isScope &&
+            !isEntitlement &&
+            !isDirectory &&
+            !isCapabilities &&
+            !isVerify &&
+            !isThermal) ||
+        request.followRedirects ||
+        !const {'GET', 'PUT', 'DELETE', 'POST'}.contains(request.method) ||
+        ((isDirectory || isCapabilities || isThermal) &&
+            request.method != 'GET') ||
+        (isVerify && !const {'GET', 'POST'}.contains(request.method)) ||
+        (!isVerify && request.method == 'POST') ||
+        (image != path.endsWith('/logo')) ||
+        (image && request.method != 'GET') ||
+        (path.endsWith('/colors') && request.method != 'PUT') ||
+        (isEntitlement && request.method == 'DELETE') ||
+        request.headers.keys.any((k) => k.toLowerCase() == 'idempotency-key') ||
+        (isVerify
+            ? request.headers.keys.any(
+                (k) => k.toLowerCase() == 'authorization',
+              )
+            : !(request.headers['Authorization'] ?? '').startsWith(
+                'Bearer ',
+              ))) {
+      throw StateError('Invalid private branding request.');
+    }
+    final requestId = ++_requestSequence;
+    final watch = Stopwatch()..start();
+    final maxBytes = image
+        ? 2 * 1024 * 1024
+        : isThermal
+        ? 4096
+        : 32768;
+    final http.StreamedResponse response;
+    try {
+      response = await _client.send(request).timeout(requestTimeout);
+    } on TimeoutException catch (error) {
+      _recordCommunicationStatus(
+        ApiCommunicationStatus.responseNotReceived,
+        requestId,
+      );
+      throw ApiException(
+        kind: ApiFailureKind.timeout,
+        message: 'Branding request timed out.',
+        uri: request.url,
+        cause: error,
+      );
+    } on http.ClientException catch (error) {
+      _recordCommunicationStatus(
+        ApiCommunicationStatus.responseNotReceived,
+        requestId,
+      );
+      throw ApiException(
+        kind: ApiFailureKind.connection,
+        message: 'Branding connection unavailable.',
+        uri: request.url,
+        cause: error,
+      );
+    }
+    _recordCommunicationStatus(
+      ApiCommunicationStatus.responseReceived,
+      requestId,
+    );
+    if (response.statusCode == 401 && !isVerify) {
+      try {
+        onAuthenticationRejected?.call();
+      } on Object {
+        /* Preserve rejection. */
+      }
+    }
+    if (response.statusCode != 200) {
+      // Cancel response without parsing untrusted error bodies.
+      await response.stream.listen(null).cancel();
+      throw ApiException(
+        kind: ApiFailureKind.httpStatus,
+        message: 'Branding request denied.',
+        uri: request.url,
+        statusCode: response.statusCode,
+      );
+    }
+    final length = response.contentLength;
+    final valid =
+        response.headers['content-type']
+                ?.split(';')
+                .first
+                .trim()
+                .toLowerCase() ==
+            (image
+                ? 'image/png'
+                : isThermal
+                ? 'application/octet-stream'
+                : 'application/json') &&
+        (!isThermal ||
+            const ['attachment; filename=', 'attachment; filename="'].any(
+              (prefix) =>
+                  response.headers['content-disposition'] ==
+                  '${prefix}payment-${path.split('/').last}${prefix.endsWith('"') ? '"' : ''}',
+            )) &&
+        RegExp(
+          r'(?:^|,)\s*no-store\s*(?:,|$)',
+          caseSensitive: false,
+        ).hasMatch(response.headers['cache-control'] ?? '') &&
+        response.headers['x-content-type-options']?.toLowerCase() ==
+            'nosniff' &&
+        (length == null || (length > 0 && length <= maxBytes));
+    if (!active() || !valid) {
+      await response.stream.listen(null).cancel();
+      throw ApiException(
+        kind: ApiFailureKind.invalidResponse,
+        message: 'Private branding response unavailable.',
+        uri: request.url,
+      );
+    }
+    final buffer = BytesBuilder(copy: true);
+    await for (final chunk in response.stream.timeout(requestTimeout)) {
+      if (!active() ||
+          watch.elapsed > requestTimeout ||
+          buffer.length + chunk.length > maxBytes) {
+        throw ApiException(
+          kind: ApiFailureKind.invalidResponse,
+          message: 'Private branding response unavailable.',
+          uri: request.url,
+        );
+      }
+      buffer.add(chunk);
+    }
+    final bytes = buffer.takeBytes();
+    if (!active() ||
+        watch.elapsed > requestTimeout ||
+        bytes.isEmpty ||
+        (length != null && length != bytes.length)) {
+      bytes.fillRange(0, bytes.length, 0);
+      throw ApiException(
+        kind: ApiFailureKind.invalidResponse,
+        message: 'Private branding response unavailable.',
+        uri: request.url,
+      );
+    }
+    return bytes;
   }
 
   Map<String, String> _parseValidationErrors(String body) {
