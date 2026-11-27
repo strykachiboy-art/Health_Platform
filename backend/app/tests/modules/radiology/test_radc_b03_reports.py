@@ -144,3 +144,76 @@ def test_concurrent_freeze_on_postgres(ready,app):
             finally:db.session.remove()
     with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(lambda _:attempt(),range(2)))
     assert sorted(results)==['conflict','frozen'];assert db.session.query(RadiologyStagedReport).count()==1
+
+# L04: real synthetic HTTP download, version/withdrawal and audit proof.
+def test_l04_patient_pdf_versions_and_multipage(ready,app,client,tmp_path,make_user,make_patient,make_clinic,auth_headers_for):
+    import json
+    from app.core.audit.models.audit_model import AuditLog
+    s,_,_=ready
+    url=f"/api/v1/radiology/me/staged-reports/{s['args']['exam_id']}/pdf"
+    headers=s['patient_headers']
+    app.config['RAD6_PRINTING_ENABLED']=True
+    assert client.get(url,headers=headers).status_code==404
+    freeze(s)
+    assert client.get(url,headers=headers).status_code==404
+    publish(s)
+    other=make_user(s['clinic'],role=Role.PATIENT);make_patient(s['clinic'],user_id=other.id)
+    foreign_clinic=make_clinic();foreign=make_user(foreign_clinic,role=Role.PATIENT);make_patient(foreign_clinic,user_id=foreign.id)
+    db.session.commit()
+    for user in (other,foreign):
+        assert client.get(url,headers=auth_headers_for(user)).status_code==404
+    assert client.get(url,headers=s['headers']).status_code==403
+    assert client.get(url+'?version=1',headers=headers).status_code==422
+    assert client.get(url,headers={**headers,'Idempotency-Key':'synthetic'}).status_code==422
+    app.config['TESTING']=False
+    try:
+        assert client.get(url,headers=headers).status_code==404
+    finally:
+        app.config['TESTING']=True
+    def download(version):
+        r=client.get(url,headers=headers)
+        assert r.status_code==200,r.get_json()
+        assert r.data.startswith(b'%PDF-') and r.data.rstrip().endswith(b'%%EOF')
+        assert len(r.data)<=3*1024*1024
+        assert r.headers['X-Radiology-Scope']=='synthetic-nondiagnostic-only'
+        assert 'no-store' in r.headers['Cache-Control']
+        assert r.headers['X-Content-Type-Options']=='nosniff'
+        assert 'attachment' in r.headers['Content-Disposition']
+        current=report.patient_detail(**s['recipient'])
+        assert current['record_version']==version and current['synthetic_only'] is True
+        assert current['diagnostic_report_signed'] is False and current['released_to_chart'] is False
+        digest=r.headers['X-Source-SHA256']
+        audits=db.session.query(AuditLog).filter_by(entity_type='RadiologyExam',entity_id=s['args']['exam_id'],
+            user_id=s['recipient']['user_id'],description='Downloaded synthetic staged radiology copy').all()
+        assert len(audits)==version
+        assert any(a.new_value=={'record_version':version,'source_digest':digest} for a in audits)
+        (tmp_path/f'l04_route_v{version}.pdf').write_bytes(r.data)
+        (tmp_path/f'l04_route_v{version}.json').write_text(json.dumps({'report':current,'clinic_id':s['clinic'].id,
+            'record_id':s['args']['exam_id'],'patient_id':s['patient'].id,'version':version,'digest':digest},ensure_ascii=True),encoding='utf-8')
+        return digest
+    first=download(1)
+    report.withdraw(**args(s),expected_version=1)
+    assert client.get(url,headers=headers).status_code==404
+    # Near-bound report exercises wrapping, page breaks and literal markup.
+    text='SYNTHETIC version two, not a diagnostic report.\n\n'+('Synthetic finding <b>NOT MARKUP</b> & no patient data. '+ 'W'*100+'\n')*60+'END-OF-SYNTHETIC-RADIOLOGY-REPORT'
+    assert len(text)<12000
+    report.amend(**args(s),expected_version=1,report_text=text,reason='Fixture correction')
+    assert client.get(url,headers=headers).status_code==404
+    publish(s)
+    assert download(2)!=first
+    assert report.patient_detail(**s['recipient'])['report_text']==text
+    assert db.session.query(RadiologyReportVersion).one().content=='SYNTHETIC test report version one'
+
+
+def test_l04_renderer_bounds_and_source_hold():
+    from app.modules.printing.services.print_policy import build_document
+    from app.modules.printing.services.print_renderer import render_pdf
+    source={'patient_id':11,'released_at':'2030-01-01T10:00:00+00:00','report_text':'SYNTHETIC report'}
+    def doc(text):
+        return build_document(kind='staged_radiology_copy',clinic_id=1,record_id=9,source_version=1,source={**source,'report_text':text})
+    for bad in ('SYNTHETIC \u03bc','SYNTHETIC \x00','SYNTHETIC \x7f','W'*12001):
+        with pytest.raises(PrintDenied):
+            render_pdf(doc(bad))
+    for bad in ('Not synthetic','SYNTHETIC \u03bc'):
+        with pytest.raises(ValidationError):
+            report._text(bad)
