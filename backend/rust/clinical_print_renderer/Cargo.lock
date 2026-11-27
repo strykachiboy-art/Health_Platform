@@ -101,6 +101,7 @@ name = "clinical_print_renderer"
 version = "0.1.0"
 dependencies = [
  "genpdf",
+ "lopdf",
  "printpdf",
  "rusttype 0.9.3",
  "serde",

@@ -221,8 +221,16 @@ fn helvetica_metric_paths() -> Option<[PathBuf; 4]> {
     None
 }
 
-fn safe_chunks(text: &str, cap: usize) -> Vec<String> {
-    // Bound single glyph runs so whitespace-free input cannot blow page width.
+// Budget is intentionally below the printable A4 width (about 516 pt at
+// 14 mm margins). Use larger-than-rendered metrics plus a spacing reserve
+// for native PDF viewers/printer drivers. Validate actual rendered geometry
+// separately; neither a character count nor metrics alone prove visibility.
+const PRINT_LINE_BUDGET: f32 = 400.0;
+
+fn wrap_lines<F>(text: &str, width: F) -> Result<Vec<String>, &'static str>
+where
+    F: Fn(char) -> f32,
+{
     let mut result = Vec::new();
     for line in text.split('\n') {
         let normalized = line.replace('\t', "    ");
@@ -231,11 +239,360 @@ fn safe_chunks(text: &str, cap: usize) -> Vec<String> {
             result.push(" ".into());
             continue;
         }
-        for piece in chars.chunks(cap) {
-            result.push(piece.iter().collect());
+        let mut start = 0;
+        while start < chars.len() {
+            let mut end = start;
+            let mut used = 0.0;
+            let mut last_space = None;
+            while end < chars.len() {
+                let advance = width(chars[end]);
+                if !advance.is_finite() || advance <= 0.0 || advance > PRINT_LINE_BUDGET {
+                    return Err("invalid glyph width");
+                }
+                if used + advance > PRINT_LINE_BUDGET {
+                    break;
+                }
+                used += advance;
+                end += 1;
+                if chars[end - 1].is_whitespace() {
+                    last_space = Some(end);
+                }
+            }
+            if end < chars.len() {
+                if let Some(split) = last_space {
+                    // Prefer whole words, without dropping any original characters.
+                    end = split;
+                }
+            }
+            if end == start {
+                return Err("print line cannot advance");
+            }
+            result.push(chars[start..end].iter().collect());
+            start = end;
         }
     }
-    result
+    Ok(result)
+}
+
+fn push_wrapped(doc: &mut Document, font: &rusttype::Font<'_>, text: &str) -> Result<(), &'static str> {
+    for line in wrap_lines(text, |c| {
+        font.glyph(c)
+            .scaled(rusttype::Scale::uniform(14.0))
+            .h_metrics().advance_width.max(0.0) + 3.0
+    })? {
+        doc.push(elements::Paragraph::new(line));
+    }
+    Ok(())
+}
+
+// The locked genpdf/printpdf pair emits two-byte codes even for a simple
+// WinAnsi Type1 font. Repair only the known, renderer-generated text operands
+// before returning PDF bytes. Never touch embedded CID font content.
+fn winansi_byte(c: char) -> Option<u8> {
+    match c {
+        ' '..='~' | '\u{00a0}'..='\u{00ff}' => Some(c as u8),
+        _ => {
+            const SPECIAL: [char; 32] = [
+                '€','\0','‚','ƒ','„','…','†','‡','ˆ','‰','Š','‹','Œ','\0','Ž','\0',
+                '\0','‘','’','“','”','•','–','—','˜','™','š','›','œ','\0','ž','Ÿ',
+            ];
+            if c == '\0' { return None; }
+            SPECIAL.iter().position(|&x| x == c).map(|i| 0x80 + i as u8)
+        }
+    }
+}
+
+fn valid_winansi_code(b: u8) -> bool {
+    matches!(b, 0x20..=0x7e | 0xa0..=0xff | 0x80 | 0x82..=0x8c |
+        0x8e | 0x91..=0x9c | 0x9e..=0x9f)
+}
+
+fn simple_font_code(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
+    if bytes.is_empty() || bytes.len() % 2 != 0 { return Err("invalid simple font code length"); }
+    bytes.chunks_exact(2).map(|pair| {
+        let code = u16::from_be_bytes([pair[0], pair[1]]);
+        let b = if pair[0] == 0 { pair[1] } else {
+            char::from_u32(u32::from(code)).and_then(winansi_byte).ok_or("invalid WinAnsi code")?
+        };
+        if !valid_winansi_code(b) { return Err("invalid WinAnsi byte"); }
+        Ok(b)
+    }).collect()
+}
+
+fn expected_winansi(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
+    let mut text = format!("CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY {} {} Clinic reference: {} Record reference: {} Source version: {} ",
+        d.title, d.watermark, d.clinic_id, d.record_id, d.source_version);
+    for (k, v) in &d.fields { text.push_str(k); text.push(':'); text.push_str(v); }
+    text.push_str("SOURCE SHA-256:"); text.push_str(&d.source_digest);
+    text.push_str("This copy does not prove payment, clinical verification, diagnosis, signature, delivery, or chart release.");
+    text.chars().filter(|c| !c.is_whitespace()).map(|c| winansi_byte(c).ok_or("unsupported expected WinAnsi text")).collect()
+}
+
+fn correct_builtin_encoding(input: &[u8], expected: &[u8]) -> Result<Vec<u8>, &'static str> {
+    use lopdf::{content::Content, Object, Stream};
+    const BAD: &str = "invalid generated simple font PDF";
+    if input.len() > MAX_PDF { return Err(BAD); }
+    let mut pdf = lopdf::Document::load_mem(input).map_err(|_| BAD)?;
+    let mut observed = Vec::new();
+    let pages = pdf.get_pages();
+    if pages.is_empty() || pages.len() > 100 { return Err(BAD); }
+    for (_, page_id) in pages {
+        let page = pdf.get_object(page_id).and_then(Object::as_dict).map_err(|_| BAD)?;
+        let resource_id = page.get(b"Resources").and_then(Object::as_reference).map_err(|_| BAD)?;
+        let resources = pdf.get_object(resource_id).and_then(Object::as_dict).map_err(|_| BAD)?;
+        let font_id = resources.get(b"Font").and_then(Object::as_reference).map_err(|_| BAD)?;
+        let fonts = pdf.get_object(font_id).and_then(Object::as_dict).map_err(|_| BAD)?;
+        // L01 emits exactly one page stream and these four Helvetica resources.
+        let mut allowed_fonts = Vec::new();
+        for name in [b"Helvetica".as_ref(), b"Helvetica-Bold".as_ref(), b"Helvetica-Oblique".as_ref(), b"Helvetica-BoldOblique".as_ref()] {
+            let id = fonts.get(name).and_then(Object::as_reference).map_err(|_| BAD)?;
+            let font = pdf.get_object(id).and_then(Object::as_dict).map_err(|_| BAD)?;
+            if font.get(b"Subtype").and_then(Object::as_name).map_err(|_| BAD)? != b"Type1"
+                || font.get(b"BaseFont").and_then(Object::as_name).map_err(|_| BAD)? != name
+                || font.get(b"Encoding").and_then(Object::as_name).map_err(|_| BAD)? != b"WinAnsiEncoding"
+                || font.get(b"ToUnicode").is_ok() { return Err(BAD); }
+            allowed_fonts.push(name);
+        }
+        let stream_id = page.get(b"Contents").and_then(Object::as_reference).map_err(|_| BAD)?;
+        let stream = pdf.get_object(stream_id).and_then(Object::as_stream).map_err(|_| BAD)?;
+        // The pinned generator emits uncompressed page streams. Reject any new shape.
+        if stream.dict.get(b"Filter").is_ok() || stream.content.len() > MAX_PDF { return Err(BAD); }
+        let mut content = Content::decode(&stream.content).map_err(|_| BAD)?;
+        let mut in_text = false;
+        let mut font_ok = false;
+        let mut count = 0usize;
+        for op in &mut content.operations {
+            match op.operator.as_str() {
+                "BT" if !in_text => { in_text = true; font_ok = false; }
+                "ET" if in_text => { in_text = false; font_ok = false; }
+                "Tf" if in_text && op.operands.len() == 2 => {
+                    let name = op.operands[0].as_name().map_err(|_| BAD)?;
+                    if !allowed_fonts.contains(&name) { return Err(BAD); }
+                    font_ok = true;
+                }
+                "TJ" if in_text && font_ok && op.operands.len() == 1 => {
+                    let items = match &mut op.operands[0] { Object::Array(a) => a, _ => return Err(BAD) };
+                    for item in items {
+                        match item {
+                            Object::String(bytes, _) => {
+                                let converted = simple_font_code(bytes)?;
+                                observed.extend(converted.iter().copied().filter(|b| !matches!(*b, 0x20 | 0xa0)));
+                                *bytes = converted;
+                                count += 1;
+                            }
+                            Object::Integer(_) | Object::Real(_) => (),
+                            _ => return Err(BAD),
+                        }
+                    }
+                }
+                "TL" | "Td" if in_text => (),
+                "BDC" | "EMC" | "q" | "Q" if !in_text => (),
+                _ => return Err(BAD),
+            }
+        }
+        if in_text || count == 0 { return Err(BAD); }
+        let encoded = content.encode().map_err(|_| BAD)?;
+        let updated = Stream::new(stream.dict.clone(), encoded);
+        pdf.objects.insert(stream_id, Object::Stream(updated));
+    }
+    // A malformed or ambiguous code must never silently change clinical data.
+    // Compare all non-whitespace source characters before returning anything.
+    if observed != expected { return Err("generated simple font content mismatch"); }
+    let mut output = Vec::new();
+    pdf.save_to(&mut output).map_err(|_| BAD)?;
+    Ok(output)
+}
+
+// Source-aware mapping for the pinned generator's regular embedded TrueType font.
+// Distinct Unicode scalar values may share a glyph ID; allocate distinct CIDs.
+// The original glyph, width and kerning operands are preserved.
+#[derive(Default)]
+struct UnicodeCodes {
+    chars: std::collections::BTreeMap<char, u16>,
+    entries: Vec<(char, u16)>,
+}
+impl UnicodeCodes {
+    fn assign(&mut self, c: char, gid: u16) -> Result<u16, &'static str> {
+        if gid == 0 { return Err("missing Unicode glyph"); }
+        if let Some(&cid) = self.chars.get(&c) {
+            if self.entries[usize::from(cid) - 1].1 != gid { return Err("glyph mapping drift"); }
+            return Ok(cid);
+        }
+        let cid = u16::try_from(self.entries.len() + 1).map_err(|_| "too many Unicode codes")?;
+        self.entries.push((c, gid));
+        self.chars.insert(c, cid);
+        Ok(cid)
+    }
+    fn cmap(&self) -> Vec<u8> {
+        use std::fmt::Write as _;
+        let mut out = String::from("/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /CSPSourceUnicode def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n");
+        for (block, entries) in self.entries.chunks(100).enumerate() {
+            let _ = writeln!(out, "{} beginbfchar", entries.len());
+            for (i, &(c, _)) in entries.iter().enumerate() {
+                let mut units = [0u16; 2];
+                let _ = write!(out, "<{:04X}> <", block * 100 + i + 1);
+                for u in c.encode_utf16(&mut units) { let _ = write!(out, "{:04X}", u); }
+                out.push_str(">\n");
+            }
+            out.push_str("endbfchar\n");
+        }
+        out.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+        out.into_bytes()
+    }
+}
+fn source_unicode_chars(d: &PrintRequest) -> Vec<char> {
+    let mut text = format!("CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY {} {} Clinic reference: {} Record reference: {} Source version: {} ",
+        d.title, d.watermark, d.clinic_id, d.record_id, d.source_version);
+    for (k, v) in &d.fields { text.push_str(k); text.push(':'); text.push_str(v); }
+    text.push_str("SOURCE SHA-256:"); text.push_str(&d.source_digest);
+    text.push_str("This copy does not prove payment, clinical verification, diagnosis, signature, delivery, or chart release.");
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+fn consume_unicode_gid<I: Iterator<Item=char>, F: Fn(char)->u16>(gid: u16, space: u16, expected: &mut I, glyph: &F, codes: &mut UnicodeCodes) -> Result<u16, &'static str> {
+    let c = if gid == space { ' ' } else { expected.next().ok_or("unexpected embedded glyph")? };
+    if glyph(c) != gid { return Err("embedded glyph/source mismatch"); }
+    codes.assign(c, gid)
+}
+fn embedded_widths(items: &[lopdf::Object]) -> Result<std::collections::BTreeMap<u16, lopdf::Object>, &'static str> {
+    use lopdf::Object;
+    const BAD: &str = "invalid embedded width table";
+    let mut widths = std::collections::BTreeMap::new();
+    let mut i = 0;
+    while i < items.len() {
+        let start = u16::try_from(items[i].as_i64().map_err(|_| BAD)?).map_err(|_| BAD)?;
+        i += 1;
+        match items.get(i).ok_or(BAD)? {
+            Object::Array(a) => {
+                for (j, w) in a.iter().enumerate() {
+                    if !matches!(w, Object::Integer(_) | Object::Real(_)) { return Err(BAD); }
+                    let gid = start.checked_add(u16::try_from(j).map_err(|_| BAD)?).ok_or(BAD)?;
+                    if widths.insert(gid, w.clone()).is_some() { return Err(BAD); }
+                }
+                i += 1;
+            }
+            Object::Integer(end) => {
+                let end = u16::try_from(*end).map_err(|_| BAD)?;
+                let w = items.get(i+1).ok_or(BAD)?;
+                if end < start || !matches!(w, Object::Integer(_) | Object::Real(_)) { return Err(BAD); }
+                for gid in start..=end { if widths.insert(gid, w.clone()).is_some() { return Err(BAD); } }
+                i += 2;
+            }
+            _ => return Err(BAD),
+        }
+    }
+    Ok(widths)
+}
+fn correct_embedded_encoding(input: &[u8], d: &PrintRequest, font: &rusttype::Font<'_>) -> Result<Vec<u8>, &'static str> {
+    use lopdf::{content::Content, Dictionary, Object, Stream};
+    const BAD: &str = "invalid generated embedded font PDF";
+    // Bounded internal representation only. The public output cap stays 3 MiB.
+    if input.len() > 8 * 1024 * 1024 { return Err(BAD); }
+    let mut pdf = lopdf::Document::load_mem(input).map_err(|_| BAD)?;
+    let source = source_unicode_chars(d);
+    let mut expected = source.into_iter();
+    let glyph = |c: char| font.glyph(c).id().0;
+    let space = glyph(' ');
+    if space == 0 { return Err(BAD); }
+    let mut codes = UnicodeCodes::default();
+    let mut regular_id = None;
+    let pages = pdf.get_pages();
+    if pages.is_empty() || pages.len() > 100 { return Err(BAD); }
+    for (_, page_id) in pages {
+        let page = pdf.get_object(page_id).and_then(Object::as_dict).map_err(|_| BAD)?;
+        let resource_id = page.get(b"Resources").and_then(Object::as_reference).map_err(|_| BAD)?;
+        let resources = pdf.get_object(resource_id).and_then(Object::as_dict).map_err(|_| BAD)?;
+        let font_id = resources.get(b"Font").and_then(Object::as_reference).map_err(|_| BAD)?;
+        let fonts = pdf.get_object(font_id).and_then(Object::as_dict).map_err(|_| BAD)?;
+        let id = fonts.get(b"F0").and_then(Object::as_reference).map_err(|_| BAD)?;
+        if let Some(prior) = regular_id { if prior != id { return Err(BAD); } }
+        regular_id = Some(id);
+        let f = pdf.get_object(id).and_then(Object::as_dict).map_err(|_| BAD)?;
+        if f.get(b"Subtype").and_then(Object::as_name).map_err(|_| BAD)? != b"Type0"
+            || f.get(b"Encoding").and_then(Object::as_name).map_err(|_| BAD)? != b"Identity-H" { return Err(BAD); }
+        let stream_id = page.get(b"Contents").and_then(Object::as_reference).map_err(|_| BAD)?;
+        let stream = pdf.get_object(stream_id).and_then(Object::as_stream).map_err(|_| BAD)?;
+        if stream.dict.get(b"Filter").is_ok() || stream.content.len() > MAX_PDF { return Err(BAD); }
+        let mut content = Content::decode(&stream.content).map_err(|_| BAD)?;
+        let mut in_text = false;
+        let mut font_ok = false;
+        let mut count = 0usize;
+        for op in &mut content.operations {
+            match op.operator.as_str() {
+                "BT" if !in_text => { in_text = true; font_ok = false; }
+                "ET" if in_text => { in_text = false; font_ok = false; }
+                "Tf" if in_text && op.operands.len() == 2 => {
+                    if op.operands[0].as_name().map_err(|_| BAD)? != b"F0" { return Err(BAD); }
+                    font_ok = true;
+                }
+                "TJ" if in_text && font_ok && op.operands.len() == 1 => {
+                    let items = match &mut op.operands[0] { Object::Array(a) => a, _ => return Err(BAD) };
+                    for item in items {
+                        match item {
+                            Object::String(bytes, _) => {
+                                if bytes.is_empty() || bytes.len() % 2 != 0 { return Err(BAD); }
+                                for pair in bytes.chunks_exact_mut(2) {
+                                    let gid = u16::from_be_bytes([pair[0], pair[1]]);
+                                    let cid = consume_unicode_gid(gid, space, &mut expected, &glyph, &mut codes)?;
+                                    pair.copy_from_slice(&cid.to_be_bytes());
+                                    count += 1;
+                                }
+                            }
+                            Object::Integer(_) | Object::Real(_) => (),
+                            _ => return Err(BAD),
+                        }
+                    }
+                }
+                "TL" | "Td" if in_text => (),
+                "BDC" | "EMC" | "q" | "Q" if !in_text => (),
+                _ => return Err(BAD),
+            }
+        }
+        if in_text || count == 0 { return Err(BAD); }
+        let encoded = content.encode().map_err(|_| BAD)?;
+        let updated = Stream::new(stream.dict.clone(), encoded);
+        pdf.objects.insert(stream_id, Object::Stream(updated));
+    }
+    if expected.next().is_some() { return Err("missing embedded source characters"); }
+    let font_id = regular_id.ok_or(BAD)?;
+    let f = pdf.get_object(font_id).and_then(Object::as_dict).map_err(|_| BAD)?;
+    let descendants = f.get(b"DescendantFonts").and_then(Object::as_array).map_err(|_| BAD)?;
+    // printpdf may inline the descendant dictionary (the L02 artifact does).
+    if descendants.len() != 1 { return Err(BAD); }
+    let descendant_id = descendants[0].as_reference().ok();
+    let mut descendant = match descendant_id {
+        Some(id) => pdf.get_object(id).and_then(Object::as_dict).map_err(|_| BAD)?.clone(),
+        None => descendants[0].as_dict().map_err(|_| BAD)?.clone(),
+    };
+    if descendant.get(b"Subtype").and_then(Object::as_name).map_err(|_| BAD)? != b"CIDFontType2" { return Err(BAD); }
+    if let Ok(map) = descendant.get(b"CIDToGIDMap") {
+        if map.as_name().map_err(|_| BAD)? != b"Identity" { return Err(BAD); }
+    }
+    let widths = embedded_widths(descendant.get(b"W").and_then(Object::as_array).map_err(|_| BAD)?)?;
+    let default_width = descendant.get(b"DW").map_err(|_| BAD)?.clone();
+    if !matches!(default_width, Object::Integer(_) | Object::Real(_)) { return Err(BAD); }
+    let mut gidmap = vec![0, 0];
+    let mut new_widths = Vec::new();
+    for &(_, gid) in &codes.entries {
+        gidmap.extend_from_slice(&gid.to_be_bytes());
+        new_widths.push(widths.get(&gid).unwrap_or(&default_width).clone());
+    }
+    let cmap_id = pdf.add_object(Stream::new(Dictionary::new(), codes.cmap()));
+    let gidmap_id = pdf.add_object(Stream::new(Dictionary::new(), gidmap));
+    descendant.set("CIDToGIDMap", Object::Reference(gidmap_id));
+    descendant.set("W", Object::Array(vec![Object::Integer(1), Object::Array(new_widths)]));
+    let new_descendant = match descendant_id {
+        Some(id) => { pdf.objects.insert(id, Object::Dictionary(descendant)); Object::Reference(id) }
+        None => Object::Dictionary(descendant),
+    };
+    let f = pdf.get_object_mut(font_id).and_then(Object::as_dict_mut).map_err(|_| BAD)?;
+    f.set("DescendantFonts", Object::Array(vec![new_descendant]));
+    f.set("ToUnicode", Object::Reference(cmap_id));
+    pdf.prune_objects();
+    // Lossless compression gives the embedded fonts and longer reports room under the existing cap.
+    pdf.compress();
+    let mut output = Vec::new();
+    pdf.save_to(&mut output).map_err(|_| BAD)?;
+    Ok(output)
 }
 
 fn render(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
@@ -285,32 +642,30 @@ fn render(d: &PrintRequest) -> Result<Vec<u8>, &'static str> {
     let mut decorator = SimplePageDecorator::new();
     decorator.set_margins(14);
     doc.set_page_decorator(decorator);
-    doc.push(elements::Paragraph::new(
-        "CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY",
-    ));
-    doc.push(elements::Paragraph::new(d.title.as_str()));
-    doc.push(elements::Paragraph::new(d.watermark.as_str()));
-    doc.push(elements::Paragraph::new(format!(
-        "Clinic reference: {}   Record reference: {}",
-        d.clinic_id, d.record_id
-    )));
-    doc.push(elements::Paragraph::new(format!(
-        "Source version: {}",
-        d.source_version
-    )));
+    push_wrapped(&mut doc, &check_font, "CLINIC SYSTEM PRO - CONTROLLED DOCUMENT COPY")?;
+    push_wrapped(&mut doc, &check_font, d.title.as_str())?;
+    push_wrapped(&mut doc, &check_font, d.watermark.as_str())?;
+    push_wrapped(&mut doc, &check_font, &format!(
+        "Clinic reference: {}   Record reference: {}", d.clinic_id, d.record_id
+    ))?;
+    push_wrapped(&mut doc, &check_font, &format!("Source version: {}", d.source_version))?;
     for (label, value) in &d.fields {
-        doc.push(elements::Paragraph::new(format!("{}:", label)));
-        for chunk in safe_chunks(value, 56) {
-            doc.push(elements::Paragraph::new(chunk));
-        }
+        push_wrapped(&mut doc, &check_font, &format!("{}:", label))?;
+        push_wrapped(&mut doc, &check_font, value)?;
     }
-    doc.push(elements::Paragraph::new(format!(
-        "SOURCE SHA-256: {}",
-        d.source_digest
-    )));
-    doc.push(elements::Paragraph::new("This copy does not prove payment, clinical verification, diagnosis, signature, delivery, or chart release."));
+    // Preserve the complete digest; validate() requires exactly 64 ASCII hex bytes.
+    push_wrapped(&mut doc, &check_font, "SOURCE SHA-256:")?;
+    for piece in d.source_digest.as_bytes().chunks(32) {
+        push_wrapped(&mut doc, &check_font, std::str::from_utf8(piece).map_err(|_| "invalid digest")?)?;
+    }
+    push_wrapped(&mut doc, &check_font, "This copy does not prove payment, clinical verification, diagnosis, signature, delivery, or chart release.")?;
     let mut result = Vec::new();
     doc.render(&mut result).map_err(|_| "pdf render failed")?;
+    if use_builtin {
+        result = correct_builtin_encoding(&result, &expected_winansi(d)?)?;
+    } else {
+        result = correct_embedded_encoding(&result, d, &check_font)?;
+    }
     if !result.starts_with(b"%PDF-") || result.len() > MAX_PDF {
         return Err("invalid pdf output");
     }
@@ -372,6 +727,71 @@ mod tests {
         d.is_signed = false;
         d.kind = "discharge_final".into();
         assert!(validate(&d).is_err());
+    }
+    #[test]
+    fn layout_wrap_preserves_words_and_long_unbroken_runs() {
+        let text = format!("Controlled billing copy {} and final disclaimer.", "W".repeat(300));
+        let lines = wrap_lines(&text, |c| if c == 'W' { 18.0 } else { 9.0 }).unwrap();
+        assert!(lines.len() > 5);
+        assert_eq!(lines.concat(), text);
+        assert!(lines.iter().all(|s| s.chars().map(|c| if c == 'W' { 18.0 } else { 9.0 }).sum::<f32>() <= PRINT_LINE_BUDGET));
+        assert!(lines[0].ends_with(' '));
+    }
+    #[test]
+    fn layout_wrap_preserves_unicode_and_explicit_lines() {
+        let text = "é".repeat(128);
+        let lines = wrap_lines(&text, |_| 12.0).unwrap();
+        assert_eq!(lines.concat(), text);
+        assert!(lines.iter().all(|s| s.chars().count() <= 33));
+        assert_eq!(wrap_lines("A\tB\n\nC", |_| 10.0).unwrap(), vec!["A    B", " ", "C"]);
+        assert!(wrap_lines("W", |_| 401.0).is_err());
+        assert!(wrap_lines("W", |_| f32::NAN).is_err());
+    }
+    #[test]
+    fn simple_font_encoding_preserves_ascii_and_winansi() {
+        assert_eq!(simple_font_code(&[0, 0x43, 0, 0xe9, 0, 0x80, 0x20, 0x13]).unwrap(), vec![0x43, 0xe9, 0x80, 0x96]);
+        assert_eq!(winansi_byte('€'), Some(0x80));
+        assert_eq!(winansi_byte('µ'), Some(0xb5));
+        assert_eq!(winansi_byte('μ'), None);
+    }
+    #[test]
+    fn simple_font_encoding_rejects_ambiguous_or_invalid_codes() {
+        for invalid in [&[][..], &[0x43][..], &[0, 0][..], &[0, 0x81][..], &[0x03, 0xbc][..]] {
+            assert!(simple_font_code(invalid).is_err());
+        }
+    }
+    #[test]
+    fn unicode_codes_distinguish_shared_glyphs_and_utf16() {
+        let mut c = UnicodeCodes::default();
+        assert_eq!(c.assign('-', 16).unwrap(), 1);
+        assert_eq!(c.assign('\u{2010}', 16).unwrap(), 2);
+        assert_eq!(c.assign('-', 16).unwrap(), 1);
+        assert_eq!(c.assign('\u{2212}', 120).unwrap(), 3);
+        assert_eq!(c.assign('\u{1f600}', 500).unwrap(), 4);
+        assert!(c.assign('-', 17).is_err());
+        assert!(c.assign('x', 0).is_err());
+        let map = String::from_utf8(c.cmap()).unwrap();
+        assert!(map.contains("<0001> <002D>\n<0002> <2010>\n<0003> <2212>\n<0004> <D83DDE00>"));
+    }
+    #[test]
+    fn unicode_source_alignment_rejects_wrong_or_extra_glyph() {
+        let glyph = |c| match c { '-' | '\u{2010}' => 16, ' ' => 3, 'A' => 36, _ => 0 };
+        let mut expected = "-\u{2010}A".chars();
+        let mut codes = UnicodeCodes::default();
+        assert_eq!(consume_unicode_gid(16, 3, &mut expected, &glyph, &mut codes).unwrap(), 1);
+        assert_eq!(consume_unicode_gid(3, 3, &mut expected, &glyph, &mut codes).unwrap(), 2);
+        assert_eq!(consume_unicode_gid(16, 3, &mut expected, &glyph, &mut codes).unwrap(), 3);
+        assert_eq!(consume_unicode_gid(36, 3, &mut expected, &glyph, &mut codes).unwrap(), 4);
+        assert!(consume_unicode_gid(36, 3, &mut expected, &glyph, &mut codes).is_err());
+        assert!(consume_unicode_gid(16, 3, &mut "A".chars(), &glyph, &mut codes).is_err());
+    }
+    #[test]
+    fn unicode_width_mapping_keeps_original_metrics() {
+        use lopdf::Object;
+        let widths = embedded_widths(&[Object::Integer(16), Object::Array(vec![Object::Integer(389)]), Object::Integer(20), Object::Integer(22), Object::Integer(500)]).unwrap();
+        assert_eq!(widths[&16].as_i64().unwrap(), 389);
+        assert_eq!(widths[&22].as_i64().unwrap(), 500);
+        assert!(embedded_widths(&[Object::Integer(16)]).is_err());
     }
     #[test]
     fn bounded_string_checks() {
