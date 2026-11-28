@@ -140,7 +140,9 @@ void main() {
   ) async {
     final source = _ScreenSource(api, guard, staging: false);
     await tester.pumpWidget(
-      MaterialApp(home: BrandingScreen(source: source, platform: false)),
+      MaterialApp(
+        home: BrandingScreen(source: source, studio: false, platform: false),
+      ),
     );
     await tester.pumpAndSettle();
     expect(
@@ -153,7 +155,9 @@ void main() {
   testWidgets('backend denial never exposes mutation controls', (tester) async {
     final source = _ScreenSource(api, guard)..deny = true;
     await tester.pumpWidget(
-      MaterialApp(home: BrandingScreen(source: source, platform: false)),
+      MaterialApp(
+        home: BrandingScreen(source: source, studio: false, platform: false),
+      ),
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('branding-save-colors')), findsNothing);
@@ -172,7 +176,9 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final source = _ScreenSource(api, guard);
       await tester.pumpWidget(
-        MaterialApp(home: BrandingScreen(source: source, platform: false)),
+        MaterialApp(
+          home: BrandingScreen(source: source, studio: false, platform: false),
+        ),
       );
       await tester.pumpAndSettle();
       await tester.tap(
@@ -210,7 +216,9 @@ void main() {
   ) async {
     final source = _ScreenSource(api, guard);
     await tester.pumpWidget(
-      MaterialApp(home: BrandingScreen(source: source, platform: true)),
+      MaterialApp(
+        home: BrandingScreen(source: source, studio: false, platform: true),
+      ),
     );
     await tester.pumpAndSettle();
     expect(
@@ -231,7 +239,9 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final source = _ScreenSource(api, guard);
     await tester.pumpWidget(
-      MaterialApp(home: BrandingScreen(source: source, platform: false)),
+      MaterialApp(
+        home: BrandingScreen(source: source, studio: false, platform: false),
+      ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('branding-read-clinic')));
@@ -255,7 +265,9 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final source = _ScreenSource(api, guard);
     await tester.pumpWidget(
-      MaterialApp(home: BrandingScreen(source: source, platform: false)),
+      MaterialApp(
+        home: BrandingScreen(source: source, studio: false, platform: false),
+      ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('branding-read-organization')));
@@ -334,7 +346,9 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final source = _ScreenSource(api, guard);
       await tester.pumpWidget(
-        MaterialApp(home: BrandingScreen(source: source, platform: false)),
+        MaterialApp(
+          home: BrandingScreen(source: source, studio: false, platform: false),
+        ),
       );
       await tester.pumpAndSettle();
       await tester.tap(
@@ -385,7 +399,9 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final source = _ScreenSource(api, guard);
     await tester.pumpWidget(
-      MaterialApp(home: BrandingScreen(source: source, platform: false)),
+      MaterialApp(
+        home: BrandingScreen(source: source, studio: false, platform: false),
+      ),
     );
     await tester.pumpAndSettle();
     final clinic = find.byKey(const ValueKey('branding-read-clinic'));
@@ -422,6 +438,87 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('branding-use-colour')));
     await tester.pumpAndSettle();
     expect(find.text('#8A4B26'), findsOneWidget);
+    expect(source.writes, 0);
+  });
+  testWidgets('colour contract matches paper sample and keeps safety colours', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final source = _ScreenSource(api, guard);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: BrandingScreen(source: source, studio: false, platform: false),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('branding-read-organization')));
+    await tester.pumpAndSettle();
+    Color? textColor(String suffix) => tester
+        .widget<Text>(find.byKey(ValueKey('branding-sample-$suffix')))
+        .style
+        ?.color;
+    Color? fill(String suffix) => tester
+        .widget<Container>(find.byKey(ValueKey('branding-sample-$suffix')))
+        .color;
+    void check(Color primary, Color secondary) {
+      for (final suffix in ['organization', 'title']) {
+        expect(textColor(suffix), primary);
+      }
+      for (final suffix in ['stripe', 'footer']) {
+        expect(fill(suffix), primary);
+      }
+      for (final suffix in ['clinic', 'section']) {
+        expect(textColor(suffix), secondary);
+      }
+      for (final suffix in ['divider', 'table']) {
+        expect(fill(suffix), secondary);
+      }
+      expect(textColor('warning'), const Color(0xff842020));
+      expect(textColor('body'), const Color(0xff142a3a));
+      expect(
+        tester
+            .widget<Container>(
+              find.byKey(const ValueKey('branding-paper-sample')),
+            )
+            .color,
+        Colors.white,
+      );
+      expect(
+        tester
+            .widget<Text>(find.text('Sample document table heading'))
+            .style
+            ?.color,
+        Colors.white,
+      );
+      expect(source.writes, 0);
+    }
+
+    Future<void> edit(String label, String value) async {
+      final field = find.ancestor(
+        of: find.byKey(ValueKey('branding-picker-$label')),
+        matching: find.byType(TextField),
+      );
+      await tester.ensureVisible(field);
+      await tester.enterText(field, value);
+      await tester.pumpAndSettle();
+    }
+
+    check(const Color(0xff176b65), const Color(0xff243d54));
+    await edit('Primary colour', '#136228');
+    await edit('Secondary colour', '#000000');
+    check(const Color(0xff136228), const Color(0xff000000));
+    await edit('Primary colour', '#1D4ED8');
+    await edit('Secondary colour', '#8A4B26');
+    check(const Color(0xff1d4ed8), const Color(0xff8a4b26));
+    await edit('Secondary colour', '#FFFFFF');
+    check(const Color(0xff1d4ed8), const Color(0xff243d54));
+    guard.invalidate();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('branding-paper-sample')), findsNothing);
     expect(source.writes, 0);
   });
 }

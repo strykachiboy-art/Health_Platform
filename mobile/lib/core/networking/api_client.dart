@@ -417,7 +417,7 @@ class ApiClient {
     final path = request.url.path;
     final origin = config.baseUri;
     final isScope = RegExp(
-      r'^/api/v1/clinics/branding/(organization|clinic)(/logo|/colors)?$',
+      r'^/api/v1/clinics/branding/(organization|clinic)(/logo|/colors|/studio)?$',
     ).hasMatch(path);
     final isEntitlement = RegExp(
       r'^/api/v1/clinics/organizations/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/branding-entitlement$',
@@ -456,6 +456,8 @@ class ApiClient {
         (image != path.endsWith('/logo')) ||
         (image && request.method != 'GET') ||
         (path.endsWith('/colors') && request.method != 'PUT') ||
+        (path.endsWith('/studio') &&
+            !const {'GET', 'PUT'}.contains(request.method)) ||
         (isEntitlement && request.method == 'DELETE') ||
         request.headers.keys.any((k) => k.toLowerCase() == 'idempotency-key') ||
         (isVerify

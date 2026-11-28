@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:clinic_system_pro/core/networking/api_exception.dart';
 
 import '../data/branding_remote.dart';
+import 'branding_studio_editor.dart';
 
 /// Staged branding only. A role link is not permission: edit controls appear
 /// only after the server returns an authorized, current branding snapshot.
@@ -14,9 +15,11 @@ class BrandingScreen extends StatefulWidget {
     super.key,
     required this.source,
     required this.platform,
+    this.studio = true,
   });
   final BrandingRemote source;
   final bool platform;
+  final bool studio;
   @override
   State<BrandingScreen> createState() => _BrandingScreenState();
 }
@@ -46,7 +49,8 @@ class _BrandingScreenState extends State<BrandingScreen> {
   void didUpdateWidget(covariant BrandingScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.source, widget.source) ||
-        oldWidget.platform != widget.platform) {
+        oldWidget.platform != widget.platform ||
+        oldWidget.studio != widget.studio) {
       oldWidget.source.guard.removeListener(_invalidate);
       widget.source.guard.addListener(_invalidate);
       _generation++;
@@ -218,7 +222,7 @@ class _BrandingScreenState extends State<BrandingScreen> {
           throw const BrandingUnavailable();
         }
       }
-      final result = await widget.source.read(
+      var result = await widget.source.read(
         scope,
         organization: target,
         active: active,
@@ -226,6 +230,13 @@ class _BrandingScreenState extends State<BrandingScreen> {
       if (!active()) {
         result.logo?.fillRange(0, result.logo!.length, 0);
         return;
+      }
+      if (widget.studio && !widget.platform) {
+        result = await widget.source.attachStudio(result, active);
+        if (!active()) {
+          result.logo?.fillRange(0, result.logo!.length, 0);
+          return;
+        }
       }
       setState(() => _install(result));
     } on Object catch (error) {
@@ -310,12 +321,19 @@ class _BrandingScreenState extends State<BrandingScreen> {
         return;
       }
       attempted = true;
-      final result = chooseLogo
+      var result = chooseLogo
           ? await widget.source.replaceLogo(state, fileBytes!, active)
           : await change(state, active);
       if (!active()) {
         result.logo?.fillRange(0, result.logo!.length, 0);
         return;
+      }
+      if (widget.studio && !widget.platform && result.studio == null) {
+        result = await widget.source.attachStudio(result, active);
+        if (!active()) {
+          result.logo?.fillRange(0, result.logo!.length, 0);
+          return;
+        }
       }
       setState(() {
         _install(result);
@@ -580,6 +598,10 @@ class _BrandingScreenState extends State<BrandingScreen> {
     final b = _secondary.text.trim();
     final primary = _color(validBrandingColor(a) ? a : state.primary!);
     final secondary = _color(validBrandingColor(b) ? b : state.secondary!);
+    final clinic = state.scope == BrandingScope.clinic;
+    final organizationName = clinic
+        ? (_capabilities?.name ?? 'Sample organisation')
+        : state.name;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -587,45 +609,141 @@ class _BrandingScreenState extends State<BrandingScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text('Branding sample — not an actual clinical PDF'),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                if (_image != null)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Image(
-                      image: _image!,
-                      width: 64,
-                      height: 64,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, _, _) =>
-                          const Icon(Icons.broken_image_outlined),
-                    ),
+            const SizedBox(height: 8),
+            const Text(
+              'Primary: letterhead, document title and footer. Secondary: clinic name, section headings, dividers and table headers.',
+            ),
+            const SizedBox(height: 8),
+            Container(
+              key: const ValueKey('branding-paper-sample'),
+              color: Colors.white,
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    key: const ValueKey('branding-sample-stripe'),
+                    height: 4,
+                    color: primary,
                   ),
-                Expanded(
-                  child: Text(
-                    state.name,
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      if (_image != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: Image(
+                            image: _image!,
+                            width: 64,
+                            height: 64,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, _, _) => const Icon(
+                              Icons.broken_image_outlined,
+                              color: Color(0xff536575),
+                            ),
+                          ),
+                        ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              organizationName,
+                              key: const ValueKey(
+                                'branding-sample-organization',
+                              ),
+                              style: TextStyle(
+                                color: primary,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              clinic ? state.name : 'Sample clinic',
+                              key: const ValueKey('branding-sample-clinic'),
+                              style: TextStyle(
+                                color: secondary,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Divider(color: Color(0xffd6dfe6), height: 1),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Sample document title',
+                    key: const ValueKey('branding-sample-title'),
                     style: TextStyle(
                       color: primary,
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Container(height: 4, color: primary),
-            const SizedBox(height: 8),
-            Container(
-              color: secondary,
-              padding: const EdgeInsets.all(12),
-              child: const Text(
-                'Sample document table heading',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
+                  const SizedBox(height: 6),
+                  const ColoredBox(
+                    color: Color(0xfffcf2f1),
+                    child: Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Text(
+                        'Safety warning — fixed colour',
+                        key: ValueKey('branding-sample-warning'),
+                        style: TextStyle(
+                          color: Color(0xff842020),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Sample section heading',
+                    key: const ValueKey('branding-sample-section'),
+                    style: TextStyle(
+                      color: secondary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    key: const ValueKey('branding-sample-divider'),
+                    height: 1,
+                    color: secondary,
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    key: const ValueKey('branding-sample-table'),
+                    color: secondary,
+                    padding: const EdgeInsets.all(8),
+                    child: const Text(
+                      'Sample document table heading',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const ColoredBox(
+                    color: Color(0xfff1f5f7),
+                    child: Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Text(
+                        'Sample document content',
+                        key: ValueKey('branding-sample-body'),
+                        style: TextStyle(color: Color(0xff142a3a)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    key: const ValueKey('branding-sample-footer'),
+                    height: 1,
+                    color: primary,
+                  ),
+                ],
               ),
             ),
           ],
@@ -776,42 +894,71 @@ class _BrandingScreenState extends State<BrandingScreen> {
                     Text(
                       'Logo: ${state.logoSource} · Colours: ${state.paletteSource}',
                     ),
-                    _sample(state),
-                    _paletteField(
-                      _primary,
-                      'Primary colour',
-                      !_busy && allowed,
-                    ),
-                    _paletteField(
-                      _secondary,
-                      'Secondary colour',
-                      !_busy && allowed,
-                    ),
+                    if (widget.studio) ...[
+                      if (_view?.studio != null)
+                        BrandingStudioEditor(
+                          key: ObjectKey(_view),
+                          view: _view!,
+                          image: _image,
+                          organizationName: state.scope == BrandingScope.clinic
+                              ? (_capabilities?.name ?? 'Sample organisation')
+                              : state.name,
+                          enabled: !_busy,
+                          canCustomize: allowed,
+                          onSave: (draft) {
+                            final prior = _view!;
+                            unawaited(
+                              _write(
+                                'Apply the complete branding studio palette and output mode.',
+                                (_, active) => widget.source.setStudio(
+                                  prior,
+                                  draft,
+                                  active,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                    ] else ...[
+                      _sample(state),
+                      _paletteField(
+                        _primary,
+                        'Primary colour',
+                        !_busy && allowed,
+                      ),
+                      _paletteField(
+                        _secondary,
+                        'Secondary colour',
+                        !_busy && allowed,
+                      ),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton(
+                            key: const ValueKey('branding-save-colors'),
+                            onPressed: _busy || !allowed ? null : _colors,
+                            child: const Text('Save colours'),
+                          ),
+                          OutlinedButton(
+                            onPressed: _busy
+                                ? null
+                                : () => unawaited(
+                                    _write(
+                                      'Reset this palette to inherited or default colours.',
+                                      (prior, active) => widget.source
+                                          .setColors(prior, null, null, active),
+                                    ),
+                                  ),
+                            child: const Text('Reset colours'),
+                          ),
+                        ],
+                      ),
+                    ],
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        FilledButton(
-                          key: const ValueKey('branding-save-colors'),
-                          onPressed: _busy || !allowed ? null : _colors,
-                          child: const Text('Save colours'),
-                        ),
-                        OutlinedButton(
-                          onPressed: _busy
-                              ? null
-                              : () => unawaited(
-                                  _write(
-                                    'Reset this palette to inherited or default colours.',
-                                    (prior, active) => widget.source.setColors(
-                                      prior,
-                                      null,
-                                      null,
-                                      active,
-                                    ),
-                                  ),
-                                ),
-                          child: const Text('Reset colours'),
-                        ),
                         FilledButton(
                           onPressed: _busy || !allowed
                               ? null

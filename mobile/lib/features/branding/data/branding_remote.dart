@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:math' as math;
 
+import 'branding_studio.dart';
+
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:http/http.dart' as http;
@@ -229,9 +231,10 @@ class BrandingState {
 }
 
 class BrandingView {
-  const BrandingView(this.state, this.logo);
+  const BrandingView(this.state, this.logo, {this.studio});
   final BrandingState state;
   final Uint8List? logo;
+  final BrandingStudioState? studio;
 }
 
 class BrandingCapabilities {
@@ -366,6 +369,9 @@ class BrandingRemote {
   static final _leases = Expando<_BrandingLease>('branding-session');
   static const maxLogo = 2 * 1024 * 1024;
   static final _busy = Expando<bool>('branding-mutation');
+  static final _studioLeases = Expando<BrandingState>(
+    'branding-studio-snapshot',
+  );
 
   Future<AuthTokenResponse> _actor(
     BrandingScope scope,
@@ -743,6 +749,159 @@ class BrandingRemote {
         );
       }
       return verified;
+    } finally {
+      _busy[guard] = false;
+    }
+  }
+
+  Future<BrandingView> attachStudio(
+    BrandingView view,
+    BrandingActive active,
+  ) async {
+    final prior = view.state;
+    try {
+      if (prior.scope == BrandingScope.entitlement) {
+        throw const BrandingUnavailable();
+      }
+      final revision = guard.revision;
+      final actor = await _actor(prior.scope, revision, active);
+      final lease = _leases[prior];
+      if (lease == null ||
+          lease.revision != revision ||
+          !_same(lease.actor, actor)) {
+        throw const BrandingUnavailable();
+      }
+      final studio = await _studioRead(prior, actor, revision, active);
+      _studioLeases[studio] = prior;
+      return BrandingView(prior, view.logo, studio: studio);
+    } on Object {
+      view.logo?.fillRange(0, view.logo!.length, 0);
+      rethrow;
+    }
+  }
+
+  Future<BrandingStudioState> _studioRead(
+    BrandingState prior,
+    AuthTokenResponse actor,
+    int revision,
+    BrandingActive active,
+  ) async {
+    if (!_same(actor, await _actor(prior.scope, revision, active))) {
+      throw const BrandingUnavailable();
+    }
+    final studio = BrandingStudioState.parse(
+      _data(
+        await _send(
+          'GET',
+          '${_path(prior.scope, prior.organizationId)}/studio',
+          actor,
+          active,
+        ),
+      ),
+      organizationId: prior.organizationId,
+      clinicId: prior.clinicId,
+    );
+    if (!_same(actor, await _actor(prior.scope, revision, active)) ||
+        studio.version != prior.version ||
+        studio.organizationVersion != prior.organizationVersion ||
+        studio.allowed != prior.overrideAllowed ||
+        studio.effective['primary_color'] != prior.primary ||
+        studio.effective['secondary_color'] != prior.secondary) {
+      throw const BrandingUnavailable();
+    }
+    return studio;
+  }
+
+  Future<BrandingView> setStudio(
+    BrandingView prior,
+    Map<String, String> overrides,
+    BrandingActive active,
+  ) async {
+    final state = prior.state;
+    final studio = prior.studio;
+    final draft = Map<String, String>.unmodifiable(overrides);
+    if (studio == null ||
+        !identical(_studioLeases[studio], state) ||
+        studio.version != state.version ||
+        studio.organizationVersion != state.organizationVersion ||
+        state.scope == BrandingScope.entitlement ||
+        !studio.accepts(draft) ||
+        _busy[guard] == true ||
+        state.version > 2147483646 ||
+        studio.organizationVersion > 2147483646) {
+      throw const BrandingUnavailable();
+    }
+    _busy[guard] = true;
+    try {
+      final revision = guard.revision;
+      final actor = await _actor(state.scope, revision, active);
+      final lease = _leases[state];
+      if (lease == null ||
+          lease.revision != revision ||
+          !_same(lease.actor, actor) ||
+          actor.tenantId != state.organizationId ||
+          (state.scope == BrandingScope.clinic &&
+              actor.clinicContextId != state.clinicId)) {
+        throw const BrandingUnavailable();
+      }
+      final receipt = BrandingStudioState.parse(
+        _data(
+          await _send(
+            'PUT',
+            '${_path(state.scope, state.organizationId)}/studio',
+            actor,
+            active,
+            body: {
+              'expected_version': studio.version,
+              'expected_organization_version': studio.organizationVersion,
+              'overrides': draft,
+            },
+          ),
+        ),
+        organizationId: state.organizationId,
+        clinicId: state.clinicId,
+      );
+      if (!_same(actor, await _actor(state.scope, revision, active)) ||
+          receipt.version !=
+              studio.version + (studioEqual(studio.local, draft) ? 0 : 1) ||
+          receipt.organizationVersion !=
+              (state.scope == BrandingScope.organization
+                  ? receipt.version
+                  : studio.organizationVersion) ||
+          receipt.allowed != studio.allowed ||
+          !studioEqual(receipt.local, draft) ||
+          !studioEqual(receipt.effective, studio.draft(draft))) {
+        throw const BrandingUnavailable();
+      }
+      final verified = await _read(
+        state.scope,
+        state.organizationId,
+        actor,
+        revision,
+        active,
+      );
+      try {
+        final check = await _studioRead(
+          verified.state,
+          actor,
+          revision,
+          active,
+        );
+        if (check.version != receipt.version ||
+            check.organizationVersion != receipt.organizationVersion ||
+            check.allowed != receipt.allowed ||
+            !studioEqual(check.local, receipt.local) ||
+            !studioEqual(check.effective, receipt.effective) ||
+            !studioEqual(check.inherited, receipt.inherited) ||
+            !studioEqual(check.sources, receipt.sources)) {
+          throw const BrandingUnavailable();
+        }
+        _studioLeases[check] = verified.state;
+        return BrandingView(verified.state, verified.logo, studio: check);
+      } on Object {
+        verified.logo?.fillRange(0, verified.logo!.length, 0);
+        rethrow;
+      }
     } finally {
       _busy[guard] = false;
     }
