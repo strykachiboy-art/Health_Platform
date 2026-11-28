@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../data/branding_remote.dart';
 import '../data/branding_studio.dart';
+import 'branding_logo_editor.dart';
 
 const _labels = <String, String>{
   'primary_color': 'Primary colour',
@@ -444,6 +445,36 @@ class _BrandingStudioEditorState extends State<BrandingStudioEditor> {
           ],
         ),
         const SizedBox(height: 12),
+        const Text('Logo size (applies to actual server PDFs)'),
+        DropdownButton<String>(
+          key: const ValueKey('studio-logo-size'),
+          isExpanded: true,
+          value: palette['logo_size'],
+          items: [
+            for (final size in studioLogoSizes)
+              DropdownMenuItem(
+                value: size,
+                child: Text('${size[0].toUpperCase()}${size.substring(1)}'),
+              ),
+          ],
+          onChanged: _edit
+              ? (size) {
+                  if (size != null) {
+                    setState(() => _local['logo_size'] = size);
+                  }
+                }
+              : null,
+        ),
+        Text(
+          'Logo size: ${_local.containsKey('logo_size') ? (_studio.clinicId != null && !_studio.allowed ? 'Dormant local override' : 'Local override') : 'Inherited/default'}',
+        ),
+        TextButton(
+          key: const ValueKey('studio-reset-logo_size'),
+          onPressed: widget.enabled && _local.containsKey('logo_size')
+              ? () => _reset('logo_size')
+              : null,
+          child: const Text('Reset logo size'),
+        ),
         const Text('Document output mode'),
         DropdownButton<String>(
           key: const ValueKey('studio-mode'),
@@ -498,7 +529,7 @@ class _BrandingStudioEditorState extends State<BrandingStudioEditor> {
             OutlinedButton(
               key: const ValueKey('studio-reset-all'),
               onPressed: widget.enabled && _local.isNotEmpty ? _resetAll : null,
-              child: const Text('Reset all colours and mode'),
+              child: const Text('Reset all colours, mode and logo size'),
             ),
             OutlinedButton(
               key: const ValueKey('studio-discard'),
@@ -610,17 +641,10 @@ class _BrandingStudioEditorState extends State<BrandingStudioEditor> {
         ],
       ),
     );
-    final logo = widget.image;
+    final logo = widget.view.logo;
     Widget? image;
     if (logo != null) {
-      image = Image(
-        image: logo,
-        width: 60,
-        height: 48,
-        fit: BoxFit.contain,
-        errorBuilder: (_, _, _) =>
-            const Icon(Icons.broken_image_outlined, color: Colors.black),
-      );
+      image = StudioLogoPreview(bytes: logo, size: p['logo_size']!);
       if (mode == 'monochrome') {
         image = ColorFiltered(
           colorFilter: const ColorFilter.matrix([
@@ -696,7 +720,7 @@ class _BrandingStudioEditorState extends State<BrandingStudioEditor> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  if (image != null) ...[image, const SizedBox(width: 10)],
+                  if (image != null) ...[image, const SizedBox(width: 12)],
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

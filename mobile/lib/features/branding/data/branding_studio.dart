@@ -8,8 +8,15 @@ const studioDefaults = <String, String>{
   'warning_color': '#842020',
   'background_color': '#FFFFFF',
   'output_mode': 'full',
+  'logo_size': 'medium',
 };
 const studioModes = ['full', 'ink_saving', 'monochrome'];
+const studioLogoSizes = ['small', 'medium', 'large'];
+bool studioValue(String key, String value) => key == 'output_mode'
+    ? studioModes.contains(value)
+    : key == 'logo_size'
+    ? studioLogoSizes.contains(value)
+    : studioHex(value);
 final _hex = RegExp(r'^#[0-9A-F]{6}$');
 bool studioHex(String value) => value.length == 7 && _hex.hasMatch(value);
 List<int> studioRgb(String value) => [
@@ -51,8 +58,7 @@ bool studioWarningHue(String value) {
 String? studioValidation(Map<String, String> p) {
   if (p.length != studioDefaults.length ||
       !studioDefaults.keys.every(p.containsKey) ||
-      !studioModes.contains(p['output_mode']) ||
-      p.entries.any((e) => e.key != 'output_mode' && !studioHex(e.value))) {
+      p.entries.any((e) => !studioValue(e.key, e.value))) {
     return 'Enter complete six-digit HEX colours.';
   }
   final paper = p['background_color']!;
@@ -126,9 +132,7 @@ class BrandingStudioState {
           v is! String ||
           (source
               ? !const ['default', 'organization', 'clinic'].contains(v)
-              : e.key == 'output_mode'
-              ? !studioModes.contains(v)
-              : !studioHex(v))) {
+              : !studioValue(e.key, v))) {
         throw const FormatException('Invalid studio value.');
       }
       result[e.key] = v;
@@ -208,11 +212,7 @@ class BrandingStudioState {
   };
   bool accepts(Map<String, String> overrides) =>
       overrides.entries.every(
-        (e) =>
-            studioDefaults.containsKey(e.key) &&
-            (e.key == 'output_mode'
-                ? studioModes.contains(e.value)
-                : studioHex(e.value)),
+        (e) => studioDefaults.containsKey(e.key) && studioValue(e.key, e.value),
       ) &&
       (clinicId == null ||
           allowed ||

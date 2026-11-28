@@ -7,6 +7,9 @@ import 'package:clinic_system_pro/core/networking/api_exception.dart';
 
 import '../data/branding_remote.dart';
 import 'branding_studio_editor.dart';
+import 'branding_logo_editor.dart';
+import '../data/branding_logo_pixels.dart';
+import '../data/branding_studio.dart';
 
 /// Staged branding only. A role link is not permission: edit controls appear
 /// only after the server returns an authorized, current branding snapshot.
@@ -276,6 +279,7 @@ class _BrandingScreenState extends State<BrandingScreen> {
     String description,
     Future<BrandingView> Function(BrandingState, BrandingActive) change, {
     bool chooseLogo = false,
+    bool editLogo = false,
   }) async {
     final state = _view?.state;
     if (state == null || _busy || !widget.source.staging) {
@@ -291,7 +295,13 @@ class _BrandingScreenState extends State<BrandingScreen> {
       _message = null;
     });
     try {
-      if (chooseLogo) {
+      if (editLogo) {
+        final existing = _view?.logo;
+        if (existing == null || !widget.studio) {
+          return;
+        }
+        fileBytes = Uint8List.fromList(existing);
+      } else if (chooseLogo) {
         final file = await FilePicker.pickFile(
           type: FileType.custom,
           allowedExtensions: ['png', 'jpg', 'jpeg'],
@@ -311,6 +321,44 @@ class _BrandingScreenState extends State<BrandingScreen> {
         fileBytes = await file.readAsBytes();
         BrandingRemote.logoMime(fileBytes);
       }
+      if ((chooseLogo || editLogo) && widget.studio && active()) {
+        final original = fileBytes!;
+        final pixels = await LogoPixels.decode(original);
+        if (!mounted || !active()) {
+          return;
+        }
+        final palette = _view!.studio!.effective;
+        final mode = palette['output_mode']!;
+        final paper = mode == 'full' ? palette['background_color']! : '#FFFFFF';
+        Color paint(String key) => Color(
+          0xff000000 |
+              int.parse(
+                studioPaint(palette[key]!, mode).substring(1),
+                radix: 16,
+              ),
+        );
+        final edited = await showDialog<Uint8List>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => BrandingLogoEditor(
+            original: pixels,
+            raw: original,
+            paper: Color(0xff000000 | int.parse(paper.substring(1), radix: 16)),
+            size: palette['logo_size']!,
+            mode: mode,
+            primary: paint('primary_color'),
+            secondary: paint('secondary_color'),
+            active: active,
+            session: widget.source.guard,
+          ),
+        );
+        if (edited == null || !active()) {
+          return;
+        }
+        original.fillRange(0, original.length, 0);
+        fileBytes = edited;
+        BrandingRemote.logoMime(edited);
+      }
       if (!active()) {
         return;
       }
@@ -321,7 +369,7 @@ class _BrandingScreenState extends State<BrandingScreen> {
         return;
       }
       attempted = true;
-      var result = chooseLogo
+      var result = (chooseLogo || editLogo)
           ? await widget.source.replaceLogo(state, fileBytes!, active)
           : await change(state, active);
       if (!active()) {
@@ -909,7 +957,7 @@ class _BrandingScreenState extends State<BrandingScreen> {
                             final prior = _view!;
                             unawaited(
                               _write(
-                                'Apply the complete branding studio palette and output mode.',
+                                'Apply the complete branding studio palette, output mode and logo size.',
                                 (_, active) => widget.source.setStudio(
                                   prior,
                                   draft,
@@ -969,8 +1017,27 @@ class _BrandingScreenState extends State<BrandingScreen> {
                                     chooseLogo: true,
                                   ),
                                 ),
-                          child: const Text('Choose and upload logo'),
+                          child: Text(
+                            widget.studio
+                                ? 'Choose and edit logo'
+                                : 'Choose and upload logo',
+                          ),
                         ),
+                        if (widget.studio && _view?.logo != null)
+                          OutlinedButton(
+                            key: const ValueKey('branding-edit-current-logo'),
+                            onPressed: _busy || !allowed
+                                ? null
+                                : () => unawaited(
+                                    _write(
+                                      'Replace this scope’s logo with the edited image.',
+                                      (_, _) =>
+                                          throw const BrandingUnavailable(),
+                                      editLogo: true,
+                                    ),
+                                  ),
+                            child: const Text('Edit current logo'),
+                          ),
                         OutlinedButton(
                           onPressed: _busy
                               ? null
@@ -985,6 +1052,10 @@ class _BrandingScreenState extends State<BrandingScreen> {
                         ),
                       ],
                     ),
+                    if (widget.studio)
+                      const Text(
+                        'Save colour and size drafts before editing a logo. A confirmed logo upload replaces this scope’s saved image; cancel or restore preserves the original draft.',
+                      ),
                     const Text(
                       'Reset remains available after entitlement revocation. Actual clinical PDFs are produced by Flask/Rust, never by this sample.',
                     ),

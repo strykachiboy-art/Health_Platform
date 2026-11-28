@@ -793,7 +793,7 @@ class BrandingRemote {
       _data(
         await _send(
           'GET',
-          '${_path(prior.scope, prior.organizationId)}/studio',
+          '${_path(prior.scope, prior.organizationId)}/studio-v2',
           actor,
           active,
         ),
@@ -848,7 +848,7 @@ class BrandingRemote {
         _data(
           await _send(
             'PUT',
-            '${_path(state.scope, state.organizationId)}/studio',
+            '${_path(state.scope, state.organizationId)}/studio-v2',
             actor,
             active,
             body: {

@@ -24,6 +24,7 @@ const chosen = <String, String>{
   'warning_color': '#92400E',
   'background_color': '#FFF8E7',
   'output_mode': 'full',
+  'logo_size': 'large',
 };
 Map<String, dynamic> studioResponse({
   Map<String, String> local = const {},
@@ -252,7 +253,7 @@ void main() {
       session = actor('admin');
       requests = [];
       reply = (r) async => response(
-        r.url.path.endsWith('/studio')
+        r.url.path.endsWith('/studio-v2')
             ? studioResponse()
             : orgState(
                 primary: studioDefaults['primary_color'],
@@ -293,7 +294,7 @@ void main() {
       Map<String, String> saved = {};
       reply = (r) async {
         if (r.method == 'PUT') {
-          expect(r.url.path, '/api/v1/clinics/branding/organization/studio');
+          expect(r.url.path, '/api/v1/clinics/branding/organization/studio-v2');
           expect(jsonDecode(r.body), {
             'expected_version': 2,
             'expected_organization_version': 2,
@@ -302,7 +303,7 @@ void main() {
           version++;
           saved = chosen;
         }
-        if (r.url.path.endsWith('/studio')) {
+        if (r.url.path.endsWith('/studio-v2')) {
           return response(studioResponse(local: saved, version: version));
         }
         return response(
@@ -328,7 +329,7 @@ void main() {
       'studio read denies mismatch between legacy identity and studio versions',
       () async {
         reply = (r) async => response(
-          r.url.path.endsWith('/studio')
+          r.url.path.endsWith('/studio-v2')
               ? studioResponse(version: 3)
               : orgState(
                   primary: studioDefaults['primary_color'],
@@ -370,7 +371,7 @@ void main() {
         if (r.method == 'PUT') {
           return response(studioResponse(local: chosen, version: 3));
         }
-        if (r.url.path.endsWith('/studio')) {
+        if (r.url.path.endsWith('/studio-v2')) {
           return response(
             studioResponse(
               local: {...chosen, 'text_color': '#000000'},
@@ -392,24 +393,21 @@ void main() {
       );
       expect(requests.where((r) => r.method == 'PUT').length, 1);
     });
-    test(
-      'studio transport rejects unsupported DELETE and foreign URL',
-      () async {
-        for (final uri in [
-          'http://127.0.0.1:5000/api/v1/clinics/branding/organization/studio',
-          'http://127.0.0.2:5000/api/v1/clinics/branding/organization/studio',
-        ]) {
-          final req = http.Request('DELETE', Uri.parse(uri))
-            ..followRedirects = false
-            ..headers['Authorization'] = 'Bearer token';
-          await expectLater(
-            api.sendPrivateBranding(req, image: false, active: () => true),
-            throwsStateError,
-          );
-        }
-        expect(requests, isEmpty);
-      },
-    );
+    test('studio transport rejects unsupported DELETE and foreign URL', () async {
+      for (final uri in [
+        'http://127.0.0.1:5000/api/v1/clinics/branding/organization/studio-v2',
+        'http://127.0.0.2:5000/api/v1/clinics/branding/organization/studio-v2',
+      ]) {
+        final req = http.Request('DELETE', Uri.parse(uri))
+          ..followRedirects = false
+          ..headers['Authorization'] = 'Bearer token';
+        await expectLater(
+          api.sendPrivateBranding(req, image: false, active: () => true),
+          throwsStateError,
+        );
+      }
+      expect(requests, isEmpty);
+    });
   });
   testWidgets(
     'studio pointer tap drag and sliders change real draft and preserve other colours',
@@ -457,9 +455,16 @@ void main() {
     (t) async {
       Map<String, String>? sent;
       await setupScreen(t, view(), (v) => sent = v);
-      for (final k in chosen.keys.where((k) => k != 'output_mode')) {
+      for (final k in chosen.keys.where(
+        (k) => k != 'output_mode' && k != 'logo_size',
+      )) {
         await editHex(t, k, chosen[k]!);
       }
+      await choose(t, 'studio-logo-size', 'Large');
+      expect(
+        t.widget<DropdownButton<String>>(key('studio-logo-size')).value,
+        'large',
+      );
       expect(previewText(t, 'title'), const Color(0xff136228));
       expect(previewText(t, 'organization'), const Color(0xff136228));
       expect(previewFill(t, 'footer'), const Color(0xff136228));
@@ -601,14 +606,35 @@ void main() {
     await t.pumpAndSettle();
     expect(source.writes, 1);
     final pageScroll = t.state<ScrollableState>(
-      find.descendant(
-        of: find.byType(ListView),
-        matching: find.byType(Scrollable),
-      ).first,
+      find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     pageScroll.position.jumpTo(pageScroll.position.minScrollExtent);
     await t.pumpAndSettle();
     final notice = find.byKey(const ValueKey('branding-notice'));
+    // The notice is above the tall editor in a lazily built ListView.
+    // Navigate by widget identity rather than assuming a scroll offset.
+    final noticeScrollable = find
+        .descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    final noticeTopControl = key('branding-read-organization');
+    await t.scrollUntilVisible(
+      noticeTopControl,
+      -300,
+      scrollable: noticeScrollable,
+    );
+    await t.ensureVisible(noticeTopControl);
+    await t.pumpAndSettle();
+    await t.scrollUntilVisible(notice, 100, scrollable: noticeScrollable);
+    await t.ensureVisible(notice);
+    await t.pumpAndSettle();
     expect(notice, findsOneWidget);
     expect(
       t.widget<Text>(notice).data,
