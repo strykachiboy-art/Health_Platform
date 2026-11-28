@@ -1,0 +1,7 @@
+[package]
+name = "csp_chat_r_engine_probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[dependencies]
+str0m = { version = "=0.26.0", default-features = false, features = ["rust-crypto"] }
