@@ -141,7 +141,7 @@ class Layout:
         self.rect(L,45,WIDTH,4,self.primary)
         x=L+104 if self.logo else L;hw=R-x;top=58.
         top=self.paragraph(self.b.lines[0].removeprefix('Organisation: '),x,top,hw,17 if len(self.pages)==1 else 14,True,self.primary,'header')+2
-        top=self.paragraph(self.b.lines[1].removeprefix('Clinic: '),x,top,hw,11,True,INK,'header')+2
+        top=self.paragraph(self.b.lines[1].removeprefix('Clinic: '),x,top,hw,11,True,self.secondary,'header')+2
         if self.b.lines[2:]:
             top=self.paragraph('  |  '.join(self.b.lines[2:]),x,top,hw,8,False,GRAY,'header',11)
         compact=self.enriched and len(self.pages)>1
@@ -149,7 +149,7 @@ class Layout:
         self.rect(L,top,WIDTH,.8,RULE);top+=8 if compact else 14
         title='Laboratory Results' if self.doc.kind=='released_lab_result' else self.doc.title
         title_size=25 if len(self.pages)==1 else 12 if compact else 14
-        top=self.paragraph(title,L,top,WIDTH,title_size,True,INK,'header',title_size+5)+(3 if compact else 6)
+        top=self.paragraph(title,L,top,WIDTH,title_size,True,self.primary,'header',title_size+5)+(3 if compact else 6)
         warning=self.lines(self.doc.watermark,WIDTH-20,8,True)
         h=max(22 if compact else 28,len(warning)*11+(10 if compact else 14))
         self.rect(L,top,WIDTH,h,WARN_BG)
@@ -173,7 +173,7 @@ class Layout:
             self.y+=max(heights)
     def section(self,label):
         self.ensure(35);self.y=self.paragraph(label,L,self.y,WIDTH,11,True,self.secondary,lead=15)+5
-        self.rect(L,self.y,WIDTH,.7,RULE);self.y+=10
+        self.rect(L,self.y,WIDTH,.7,self.secondary);self.y+=10
     def table(self,headers,rows,fractions,numeric=(),alerts=(),reserve_last=0):
         widths=[WIDTH*f for f in fractions];pad=5. if self.enriched else 7.;lead=12. if self.enriched else 13.;font_size=9
         def measure(row,bold):return max(len(self.lines(v,w-2*pad,font_size,bold)) for v,w in zip(row,widths))*lead+2*pad
@@ -193,7 +193,7 @@ class Layout:
             if self.y+h+reserve+(header_h if first else 0)>H-FOOT_TOP-10:
                 self.new_page();first=True
             self.ensure(h+reserve+(header_h if first else 0))
-            if first:draw(headers,header_h,True,self.primary,'table_header');first=False
+            if first:draw(headers,header_h,True,self.secondary,'table_header');first=False
             draw(row,h,False,PALE if i%2==0 else '#FFFFFF','body')
         self.y+=12
     def block(self,text):
@@ -221,7 +221,7 @@ class Layout:
     def finish(self):
         for index,page in enumerate(self.pages):
             self.page=page;top=H-FOOT_TOP
-            self.rect(L,top,WIDTH,.8,RULE);top+=8
+            self.rect(L,top,WIDTH,.8,self.primary);top+=8
             fw=WIDTH-96 if self.verification else WIDTH
             top=self.paragraph('SOURCE SHA-256: '+self.doc.source_digest,L,top,fw,7,False,GRAY,'footer',10)+2
             top=self.paragraph('BRANDING SHA-256: '+self.b.branding_sha256,L,top,fw,7,False,GRAY,'footer',10)+4
