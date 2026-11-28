@@ -17,6 +17,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.colors import HexColor
 from reportlab.lib.utils import ImageReader
 from .print_policy import PrintDenied, PrintDocument, build_document, ordered_test_rows
+from app.modules.clinic.services.branding_studio_palette import validate_effective, paper_color, paint_color
 
 W, H = 595.2756, 841.8898
 L, R = 45., W-45.
@@ -111,6 +112,18 @@ class Layout:
         self.enriched = "Patient Name" in dict(doc.fields)
         self.verification = branding.verification_url is not None
         self.primary=_contrast(branding.primary_color);self.secondary=_contrast(branding.secondary_color)
+        self.studio = branding.studio
+        if self.studio is not None:
+            try:
+                validate_effective(self.studio)
+                if (self.studio['primary_color'], self.studio['secondary_color']) != (self.primary, self.secondary):
+                    raise ValueError('Palette envelope mismatch')
+            except ValueError as exc:
+                raise PrintDenied('Invalid studio palette') from exc
+        self.ink = INK if self.studio is None else self.studio['text_color']
+        self.gray = GRAY if self.studio is None else self.studio['text_color']
+        self.warning = WARN if self.studio is None else self.studio['warning_color']
+        self.paper = '#FFFFFF' if self.studio is None else paper_color(self.studio)
         self.logo=None
         if branding.rgb is not None:
             if not (1<=branding.width<=256 and 1<=branding.height<=256 and len(branding.rgb)==branding.width*branding.height*3): raise PrintDenied('Invalid logo pixels')
@@ -119,8 +132,9 @@ class Layout:
         self.new_page()
     def font(self,bold): return self.faces.bold if bold else self.faces.regular
     def lines(self,s,width,size,bold=False): return _wrap(s,width,self.font(bold),size)
-    def text(self,s,x,top,size=10,bold=False,color=INK,tag='body',align='left',width=None):
+    def text(self,s,x,top,size=10,bold=False,color=None,tag='body',align='left',width=None):
         if not s: return
+        if color is None: color = self.ink
         length=pdfmetrics.stringWidth(s,self.font(bold),size)
         if align=='right': x=x+width-length
         # top-down baseline coordinates; generous leading below the baseline.
@@ -130,7 +144,7 @@ class Layout:
     def rect(self,x,top,w,h,color):
         if not (L-.1<=x and x+w<=R+.1 and 22<=top and top+h<=H-18 and w>0 and h>0):raise PrintDenied('Presentation box out of bounds')
         self.page['rects'].append(dict(x=round(x,4),y=round(top,4),w=round(w,4),h=round(h,4),color=color))
-    def paragraph(self,s,x,top,width,size=10,bold=False,color=INK,tag='body',lead=None):
+    def paragraph(self,s,x,top,width,size=10,bold=False,color=None,tag='body',lead=None):
         lead=lead or size*1.42
         for line in self.lines(s,width,size,bold):
             self.text(line,x,top,size,bold,color,tag);top+=lead
@@ -143,7 +157,7 @@ class Layout:
         top=self.paragraph(self.b.lines[0].removeprefix('Organisation: '),x,top,hw,17 if len(self.pages)==1 else 14,True,self.primary,'header')+2
         top=self.paragraph(self.b.lines[1].removeprefix('Clinic: '),x,top,hw,11,True,self.secondary,'header')+2
         if self.b.lines[2:]:
-            top=self.paragraph('  |  '.join(self.b.lines[2:]),x,top,hw,8,False,GRAY,'header',11)
+            top=self.paragraph('  |  '.join(self.b.lines[2:]),x,top,hw,8,False,self.gray,'header',11)
         compact=self.enriched and len(self.pages)>1
         top=max(top,108 if compact and self.logo else 112 if self.logo else 82 if compact else 88)+(5 if compact else 10)
         self.rect(L,top,WIDTH,.8,RULE);top+=8 if compact else 14
@@ -153,9 +167,9 @@ class Layout:
         warning=self.lines(self.doc.watermark,WIDTH-20,8,True)
         h=max(22 if compact else 28,len(warning)*11+(10 if compact else 14))
         self.rect(L,top,WIDTH,h,WARN_BG)
-        self.paragraph(self.doc.watermark,L+10,top+(5 if compact else 7),WIDTH-20,8,True,WARN,'warning',11)
+        self.paragraph(self.doc.watermark,L+10,top+(5 if compact else 7),WIDTH-20,8,True,self.warning,'warning',11)
         top+=h+(6 if compact else 12)
-        top=self.paragraph('CONTROLLED DOCUMENT COPY',L,top,WIDTH,8,True,GRAY,'header',11)+(4 if compact else 8)
+        top=self.paragraph('CONTROLLED DOCUMENT COPY',L,top,WIDTH,8,True,self.gray,'header',11)+(4 if compact else 8)
         self.y=top;self.body_start=top
         if self.body_start>H-FOOT_TOP-145: raise PrintDenied('Letterhead exceeds printable page')
     def ensure(self,h):
@@ -168,8 +182,8 @@ class Layout:
             self.ensure(max(heights))
             for j,(k,v) in enumerate(values):
                 x=L+j*(cw+gap)
-                yy=self.paragraph(k,x,self.y,cw,8,True,GRAY,lead=11)+3
-                self.paragraph(v,x,yy,cw,11,k=="Patient Name",INK,lead=15)
+                yy=self.paragraph(k,x,self.y,cw,8,True,self.gray,lead=11)+3
+                self.paragraph(v,x,yy,cw,11,k=="Patient Name",self.ink,lead=15)
             self.y+=max(heights)
     def section(self,label):
         self.ensure(35);self.y=self.paragraph(label,L,self.y,WIDTH,11,True,self.secondary,lead=15)+5
@@ -180,7 +194,7 @@ class Layout:
         def draw(row,h,bold,bg,tag):
             self.rect(L,self.y,WIDTH,h,bg);x=L
             for i,(v,w) in enumerate(zip(row,widths)):
-                col='#FFFFFF' if bold else (WARN if i in alerts and v.strip().casefold() in ('high','low','critical','critical high','critical low','abnormal','h','l','hh','ll') else INK)
+                col='#FFFFFF' if bold else (WARN if i in alerts and v.strip().casefold() in ('high','low','critical','critical high','critical low','abnormal','h','l','hh','ll') else self.ink)
                 lines=self.lines(v,w-2*pad,font_size,bold)
                 for j,line in enumerate(lines): self.text(line,x+pad,self.y+pad+j*lead,font_size,bold,col,tag,'right' if i in numeric else 'left',w-2*pad)
                 x+=w
@@ -194,7 +208,7 @@ class Layout:
                 self.new_page();first=True
             self.ensure(h+reserve+(header_h if first else 0))
             if first:draw(headers,header_h,True,self.secondary,'table_header');first=False
-            draw(row,h,False,PALE if i%2==0 else '#FFFFFF','body')
+            draw(row,h,False,PALE if i%2==0 else self.paper,'body')
         self.y+=12
     def block(self,text):
         for line in self.lines(text,WIDTH,11):
@@ -202,8 +216,8 @@ class Layout:
     def balance(self,value):
         lines=self.lines(value,WIDTH-28,20,True);h=32+len(lines)*26+10
         self.ensure(h);self.rect(L,self.y,WIDTH,h,PALE)
-        self.text('Balance Due' if self.enriched else 'Outstanding Balance',L+14,self.y+10,9,True,GRAY)
-        color = WARN if self.enriched and not value.endswith(' 0.00') else self.primary
+        self.text('Balance Due' if self.enriched else 'Outstanding Balance',L+14,self.y+10,9,True,self.gray)
+        color = WARN if (self.enriched or self.studio is not None) and not value.endswith(' 0.00') else self.primary
         self.paragraph(value,L+14,self.y+28,WIDTH-28,20,True,color,lead=26);self.y+=h+10
     def qr(self, url):
         from .verification_qr import rows_for
@@ -223,15 +237,15 @@ class Layout:
             self.page=page;top=H-FOOT_TOP
             self.rect(L,top,WIDTH,.8,self.primary);top+=8
             fw=WIDTH-96 if self.verification else WIDTH
-            top=self.paragraph('SOURCE SHA-256: '+self.doc.source_digest,L,top,fw,7,False,GRAY,'footer',10)+2
-            top=self.paragraph('BRANDING SHA-256: '+self.b.branding_sha256,L,top,fw,7,False,GRAY,'footer',10)+4
-            top=self.paragraph(DISCLAIMER,L,top,fw,7 if self.verification else 8,False,WARN,'disclaimer',9 if self.verification else 11)+(3 if self.verification else 5)
+            top=self.paragraph('SOURCE SHA-256: '+self.doc.source_digest,L,top,fw,7,False,self.gray,'footer',10)+2
+            top=self.paragraph('BRANDING SHA-256: '+self.b.branding_sha256,L,top,fw,7,False,self.gray,'footer',10)+4
+            top=self.paragraph(DISCLAIMER,L,top,fw,7 if self.verification else 8,False,self.warning,'disclaimer',9 if self.verification else 11)+(3 if self.verification else 5)
             if self.verification:
-                top=self.paragraph('Generated: '+self.b.issued_at,L,top,fw,7,False,GRAY,'footer',9)
-                top=self.paragraph('Verification: '+self.b.verification_url.rsplit('/',1)[1],L,top,fw,7,False,GRAY,'footer',9)
-                top=self.paragraph('Powered by Stryka-Max',L,top,fw,8,True,GRAY,'footer',10)
+                top=self.paragraph('Generated: '+self.b.issued_at,L,top,fw,7,False,self.gray,'footer',9)
+                top=self.paragraph('Verification: '+self.b.verification_url.rsplit('/',1)[1],L,top,fw,7,False,self.gray,'footer',9)
+                top=self.paragraph('Powered by Stryka-Max',L,top,fw,8,True,self.gray,'footer',10)
                 self.qr(self.b.verification_url)
-            self.text(f'Page {index+1} of {len(self.pages)}',L,H-34,8,False,GRAY,'footer','right',WIDTH)
+            self.text(f'Page {index+1} of {len(self.pages)}',L,H-34,8,False,self.gray,'footer','right',WIDTH)
             if top>H-42:raise PrintDenied('Presentation footer overflow')
         return {'family':self.faces.family,'pages':self.pages}
 
@@ -291,14 +305,27 @@ def paint_reportlab(plan,faces,branding):
     """Exact coordinates, not a second template engine."""
     out=BytesIO();c=canvas.Canvas(out,pagesize=(W,H),pageCompression=1)
     c.setTitle('Controlled document copy')
-    image=ImageReader(BytesIO(branding.png())) if branding.rgb is not None else None
+    mode = branding.studio['output_mode'] if branding.studio is not None else 'full'
+    paper = paper_color(branding.studio) if branding.studio is not None else '#FFFFFF'
+    image = None
+    if branding.rgb is not None:
+        raw = branding.png()
+        if mode == 'monochrome':
+            from PIL import Image
+            with Image.open(BytesIO(raw)) as im:
+                out_img = BytesIO()
+                im.convert('L').convert('RGB').save(out_img, format='PNG')
+                raw = out_img.getvalue()
+        image = ImageReader(BytesIO(raw))
     for page in plan['pages']:
+        if paper != '#FFFFFF':
+            c.setFillColor(HexColor(paper)); c.rect(0, 0, W, H, stroke=0, fill=1)
         for r in page['rects']:
-            c.setFillColor(HexColor(r['color']));c.rect(r['x'],H-r['y']-r['h'],r['w'],r['h'],stroke=0,fill=1)
+            c.setFillColor(HexColor(paint_color(r['color'], mode)));c.rect(r['x'],H-r['y']-r['h'],r['w'],r['h'],stroke=0,fill=1)
         if page['logo'] is not None:
             x,y,w,h=page['logo'];c.drawImage(image,x,H-y-h,w,h)
         for t in page['text']:
-            c.setFillColor(HexColor(t['color']));c.setFont(faces.bold if t['bold'] else faces.regular,t['size']);c.drawString(t['x'],H-t['y'],t['text'])
+            c.setFillColor(HexColor(paint_color(t['color'], mode)));c.setFont(faces.bold if t['bold'] else faces.regular,t['size']);c.drawString(t['x'],H-t['y'],t['text'])
         c.showPage()
     c.save();data=out.getvalue()
     if not data.startswith(b'%PDF-') or not data.rstrip().endswith(b'%%EOF') or len(data)>3*1024*1024:raise PrintDenied('Presentation exceeds PDF bounds')

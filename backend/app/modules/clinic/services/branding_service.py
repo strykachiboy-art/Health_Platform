@@ -158,7 +158,7 @@ def _audit(user, org, row, clinic_id, before, action):
     create_audit_log(action=AuditAction.UPDATE, entity_type='OrganizationBranding' if clinic_id is None else 'ClinicBranding',
         entity_id=row.id, user_id=user.id, description=action,
         old_value=before, new_value={'organization_id': str(org.id), 'target_clinic_id': clinic_id,
-        'version': row.version, 'logo_sha256': row.logo_sha256, 'primary_color': row.primary_color, 'secondary_color': row.secondary_color,
+        'version': row.version, 'logo_sha256': row.logo_sha256, 'primary_color': row.primary_color, 'secondary_color': row.secondary_color, 'studio_palette': row.studio_palette,
         **({'clinic_override_allowed': row.clinic_override_allowed} if clinic_id is None else {})})
 
 
@@ -195,13 +195,12 @@ def _stored_palette(row):
 
 
 def _effective_palette(default, override=None):
-    local = _stored_palette(override) if _allowed(default) else (None,None)
-    if local[0] is not None:
-        return (*local, 'clinic')
-    inherited = _stored_palette(default)
-    if inherited[0] is not None:
-        return (*inherited, 'organization')
-    return (*DEFAULT_PALETTE, 'default')
+    palette = _studio_effective(default, override)
+    local = _studio_local(override) if _allowed(default) else {}
+    inherited = _studio_local(default)
+    keys = ('primary_color', 'secondary_color')
+    source = 'clinic' if any(k in local for k in keys) else 'organization' if any(k in inherited for k in keys) else 'default'
+    return palette['primary_color'], palette['secondary_color'], source
 
 
 @transactional
@@ -215,16 +214,28 @@ def change_colors(*, user_id, organization_id, clinic_id=None, expected_version,
     row = _row(org, clinic_id)
     _check_version(row, expected_version)
     before = _metadata(row)
-    if _stored_palette(row) == palette:
+    old_local = _studio_local(row)
+    local = dict(old_local)
+    for key, value in zip(('primary_color', 'secondary_color'), palette):
+        if value is None:
+            local.pop(key, None)
+        else:
+            local[key] = value
+    default = _row(org)
+    _studio_validate_change(org, default, row, local, clinic_id)
+    if local == old_local:
         return before
     if row is None:
         row = OrganizationBranding(organization_id=org.id,version=1) if clinic_id is None else ClinicBranding(organization_id=org.id,clinic_id=clinic_id,version=1)
         db.session.add(row)
     else:
         row.version += 1
-    row.primary_color, row.secondary_color = palette
+    if row.studio_palette is not None:
+        _studio_write_projection(row, local, STUDIO_DEFAULTS if clinic_id is None else _studio_effective(default))
+    else:
+        row.primary_color, row.secondary_color = palette
     db.session.flush()
-    _audit(user, org, row, clinic_id, before, 'Branding colors updated')
+    _audit(user, org, row, clinic_id, dict(before, studio_palette=old_local) if row.studio_palette is not None else before, 'Branding colors updated')
     return _metadata(row)
 
 
@@ -277,6 +288,8 @@ def set_override_entitlement(*, user_id, organization_id, expected_version, allo
     org = _org(organization_id)
     row = _row(org)
     _check_version(row, expected_version)
+    if allowed:
+        _studio_validate_change(org, row, None, _studio_local(row), None, entitlement=True)
     before = dict(_metadata(row), clinic_override_allowed=_allowed(row))
     if row is None:
         row = OrganizationBranding(organization_id=org.id, version=1)
@@ -313,6 +326,9 @@ def _snapshot(org, clinic):
             'logo_source': source, 'logo_sha256': sha256(logo).hexdigest() if logo else None}
     primary, secondary, palette_source = _effective_palette(default, override)
     meta.update(primary_color=primary, secondary_color=secondary, palette_source=palette_source, clinic_primary_color=_stored_palette(override)[0], clinic_secondary_color=_stored_palette(override)[1])
+    if ((default is not None and default.studio_palette is not None) or
+            (_allowed(default) and override is not None and override.studio_palette is not None)):
+        meta['studio'] = _studio_effective(default, override)
     digest = sha256(json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
     return BrandingSnapshot(MappingProxyType(meta), logo, digest)
 
@@ -340,7 +356,7 @@ def read_branding(*, user_id, organization_id, clinic_id=None, logo=False):
         row = _row(org)
         return _bytes(row) if logo else dict(_metadata(row), organization_id=str(org.id), organization_name=org.name, clinic_override_allowed=_allowed(row), effective_primary_color=_effective_palette(row)[0], effective_secondary_color=_effective_palette(row)[1], palette_source=_effective_palette(row)[2])
     snap = _snapshot(org, db.session.get(Clinic, clinic_id))
-    return snap.logo_png if logo else dict(snap.metadata, branding_sha256=snap.branding_sha256)
+    return snap.logo_png if logo else dict({k: v for k, v in snap.metadata.items() if k != 'studio'}, branding_sha256=snap.branding_sha256)
 
 
 # L05 Run 2D: read-only discovery. These responses confer no authorization.
@@ -441,3 +457,115 @@ def read_branding_capabilities(*, user_id, organization_id, clinic_id):
         'can_customize_clinic_branding': customize,
         'can_reset_clinic_branding': clinic_access,
     }
+
+
+# L05 Run 8: per-field nullable overrides. Legacy paired columns remain a
+# compatibility projection; the new mapping is authoritative once present.
+from app.modules.clinic.services.branding_studio_palette import (
+    DEFAULTS as STUDIO_DEFAULTS, normalize_local as _normalize_studio,
+    resolve as _resolve_studio,
+)
+
+
+def _studio_local(row):
+    if row is None:
+        return {}
+    if row.studio_palette is None:
+        a, b = _stored_palette(row)
+        return {} if a is None else {'primary_color': a, 'secondary_color': b}
+    try:
+        value = _normalize_studio(row.studio_palette)
+        if value != row.studio_palette:
+            raise ValueError('Noncanonical stored studio')
+        return value
+    except ValueError as exc:
+        raise ConflictError('Branding studio integrity unavailable') from exc
+
+
+def _studio_effective(default, override=None):
+    try:
+        return _resolve_studio(_studio_local(default), _studio_local(override) if _allowed(default) else {})
+    except ValueError as exc:
+        raise ConflictError('Branding studio integrity unavailable') from exc
+
+
+def _studio_validate_change(org, default, override, local, clinic_id, *, entitlement=None):
+    # Parent row is already locked by _org. Validate every effective child on
+    # parent changes and entitlement grants, including dormant overrides when
+    # they could be reactivated. Never silently substitute unsafe colours.
+    try:
+        parent = local if clinic_id is None else _studio_local(default)
+        _resolve_studio(parent)
+        allowed = _allowed(default) if entitlement is None else entitlement
+        if clinic_id is not None:
+            if allowed:
+                _resolve_studio(parent, local)
+        elif allowed:
+            for child in db.session.execute(select(ClinicBranding).where(ClinicBranding.organization_id == org.id)).scalars():
+                _resolve_studio(parent, _studio_local(child))
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+
+def _studio_write_projection(row, local, inherited):
+    row.studio_palette = dict(local) if local else None
+    if 'primary_color' in local or 'secondary_color' in local:
+        row.primary_color = local.get('primary_color', inherited['primary_color'])
+        row.secondary_color = local.get('secondary_color', inherited['secondary_color'])
+    else:
+        row.primary_color = row.secondary_color = None
+
+
+def _studio_view(org, row, default, clinic_id):
+    local = _studio_local(row)
+    parent = dict(STUDIO_DEFAULTS) if clinic_id is None else _studio_effective(default)
+    effective = _studio_effective(default, row) if clinic_id is not None else _studio_effective(row)
+    sources = {key: ('clinic' if clinic_id is not None and _allowed(default) and key in local
+                     else 'organization' if key in _studio_local(default) else 'default') for key in STUDIO_DEFAULTS}
+    return {'organization_id': str(org.id), 'clinic_id': clinic_id,
+            'version': _version(row), 'organization_version': _version(default),
+            'clinic_override_allowed': _allowed(default), 'local': local,
+            'inherited': parent, 'effective': effective, 'sources': sources}
+
+
+@transactional
+def read_studio(*, user_id, organization_id, clinic_id=None):
+    _enabled()
+    org = _org(organization_id)
+    _authorize(user_id, org, clinic_id)
+    default = _row(org)
+    return _studio_view(org, default if clinic_id is None else _row(org, clinic_id), default, clinic_id)
+
+
+@transactional
+def change_studio(*, user_id, organization_id, clinic_id=None, expected_version,
+                  expected_organization_version, overrides):
+    _enabled()
+    org = _org(organization_id)
+    user = _authorize(user_id, org, clinic_id)
+    default = _row(org)
+    row = default if clinic_id is None else _row(org, clinic_id)
+    _check_version(default, expected_organization_version)
+    _check_version(row, expected_version)
+    try:
+        local = _normalize_studio(overrides)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    old = _studio_local(row)
+    if clinic_id is not None and not _allowed(default):
+        # Revoked clinics may remove dormant overrides, never add/change one.
+        if any(k not in old or old[k] != v for k, v in local.items()):
+            _deny()
+    _studio_validate_change(org, default, row, local, clinic_id)
+    if local == old:
+        return _studio_view(org, row, default, clinic_id)
+    before = dict(_metadata(row), studio_palette=old)
+    if row is None:
+        row = OrganizationBranding(organization_id=org.id, version=1) if clinic_id is None else ClinicBranding(organization_id=org.id, clinic_id=clinic_id, version=1)
+        db.session.add(row)
+    else:
+        row.version += 1
+    _studio_write_projection(row, local, STUDIO_DEFAULTS if clinic_id is None else _studio_effective(default))
+    db.session.flush()
+    _audit(user, org, row, clinic_id, before, 'Branding studio updated')
+    return _studio_view(org, row, row if clinic_id is None else default, clinic_id)

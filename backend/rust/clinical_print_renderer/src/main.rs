@@ -44,11 +44,21 @@ struct Branding {
     #[serde(default="default_secondary")]
     secondary_color:String,
     #[serde(default)]
+    studio:Option<StudioPalette>,
+    #[serde(default)]
     verification_url:Option<String>,
     #[serde(default)]
     issued_at:Option<String>,
     #[serde(default)]
     verification_rows:Option<Vec<String>>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StudioPalette {
+    text_color:String,
+    warning_color:String,
+    background_color:String,
+    output_mode:String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -200,6 +210,8 @@ fn check_branding(d: &PrintRequest) -> Result<(), &'static str> {
         (None, 1) => Ok(()),
         (Some(b), 2 | 3) => {
             palette_rgb(&b.primary_color)?; palette_rgb(&b.secondary_color)?;
+            if b.studio.is_some() && d.protocol != 3 { return Err("invalid studio protocol"); }
+            professional::validate_studio(b)?;
             match (&b.verification_url,&b.issued_at,&b.verification_rows) {
                 (None,None,None)=>(),
                 (Some(url),Some(stamp),Some(rows)) if d.protocol==3 => {

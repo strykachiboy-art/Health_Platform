@@ -35,6 +35,39 @@ fn rgb(s:&str)->Result<[f64;3],&'static str> {
     let mut result=[0.;3];for (i,n) in result.iter_mut().enumerate(){*n=u8::from_str_radix(&s[1+i*2..3+i*2],16).map_err(|_|BAD)? as f64/255.;}Ok(result)
 }
 fn color_ok(s:&str,p:&str,q:&str)->bool {s==p||s==q||matches!(s,"#142A3A"|"#536575"|"#D6DFE6"|"#F1F5F7"|"#842020"|"#FCF2F1"|"#FFFFFF")}
+fn luminance(s:&str)->Result<f64,&'static str>{
+    let [r,g,b]=rgb(s)?;
+    let f=|x:f64| if x<=0.04045 {x/12.92} else {((x+0.055)/1.055).powf(2.4)};
+    Ok(0.2126*f(r)+0.7152*f(g)+0.0722*f(b))
+}
+fn contrast(a:&str,b:&str)->Result<f64,&'static str>{
+    let a=luminance(a)?;let b=luminance(b)?;Ok((a.max(b)+0.05)/(a.min(b)+0.05))
+}
+pub(super) fn validate_studio(b:&super::Branding)->Result<(),&'static str>{
+    if let Some(s)=&b.studio {
+        if !matches!(s.output_mode.as_str(),"full"|"ink_saving"|"monochrome")||luminance(&s.background_color)?<0.80{return Err(BAD)}
+        for c in [&b.primary_color,&b.secondary_color] {if contrast(c,&s.background_color)?<4.5||contrast(c,"#FFFFFF")?<4.5{return Err(BAD)}}
+        for bg in [s.background_color.as_str(),"#FFFFFF","#F1F5F7"] {if contrast(&s.text_color,bg)?<7.0{return Err(BAD)}}
+        for bg in [s.background_color.as_str(),"#FFFFFF","#FCF2F1"] {if contrast(&s.warning_color,bg)?<4.5{return Err(BAD)}}
+        let [r,g,v]=rgb(&s.warning_color)?;let hi=r.max(g).max(v);let lo=r.min(g).min(v);let d=hi-lo;
+        if hi==0.0||d/hi<0.35{return Err(BAD)}
+        let h=60.0*(if hi==r {((g-v)/d).rem_euclid(6.0)} else if hi==g {(v-r)/d+2.0} else {(r-g)/d+4.0});
+        if h>50.0&&h<330.0{return Err(BAD)}
+    }Ok(())
+}
+fn studio_text_ok(c:&str,b:&super::Branding)->bool{
+    color_ok(c,&b.primary_color,&b.secondary_color)||b.studio.as_ref().map_or(false,|s| c==s.text_color||c==s.warning_color)
+}
+fn studio_paper(b:&super::Branding)->&str{
+    b.studio.as_ref().filter(|s|s.output_mode=="full").map_or("#FFFFFF",|s|s.background_color.as_str())
+}
+fn studio_warning(b:&super::Branding)->&str{b.studio.as_ref().map_or("#842020",|s|s.warning_color.as_str())}
+fn monochrome(b:&super::Branding)->bool{b.studio.as_ref().map_or(false,|s|s.output_mode=="monochrome")}
+fn render_rgb(c:&str,b:&super::Branding)->Result<[f64;3],&'static str>{
+    let [r,g,v]=rgb(c)?;if !monochrome(b){return Ok([r,g,v])}
+    let n=((299.0*(r*255.0).round()+587.0*(g*255.0).round()+114.0*(v*255.0).round()+500.0)/1000.0).floor();
+    let n=if n<128.0{0.0}else{n/255.0};Ok([n,n,n])
+}
 fn box_ok(x:f64,y:f64,w:f64,h:f64)->bool {x.is_finite()&&y.is_finite()&&w.is_finite()&&h.is_finite()&&x>=44.8&&y>=21.8&&w>0.&&h>0.&&x+w<=W-44.8&&y+h<=H-17.8}
 fn fields_expected(d:&PrintRequest)->Result<String,&'static str>{
     let mut body=String::new();
@@ -85,14 +118,14 @@ fn validate_plan(d:&PrintRequest,plan:&Plan)->Result<(),&'static str>{
         let mut phase=0;
         for t in &page.text {
             check_str(&t.text,12000)?;
-            if t.text.chars().any(|c|c.is_control())||!(7..=25).contains(&t.size)||!t.x.is_finite()||!t.y.is_finite()||t.x<44.8||t.x>W-44.8||t.y<22.||t.y>H-18.||!color_ok(&t.color,&b.primary_color,&b.secondary_color){return Err(BAD)}
+            if t.text.chars().any(|c|c.is_control())||!(7..=25).contains(&t.size)||!t.x.is_finite()||!t.y.is_finite()||t.x<44.8||t.x>W-44.8||t.y<22.||t.y>H-18.||!studio_text_ok(&t.color,b){return Err(BAD)}
             match t.tag.as_str(){
                 "header" if phase==0&&t.color!="#FFFFFF"&&t.y<H-137.=>head.push_str(&t.text),
-                "warning" if phase==0&&t.color=="#842020"&&t.y<H-137.=>{head.push_str(&t.text);warning.push_str(&t.text);},
+                "warning" if phase==0&&t.color==studio_warning(b)&&t.y<H-137.=>{head.push_str(&t.text);warning.push_str(&t.text);},
                 "body" if phase<=1&&t.color!="#FFFFFF"&&t.y<H-137.=>{phase=1;body.push_str(&t.text);},
                 "table_header" if phase<=1&&(has_items||has_tests)&&t.color=="#FFFFFF"&&t.y<H-137.=>{phase=1;tab.push_str(&t.text);},
                 "footer" if t.color!="#FFFFFF"&&t.y>=H-132.=>{phase=2;foot.push_str(&t.text);},
-                "disclaimer" if t.color=="#842020"&&t.y>=H-132.=>{phase=2;foot.push_str(&t.text);disclaimer.push_str(&t.text);},_=>return Err(BAD),
+                "disclaimer" if t.color==studio_warning(b)&&t.y>=H-132.=>{phase=2;foot.push_str(&t.text);disclaimer.push_str(&t.text);},_=>return Err(BAD),
             }
         }
         if !tab.is_empty(){if norm(&tab)!=(if has_tests {"TestSpecimenPriority"} else {"DescriptionQuantityUnitpriceSubtotal"}) {return Err(BAD)}table_seen=true;}
@@ -104,7 +137,7 @@ fn validate_plan(d:&PrintRequest,plan:&Plan)->Result<(),&'static str>{
         if norm(&head)!=header||norm(&foot)!=expected_footer||norm(&warning)!=norm(&d.watermark)||norm(&disclaimer)!=norm(DISCLAIMER){return Err(BAD)}
         let mut qr_rects=Vec::new();
         for r in &page.rects {
-            if !box_ok(r.x,r.y,r.w,r.h)||!color_ok(&r.color,&b.primary_color,&b.secondary_color){return Err(BAD)}
+            if !box_ok(r.x,r.y,r.w,r.h)||!(color_ok(&r.color,&b.primary_color,&b.secondary_color)||r.color==studio_paper(b)){return Err(BAD)}
             if r.y>H-132.+1. {qr_rects.push(r);}
         }
         if let Some(rows)=&b.verification_rows {
@@ -177,15 +210,17 @@ pub(super) fn render(d:&PrintRequest,plan:&Plan)->Result<Vec<u8>,&'static str>{
     validate_plan(d,plan)?;let mut faces=faces(&plan.family)?;
     let b=d.branding.as_ref().ok_or(BAD)?;let mut pdf=Document::with_version("1.4");
     let image_id=if let Some(logo)=&b.logo {
-        let raw=(0..logo.rgb_hex.len()).step_by(2).map(|i|u8::from_str_radix(&logo.rgb_hex[i..i+2],16).map_err(|_|BAD)).collect::<Result<Vec<_>,_>>()?;
+        let mut raw=(0..logo.rgb_hex.len()).step_by(2).map(|i|u8::from_str_radix(&logo.rgb_hex[i..i+2],16).map_err(|_|BAD)).collect::<Result<Vec<_>,_>>()?;
+        if monochrome(b){for px in raw.chunks_exact_mut(3){let n=((299*u32::from(px[0])+587*u32::from(px[1])+114*u32::from(px[2])+500)/1000) as u8;px.fill(n);}}
         Some(pdf.add_object(Stream::new(dict(&[("Type",name("XObject")),("Subtype",name("Image")),("Width",num(i64::from(logo.width))),("Height",num(i64::from(logo.height))),("ColorSpace",name("DeviceRGB")),("BitsPerComponent",num(8))]),raw)))
     }else{None};
     let pages_id=pdf.new_object_id();let mut kids=Vec::new();let mut streams=Vec::new();
     for p in &plan.pages{
         let mut content=String::new();
-        for r in &p.rects{let [red,g,bl]=rgb(&r.color)?;let _=writeln!(content,"q {:.6} {:.6} {:.6} rg {:.4} {:.4} {:.4} {:.4} re f Q",red,g,bl,r.x,H-r.y-r.h,r.w,r.h);}
+        if studio_paper(b)!="#FFFFFF"{let [red,g,bl]=rgb(studio_paper(b))?;let _=writeln!(content,"q {:.6} {:.6} {:.6} rg 0 0 {:.4} {:.4} re f Q",red,g,bl,W,H);}
+        for r in &p.rects{let [red,g,bl]=render_rgb(&r.color,b)?;let _=writeln!(content,"q {:.6} {:.6} {:.6} rg {:.4} {:.4} {:.4} {:.4} re f Q",red,g,bl,r.x,H-r.y-r.h,r.w,r.h);}
         if let Some([x,y,w,h])=p.logo{let _=writeln!(content,"q {:.4} 0 0 {:.4} {:.4} {:.4} cm /Logo Do Q",w,h,x,H-y-h);}
-        for t in &p.text{let [red,g,bl]=rgb(&t.color)?;let i=if t.bold{1}else{0};let hex=faces[i].encode(t)?;let _=writeln!(content,"q {:.6} {:.6} {:.6} rg BT /F{} {} Tf 1 0 0 1 {:.4} {:.4} Tm <{}> Tj ET Q",red,g,bl,i,t.size,t.x,H-t.y,hex);}
+        for t in &p.text{let [red,g,bl]=render_rgb(&t.color,b)?;let i=if t.bold{1}else{0};let hex=faces[i].encode(t)?;let _=writeln!(content,"q {:.6} {:.6} {:.6} rg BT /F{} {} Tf 1 0 0 1 {:.4} {:.4} Tm <{}> Tj ET Q",red,g,bl,i,t.size,t.x,H-t.y,hex);}
         streams.push(pdf.add_object(Stream::new(Dictionary::new(),content.into_bytes())));
     }
     let [regular,bold]=faces;let regular=regular.embed(&mut pdf)?;let bold=bold.embed(&mut pdf)?;

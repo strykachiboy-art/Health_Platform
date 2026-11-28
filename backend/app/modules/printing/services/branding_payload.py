@@ -27,11 +27,14 @@ class PrintBranding:
     correction: str | None = None
     verification_url: str | None = None
     issued_at: str | None = None
+    studio: dict | None = None
 
     def wire(self):
         result = {'clinic_id': self.clinic_id, 'lines': list(self.lines),
                 'branding_sha256': self.branding_sha256, 'primary_color': self.primary_color, 'secondary_color': self.secondary_color,
                 'logo': None if self.rgb is None else {'width': self.width, 'height': self.height, 'rgb_hex': self.rgb.hex()}}
+        if self.studio is not None:
+            result['studio'] = {k: v for k, v in self.studio.items() if k not in ('primary_color', 'secondary_color')}
         if self.verification_url is not None:
             from .verification_qr import rows_for
             result.update(verification_url=self.verification_url, issued_at=self.issued_at, verification_rows=list(rows_for(self.verification_url)))
@@ -94,7 +97,7 @@ def prepare_branding(doc, *, owning_clinic_id):
         except Exception as exc:
             raise PrintDenied('Branding asset unavailable') from exc
     return PrintBranding(owning_clinic_id, lines, snap.branding_sha256, m['logo_sha256'], m['logo_source'],
-        m['organization_version'], m['clinic_version'], rgb, w, h, m['primary_color'], m['secondary_color'])
+        m['organization_version'], m['clinic_version'], rgb, w, h, m['primary_color'], m['secondary_color'], studio=m.get('studio'))
 
 
 def brand_lines(branding):

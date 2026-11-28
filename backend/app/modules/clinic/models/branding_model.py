@@ -17,6 +17,7 @@ class OrganizationBranding(db.Model):
     logo_sha256 = db.Column(db.String(64), nullable=True)
     primary_color = db.Column(db.String(7), nullable=True)
     secondary_color = db.Column(db.String(7), nullable=True)
+    studio_palette = db.Column(db.JSON(none_as_null=True), nullable=True)
     # Not a paid subscription receipt. Platform-controlled staged capability.
     clinic_override_allowed = db.Column(db.Boolean, nullable=False, default=False, server_default=false())
 
@@ -37,3 +38,4 @@ class ClinicBranding(db.Model):
     logo_sha256 = db.Column(db.String(64), nullable=True)
     primary_color = db.Column(db.String(7), nullable=True)
     secondary_color = db.Column(db.String(7), nullable=True)
+    studio_palette = db.Column(db.JSON(none_as_null=True), nullable=True)

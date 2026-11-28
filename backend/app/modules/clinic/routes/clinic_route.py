@@ -1018,3 +1018,45 @@ def _branding_discovery_cache_headers(response):
         response.headers['Cache-Control'] = 'private, no-store, max-age=0'
         response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
+
+
+# Versioned studio API. Legacy endpoints keep their exact response schemas.
+def _branding_studio_request(scope):
+    _branding._enabled()
+    if request.args or request.headers.get('Idempotency-Key') is not None:
+        raise ValidationError('Unsupported branding parameters')
+    oid = get_jwt().get('tenant_id')
+    cid = g.current_clinic_id if scope == 'clinic' else None
+    if not oid or (scope == 'clinic' and cid is None):
+        raise NotFoundError('Branding unavailable')
+    kwargs = dict(user_id=g.current_user_id, organization_id=oid, clinic_id=cid)
+    if request.method == 'GET':
+        if request.content_length not in (None, 0) or request.headers.get('Transfer-Encoding') is not None:
+            raise ValidationError('Unexpected branding body')
+        return _branding_response(_branding.read_studio(**kwargs))
+    if request.content_length is None or request.content_length > 4096:
+        raise ValidationError('Invalid branding studio request size')
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) != {'expected_version', 'expected_organization_version', 'overrides'}:
+        raise ValidationError('Both versions and studio overrides required')
+    return _branding_response(_branding.change_studio(**kwargs, **body))
+
+
+@clinic_bp.route('/branding/organization/studio', methods=['GET', 'PUT'])
+@login_required
+def organization_branding_studio_route():
+    return _branding_studio_request('organization')
+
+
+@clinic_bp.route('/branding/clinic/studio', methods=['GET', 'PUT'])
+@role_required(Role.ADMIN)
+def clinic_branding_studio_route():
+    return _branding_studio_request('clinic')
+
+
+@clinic_bp.after_request
+def _branding_studio_headers(response):
+    if request.endpoint in {'clinic.organization_branding_studio_route', 'clinic.clinic_branding_studio_route'}:
+        response.headers['Cache-Control'] = 'private, no-store, max-age=0'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
