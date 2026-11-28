@@ -127,7 +127,13 @@ class Layout:
         self.logo=None
         if branding.rgb is not None:
             if not (1<=branding.width<=256 and 1<=branding.height<=256 and len(branding.rgb)==branding.width*branding.height*3): raise PrintDenied('Invalid logo pixels')
-            scale=min(85/branding.width,48/branding.height)
+            sizes = {'small': (100., 48.), 'medium': (120., 64.), 'large': (144., 80.)}
+            if branding.logo_size not in sizes:
+                raise PrintDenied('Invalid logo size')
+            if branding.alpha is not None and (len(branding.alpha) != branding.width*branding.height or not any(branding.alpha)):
+                raise PrintDenied('Invalid logo alpha')
+            max_w, max_h = sizes[branding.logo_size]
+            scale=min(max_w/branding.width,max_h/branding.height)
             self.logo=(L,58.,branding.width*scale,branding.height*scale)
         self.new_page()
     def font(self,bold): return self.faces.bold if bold else self.faces.regular
@@ -153,13 +159,26 @@ class Layout:
         if len(self.pages)>=100: raise PrintDenied('Too many presentation pages')
         self.page={'text':[],'rects':[],'logo':self.logo};self.pages.append(self.page)
         self.rect(L,45,WIDTH,4,self.primary)
-        x=L+104 if self.logo else L;hw=R-x;top=58.
+        x=L+self.logo[2]+12. if self.logo else L;hw=R-x;top=58.
         top=self.paragraph(self.b.lines[0].removeprefix('Organisation: '),x,top,hw,17 if len(self.pages)==1 else 14,True,self.primary,'header')+2
         top=self.paragraph(self.b.lines[1].removeprefix('Clinic: '),x,top,hw,11,True,self.secondary,'header')+2
         if self.b.lines[2:]:
             top=self.paragraph('  |  '.join(self.b.lines[2:]),x,top,hw,8,False,self.gray,'header',11)
         compact=self.enriched and len(self.pages)>1
-        top=max(top,108 if compact and self.logo else 112 if self.logo else 82 if compact else 88)+(5 if compact else 10)
+        if self.logo:
+            # Identity runs are the only text present here. Center the visible
+            # text group and the logo around a shared vertical midpoint.
+            identity = self.page['text']
+            span = identity[-1]['y'] - 58.
+            x0, _, w, h = self.logo
+            shift = max(0., (h-span)/2.)
+            for t in identity:
+                t['y'] = round(t['y'] + shift, 4)
+            y = 58. + max(0., (span-h)/2.)
+            self.page['logo'] = (x0, y, w, h)
+            top = max(top+shift, y+h, 108 if compact else 112)+(5 if compact else 10)
+        else:
+            top=max(top,82 if compact else 88)+(5 if compact else 10)
         self.rect(L,top,WIDTH,.8,RULE);top+=8 if compact else 14
         title='Laboratory Results' if self.doc.kind=='released_lab_result' else self.doc.title
         title_size=25 if len(self.pages)==1 else 12 if compact else 14
@@ -303,7 +322,7 @@ def make_plan(doc,branding):
 
 def paint_reportlab(plan,faces,branding):
     """Exact coordinates, not a second template engine."""
-    out=BytesIO();c=canvas.Canvas(out,pagesize=(W,H),pageCompression=1)
+    out=BytesIO();c=canvas.Canvas(out,pagesize=(W,H),pageCompression=1,pdfVersion=(1,4))
     c.setTitle('Controlled document copy')
     mode = branding.studio['output_mode'] if branding.studio is not None else 'full'
     paper = paper_color(branding.studio) if branding.studio is not None else '#FFFFFF'
@@ -314,7 +333,10 @@ def paint_reportlab(plan,faces,branding):
             from PIL import Image
             with Image.open(BytesIO(raw)) as im:
                 out_img = BytesIO()
-                im.convert('L').convert('RGB').save(out_img, format='PNG')
+                gray = im.convert('L').convert('RGB')
+                if 'A' in im.getbands():
+                    gray.putalpha(im.getchannel('A'))
+                gray.save(out_img, format='PNG')
                 raw = out_img.getvalue()
         image = ImageReader(BytesIO(raw))
     for page in plan['pages']:
@@ -323,7 +345,7 @@ def paint_reportlab(plan,faces,branding):
         for r in page['rects']:
             c.setFillColor(HexColor(paint_color(r['color'], mode)));c.rect(r['x'],H-r['y']-r['h'],r['w'],r['h'],stroke=0,fill=1)
         if page['logo'] is not None:
-            x,y,w,h=page['logo'];c.drawImage(image,x,H-y-h,w,h)
+            x,y,w,h=page['logo'];c.drawImage(image,x,H-y-h,w,h,mask='auto')
         for t in page['text']:
             c.setFillColor(HexColor(paint_color(t['color'], mode)));c.setFont(faces.bold if t['bold'] else faces.regular,t['size']);c.drawString(t['x'],H-t['y'],t['text'])
         c.showPage()

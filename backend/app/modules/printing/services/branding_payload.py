@@ -28,11 +28,18 @@ class PrintBranding:
     verification_url: str | None = None
     issued_at: str | None = None
     studio: dict | None = None
+    logo_size: str = "medium"
+    alpha: bytes | None = None
 
     def wire(self):
         result = {'clinic_id': self.clinic_id, 'lines': list(self.lines),
                 'branding_sha256': self.branding_sha256, 'primary_color': self.primary_color, 'secondary_color': self.secondary_color,
                 'logo': None if self.rgb is None else {'width': self.width, 'height': self.height, 'rgb_hex': self.rgb.hex()}}
+        if self.rgb is not None:
+            if self.logo_size != 'medium':
+                result['logo']['size'] = self.logo_size
+            if self.alpha is not None:
+                result['logo']['alpha_hex'] = self.alpha.hex()
         if self.studio is not None:
             result['studio'] = {k: v for k, v in self.studio.items() if k not in ('primary_color', 'secondary_color')}
         if self.verification_url is not None:
@@ -44,7 +51,10 @@ class PrintBranding:
         if self.rgb is None:
             return None
         stream = BytesIO()
-        Image.frombytes('RGB', (self.width, self.height), self.rgb).save(stream, format='PNG')
+        image = Image.frombytes('RGB', (self.width, self.height), self.rgb)
+        if self.alpha is not None:
+            image.putalpha(Image.frombytes('L', image.size, self.alpha))
+        image.save(stream, format='PNG')
         return stream.getvalue()
 
 
@@ -82,7 +92,7 @@ def prepare_branding(doc, *, owning_clinic_id):
         _line('Address', m['address']), _line('City', m['city']),
         _line('Country', m['country']), _line('Phone', m['phone']),
         _line('Email', m['email'])) if line is not None)
-    rgb = None; w = h = 0
+    rgb = alpha = None; w = h = 0
     if snap.logo_png is not None:
         try:
             with Image.open(BytesIO(snap.logo_png)) as im:
@@ -91,13 +101,18 @@ def prepare_branding(doc, *, owning_clinic_id):
                 im.load()
                 rgba = im.convert('RGBA')
                 rgba.thumbnail((256,256), Image.Resampling.LANCZOS)
-                white = Image.new('RGBA', rgba.size, 'white')
-                white.alpha_composite(rgba)
-                rgb = white.convert('RGB').tobytes(); w,h = white.size
+                # Retain real alpha; trim only fully transparent exterior margins.
+                bounds = rgba.getchannel('A').getbbox()
+                if bounds is None:
+                    raise ValueError('Logo is fully transparent')
+                rgba = rgba.crop(bounds)
+                rgb = rgba.convert('RGB').tobytes(); w,h = rgba.size
+                a = rgba.getchannel('A')
+                alpha = None if a.getextrema() == (255, 255) else a.tobytes()
         except Exception as exc:
             raise PrintDenied('Branding asset unavailable') from exc
     return PrintBranding(owning_clinic_id, lines, snap.branding_sha256, m['logo_sha256'], m['logo_source'],
-        m['organization_version'], m['clinic_version'], rgb, w, h, m['primary_color'], m['secondary_color'], studio=m.get('studio'))
+        m['organization_version'], m['clinic_version'], rgb, w, h, m['primary_color'], m['secondary_color'], studio=m.get('studio'), logo_size=m.get('logo_size', 'medium'), alpha=alpha)
 
 
 def brand_lines(branding):

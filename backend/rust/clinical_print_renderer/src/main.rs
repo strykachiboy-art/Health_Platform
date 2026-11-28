@@ -66,6 +66,10 @@ struct Logo {
     width: u32,
     height: u32,
     rgb_hex: String,
+    #[serde(default)]
+    alpha_hex: Option<String>,
+    #[serde(default)]
+    size: Option<String>,
 }
 
 fn palette_rgb(s: &str) -> Result<(u8,u8,u8), &'static str> {
@@ -240,6 +244,13 @@ fn check_branding(d: &PrintRequest) -> Result<(), &'static str> {
                 if logo.width == 0 || logo.height == 0 || logo.width > 256 || logo.height > 256
                     || logo.rgb_hex.len() != (logo.width as usize)*(logo.height as usize)*6
                     || !logo.rgb_hex.bytes().all(|x| x.is_ascii_hexdigit()) { return Err("invalid logo"); }
+                if let Some(size) = &logo.size {
+                    if d.protocol != 3 || !matches!(size.as_str(), "small"|"medium"|"large") { return Err("invalid logo size"); }
+                }
+                if let Some(alpha) = &logo.alpha_hex {
+                    if d.protocol != 3 || alpha.len() != (logo.width as usize)*(logo.height as usize)*2
+                        || !alpha.bytes().all(|x| x.is_ascii_hexdigit()) || alpha.bytes().all(|x| x == b'0') { return Err("invalid logo alpha"); }
+                }
             }
             Ok(())
         }

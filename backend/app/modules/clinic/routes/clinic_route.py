@@ -1021,7 +1021,7 @@ def _branding_discovery_cache_headers(response):
 
 
 # Versioned studio API. Legacy endpoints keep their exact response schemas.
-def _branding_studio_request(scope):
+def _branding_studio_request(scope, *, v2=False):
     _branding._enabled()
     if request.args or request.headers.get('Idempotency-Key') is not None:
         raise ValidationError('Unsupported branding parameters')
@@ -1033,13 +1033,13 @@ def _branding_studio_request(scope):
     if request.method == 'GET':
         if request.content_length not in (None, 0) or request.headers.get('Transfer-Encoding') is not None:
             raise ValidationError('Unexpected branding body')
-        return _branding_response(_branding.read_studio(**kwargs))
+        return _branding_response(_branding.read_studio(**kwargs, v2=v2))
     if request.content_length is None or request.content_length > 4096:
         raise ValidationError('Invalid branding studio request size')
     body = request.get_json(silent=True)
     if not isinstance(body, dict) or set(body) != {'expected_version', 'expected_organization_version', 'overrides'}:
         raise ValidationError('Both versions and studio overrides required')
-    return _branding_response(_branding.change_studio(**kwargs, **body))
+    return _branding_response(_branding.change_studio(**kwargs, **body, v2=v2))
 
 
 @clinic_bp.route('/branding/organization/studio', methods=['GET', 'PUT'])
@@ -1054,9 +1054,21 @@ def clinic_branding_studio_route():
     return _branding_studio_request('clinic')
 
 
+@clinic_bp.route('/branding/organization/studio-v2', methods=['GET', 'PUT'])
+@login_required
+def organization_branding_studio_v2_route():
+    return _branding_studio_request('organization', v2=True)
+
+
+@clinic_bp.route('/branding/clinic/studio-v2', methods=['GET', 'PUT'])
+@role_required(Role.ADMIN)
+def clinic_branding_studio_v2_route():
+    return _branding_studio_request('clinic', v2=True)
+
+
 @clinic_bp.after_request
 def _branding_studio_headers(response):
-    if request.endpoint in {'clinic.organization_branding_studio_route', 'clinic.clinic_branding_studio_route'}:
+    if request.endpoint in {'clinic.organization_branding_studio_route', 'clinic.clinic_branding_studio_route', 'clinic.organization_branding_studio_v2_route', 'clinic.clinic_branding_studio_v2_route'}:
         response.headers['Cache-Control'] = 'private, no-store, max-age=0'
         response.headers['X-Content-Type-Options'] = 'nosniff'
     return response

@@ -110,8 +110,21 @@ fn validate_plan(d:&PrintRequest,plan:&Plan)->Result<(),&'static str>{
         n+=page.text.len();if n>10000{return Err(BAD)}
         match (&b.logo,&page.logo){
             (None,None)=>(),(Some(logo),Some([x,y,w,h]))=>{
-                let scale=(85./f64::from(logo.width)).min(48./f64::from(logo.height));
-                if !box_ok(*x,*y,*w,*h)||(*x-45.).abs()>0.001||(*y-58.).abs()>0.001||(*w-f64::from(logo.width)*scale).abs()>0.001||(*h-f64::from(logo.height)*scale).abs()>0.001 {return Err(BAD)}
+                let (max_w,max_h): (f64,f64)=match logo.size.as_deref().unwrap_or("medium") {"small"=>(100.,48.),"medium"=>(120.,64.),"large"=>(144.,80.),_=>return Err(BAD)};
+                let scale=(max_w/f64::from(logo.width)).min(max_h/f64::from(logo.height));
+                if !box_ok(*x,*y,*w,*h)||(*x-45.).abs()>0.001||(*w-f64::from(logo.width)*scale).abs()>0.001||(*h-f64::from(logo.height)*scale).abs()>0.001 {return Err(BAD)}
+                // Verify the exact identity prefix and shared vertical midpoint.
+                let identity=norm(&format!("{}{}{}",org,clinic,b.lines[2..].join(" | ")));
+                let mut seen=String::new();let mut first:Option<f64>=None;let mut bottom=0.;
+                for t in &page.text {
+                    if seen==identity {break;}
+                    if t.tag!="header" || (t.x-(45.+*w+12.)).abs()>0.001 {return Err(BAD)}
+                    seen.push_str(&norm(&t.text));
+                    if !identity.starts_with(seen.as_str()) {return Err(BAD)}
+                    if first.is_none(){first=Some(t.y-f64::from(t.size));}bottom=t.y;
+                }
+                let top=first.ok_or(BAD)?;
+                if seen!=identity||bottom<=top||(*y+( *h)/2.-(top+bottom)/2.).abs()>0.002||top.min(*y)<57.999|| (top.min(*y)-58.).abs()>0.002 {return Err(BAD)}
             },_=>return Err(BAD),
         }
         let mut head=String::new();let mut foot=String::new();let mut tab=String::new();let mut warning=String::new();let mut disclaimer=String::new();
@@ -212,7 +225,13 @@ pub(super) fn render(d:&PrintRequest,plan:&Plan)->Result<Vec<u8>,&'static str>{
     let image_id=if let Some(logo)=&b.logo {
         let mut raw=(0..logo.rgb_hex.len()).step_by(2).map(|i|u8::from_str_radix(&logo.rgb_hex[i..i+2],16).map_err(|_|BAD)).collect::<Result<Vec<_>,_>>()?;
         if monochrome(b){for px in raw.chunks_exact_mut(3){let n=((299*u32::from(px[0])+587*u32::from(px[1])+114*u32::from(px[2])+500)/1000) as u8;px.fill(n);}}
-        Some(pdf.add_object(Stream::new(dict(&[("Type",name("XObject")),("Subtype",name("Image")),("Width",num(i64::from(logo.width))),("Height",num(i64::from(logo.height))),("ColorSpace",name("DeviceRGB")),("BitsPerComponent",num(8))]),raw)))
+        let mut image=dict(&[("Type",name("XObject")),("Subtype",name("Image")),("Width",num(i64::from(logo.width))),("Height",num(i64::from(logo.height))),("ColorSpace",name("DeviceRGB")),("BitsPerComponent",num(8))]);
+        if let Some(alpha)=&logo.alpha_hex {
+            let mask=(0..alpha.len()).step_by(2).map(|i|u8::from_str_radix(&alpha[i..i+2],16).map_err(|_|BAD)).collect::<Result<Vec<_>,_>>()?;
+            let id=pdf.add_object(Stream::new(dict(&[("Type",name("XObject")),("Subtype",name("Image")),("Width",num(i64::from(logo.width))),("Height",num(i64::from(logo.height))),("ColorSpace",name("DeviceGray")),("BitsPerComponent",num(8))]),mask));
+            image.set("SMask",reference(id));
+        }
+        Some(pdf.add_object(Stream::new(image,raw)))
     }else{None};
     let pages_id=pdf.new_object_id();let mut kids=Vec::new();let mut streams=Vec::new();
     for p in &plan.pages{
